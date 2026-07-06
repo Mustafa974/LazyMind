@@ -28,8 +28,12 @@ transitions:
       condition: "Review failed — re-plan sections to address review issues."
 
   finalize_report:
+    - to: export_result
+      condition: "Final report produced — export to Feishu if a target is configured or requested."
+
+  export_result:
     - to: __end__
-      condition: "Final report produced — pipeline complete."
+      condition: "Export result recorded — pipeline complete."
 
 steps:
   build_context:
@@ -207,3 +211,33 @@ steps:
       - slot: writing_output_md
     acceptance_criteria: |
       writing_output 已保存；writing_output_md 已保存；output_format 是 markdown；content 是非空字符串，含标题与至少 2 个二级章节（`## ` 开头），正文长度足以独立成篇。
+
+  export_result:
+    label: Export Result
+    prompt: |
+      {{runtime_instruction}}
+
+      本步负责把最终 WritingOutput 写回飞书。调 get_artifact 取回 writing_output 的文件路径，然后调用 export_to_feishu(writing_output_path=<writing_output 路径>, target_hint="{{user_input}}")。
+
+      export_to_feishu 使用 LazyLLM 已有的 write_to_document 能力写回飞书；飞书 OAuth token 由 LazyMind 用户账号配置注入，不需要本插件单独配置。如果当前用户没有配置可用于写回的飞书账号，工具会抛出 FEISHU_ACCOUNT_REQUIRED，本步骤应直接失败，让前端提示用户先配置飞书账号。
+
+      目标位置可以由平台侧用户配置/前端选择解析成 feishu@<space_id>:/目录/标题.md 后传入，或由用户在本轮明确给出该 URI：
+      - 用户明确给出 feishu@<space_id>:/目录/标题.md 时，按该 URI 写回；
+      - 用户只说“写回飞书”且平台尚未提供默认目标时，临时默认写入飞书云文档根目录，URI 形如 feishu:/标题.md；
+      - 遇到权限或授权问题时，工具会返回 permission_required，提醒用户在前端配置飞书账号/权限。
+
+      工具返回 feishu_export_result 路径后，调用 save_artifact(content_type='file', key='feishu_export_result', value=<feishu_export_result 路径>) 保存结果。
+
+      如果工具返回 permission_required，也必须保存 feishu_export_result，不要自行伪造写回成功。
+    tools:
+      - export_to_feishu
+    exclude_framework_tools:
+      - read_user_attachment
+      - find_user_attachment
+    inputs:
+      - slot: writing_output
+        required: true
+    outputs:
+      - slot: feishu_export_result
+    acceptance_criteria: |
+      feishu_export_result 已保存；其 status 为 exported、permission_required、invalid_target 或 failed 之一。status=exported 时包含 uri 与 write_result_path；status=permission_required 时包含可展示给用户的 message。

@@ -22,6 +22,7 @@ function processQueue(newToken: string) {
 function applyOptionalAuthHeader(config: any) {
   const authHeaders = AgentAppsAuth.getAuthHeaders();
   config.headers = config.headers ?? {};
+  const language = i18n.resolvedLanguage || i18n.language || "zh-CN";
 
   if (authHeaders.authorization) {
     if (!config.headers.Authorization && !config.headers.authorization) {
@@ -54,6 +55,9 @@ function applyOptionalAuthHeader(config: any) {
   }
   if (config.headers.authorization === "Bearer undefined") {
     delete config.headers.authorization;
+  }
+  if (!config.headers["Accept-Language"] && !config.headers["accept-language"]) {
+    config.headers["Accept-Language"] = language;
   }
   return config;
 }

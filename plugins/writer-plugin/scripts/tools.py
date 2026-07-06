@@ -10,12 +10,14 @@ import re
 from pathlib import Path
 from typing import Any, Dict
 
+import lazyllm
 from lazyllm import LOG, AutoModel
 
 from lazymind.chat.engine.subagent.context import require_context
 from lazyllm.tools.writer.data_models import (
     InputResource,
     SectionInstruction,
+    TargetDocument,
     WritingTask,
 )
 from lazyllm.tools.writer.tools import (
@@ -47,6 +49,77 @@ def _read_artifact_file(path: str) -> Any:
 
 
 from lazyllm.tools.writer.utils import save_artifact_json
+
+
+def _safe_doc_title(title: str) -> str:
+    title = (title or '').strip()
+    title = re.sub(r'[\\/:*?"<>|\r\n]+', ' ', title)
+    title = re.sub(r'\s+', ' ', title).strip()
+    return title or 'AI 写作成稿'
+
+
+def _strip_markdown_suffix(path: str) -> str:
+    return path[:-3] if path.lower().endswith('.md') else path
+
+
+def _has_feishu_auth() -> bool:
+    try:
+        auth_map = lazyllm.globals.config['dynamic_fs_auth'] or {}
+    except Exception:
+        return False
+    if not isinstance(auth_map, dict):
+        return False
+    token = auth_map.get('feishu') or auth_map.get('lark')
+    if isinstance(token, str):
+        return bool(token.strip())
+    if isinstance(token, (list, tuple)):
+        return any(isinstance(item, str) and item.strip() for item in token)
+    return bool(token)
+
+
+def parse_feishu_export_uri(target_hint: str = '', title: str = '') -> Dict[str, Any]:
+    """Resolve an explicit Feishu write-back URI from user hint.
+
+    Args:
+        target_hint: User-facing hint. This resolver only accepts an explicit
+            ``feishu@<space_id>:/path/title.md`` URI today.
+        title: Preferred document title from the WritingOutput artifact.
+
+    Returns:
+        A dict with status and uri. When no explicit target is provided, this
+        uses the Feishu Drive root, which is available to every authorized
+        Feishu account.
+    """
+    hint = (target_hint or '').strip()
+    preferred_title = _safe_doc_title(title)
+
+    if not hint.startswith('feishu@'):
+        return {'status': 'resolved', 'uri': f'feishu:/{preferred_title}.md', 'source': 'default_drive_root'}
+
+    if ':/' not in hint:
+        return {
+            'status': 'invalid_target',
+            'message': 'Feishu target URI must look like feishu@<space_id>:/path/title.md.',
+            'target_hint': hint,
+        }
+    if hint.lower().endswith('.md'):
+        uri = hint
+    else:
+        uri = f'{_strip_markdown_suffix(hint).rstrip("/")}/{preferred_title}.md'
+    return {'status': 'resolved', 'uri': uri, 'source': 'explicit_uri'}
+
+
+def _read_writing_output_content(writing_output_path: str) -> Dict[str, str]:
+    data = _read_artifact_file(writing_output_path)
+    if not isinstance(data, dict):
+        raise TypeError('writing_output_path must point to a WritingOutput artifact.')
+    content = str(data.get('content') or '').strip()
+    if not content:
+        raise ValueError('WritingOutput.content is empty; nothing to export.')
+    return {
+        'content': content,
+        'title': str(data.get('title') or '').strip(),
+    }
 
 
 def build_writing_task(query: str) -> str:
@@ -380,3 +453,80 @@ def generate_writing_output(
         f'[writer-tool] generate_writing_output produced result={result}'
     )
     return returned
+
+
+def export_to_feishu(writing_output_path: str, target_hint: str = '') -> Dict[str, str]:
+    """Write the final WritingOutput markdown content back to Feishu.
+
+    Args:
+        writing_output_path: Path to the WritingOutput artifact produced by
+            generate_writing_output.
+        target_hint: Optional user hint for the destination. Currently this must
+            contain an explicit ``feishu@<space_id>:/path/title.md`` URI unless a
+            higher-level LazyMind resolver has already converted user intent into one.
+
+    Returns:
+        A dict containing ``feishu_export_result``: a JSON artifact path. The
+        result artifact status is one of exported, invalid_target,
+        permission_required, or failed.
+    """
+    LOG.info(
+        '[writer-tool] export_to_feishu input '
+        f'writing_output_path={writing_output_path} target_hint={target_hint!r}'
+    )
+    output = _read_writing_output_content(writing_output_path)
+    if not _has_feishu_auth():
+        raise PermissionError(
+            'FEISHU_ACCOUNT_REQUIRED: 当前用户尚未配置可用于写回的飞书账号。'
+            '请先在前端完成飞书 OAuth 授权并启用聊天可用账号，然后重试写回步骤。'
+        )
+
+    resolved = parse_feishu_export_uri(target_hint=target_hint, title=output.get('title', ''))
+    result_path = _workspace_root() / 'feishu_export_result.json'
+
+    if resolved.get('status') != 'resolved':
+        save_artifact_json(
+            resolved,
+            str(result_path),
+            schema_name='lazymind.writer.FeishuExportResult',
+            created_by='export_to_feishu',
+        )
+        return {'feishu_export_result': str(result_path)}
+
+    uri = str(resolved['uri'])
+    try:
+        write_result = WriterResourceTools(
+            llm=None,
+            artifact_store=str(_workspace_root()),
+        ).write_to_document(
+            markdown=output['content'],
+            target_document=TargetDocument(uri=uri, adapter='feishu', title=output.get('title') or None),
+        )
+        export_result = {
+            'status': 'exported',
+            'uri': uri,
+            'write_result': write_result,
+            'write_result_path': write_result.get('artifact_path'),
+        }
+    except Exception as exc:
+        message = str(exc)
+        lowered = message.lower()
+        status = 'permission_required' if any(
+            token in lowered
+            for token in ('permission', 'forbidden', 'unauthorized', 'auth', 'token', 'dynamic_fs_auth', 'scope')
+        ) else 'failed'
+        export_result = {
+            'status': status,
+            'uri': uri,
+            'message': message,
+        }
+        LOG.exception(f'[writer-tool] export_to_feishu failed status={status} uri={uri}')
+
+    save_artifact_json(
+        export_result,
+        str(result_path),
+        schema_name='lazymind.writer.FeishuExportResult',
+        created_by='export_to_feishu',
+    )
+    LOG.info(f'[writer-tool] export_to_feishu produced result_path={result_path}')
+    return {'feishu_export_result': str(result_path)}

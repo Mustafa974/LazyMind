@@ -264,7 +264,18 @@ class PluginSpec:
             fallback: Value to return when the key is missing.
         """
         i18n = self.yaml.get('i18n') or {}
-        node: Any = i18n.get(lang) or i18n.get(lang.split('-')[0]) or {}
+        lang = (lang or '').strip()
+        lang_base = lang.split('-')[0] if lang else ''
+        node: Any = i18n.get(lang) or i18n.get(lang_base) or {}
+        if not node and lang_base:
+            node = next(
+                (
+                    labels
+                    for locale, labels in i18n.items()
+                    if isinstance(locale, str) and locale.split('-')[0] == lang_base
+                ),
+                {},
+            )
         for part in key_path.split('.'):
             if not isinstance(node, dict):
                 return fallback

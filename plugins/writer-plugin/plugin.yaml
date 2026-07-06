@@ -1,9 +1,9 @@
 id: writer-plugin
 name: AI Writer
 description: >
-  撰写长篇文章或技术报告。工作流分六步：解析写作意图与边界、
+  撰写长篇文章或技术报告。工作流分七步：解析写作意图与边界、
   生成大纲、为每章规划写作指令、撰写全文初稿、审阅初稿并给出修订意见、
-  产出最终成稿。每一步都支持通过状态机自环进行整体重跑。
+  产出最终成稿、写回文档。每一步都支持通过状态机自环进行整体重跑。
 
 when_to_use: >
   当用户希望撰写、起草、生成一篇较长的文章、报告、技术文档、综述、
@@ -24,6 +24,7 @@ tool_scripts:
       - update_writing_context
       - check_consistency
       - generate_writing_output
+      - export_to_feishu
 
 steps:
   - id: build_context
@@ -32,6 +33,7 @@ steps:
   - id: generate_draft
   - id: review_document
   - id: finalize_report
+  - id: export_result
 
 slots:
   - id: writing_task
@@ -79,6 +81,10 @@ slots:
   - id: writing_output_md
     label: Final Report (Markdown)
     type: file
+    cardinality: single
+  - id: feishu_export_result
+    label: Feishu Export Result
+    type: text
     cardinality: single
 
 ui:
@@ -132,6 +138,13 @@ ui:
         - id: writing_output
         - id: writing_output_md
 
+    - id: export
+      step_id: export_result
+      label: Export Result
+      layout: list
+      slots:
+        - id: feishu_export_result
+
 i18n:
   zh-CN:
     name: AI 写作
@@ -142,6 +155,7 @@ i18n:
       generate_draft: {label: 撰写初稿}
       review_document: {label: 审阅初稿}
       finalize_report: {label: 最终成稿}
+      export_result: {label: 写回文档}
     tabs:
       context: {label: 构造上下文}
       outline: {label: 生成大纲}
@@ -149,6 +163,7 @@ i18n:
       draft: {label: 生成初稿}
       review: {label: 审阅初稿}
       result: {label: 最终成稿}
+      export: {label: 写回文档}
     slots:
       writing_task: {label: 写作任务}
       resource_profiles: {label: 资源画像}
@@ -161,3 +176,4 @@ i18n:
       review_summary: {label: 审阅摘要}
       writing_output: {label: 最终成稿}
       writing_output_md: {label: 最终成稿（Markdown）}
+      feishu_export_result: {label: 写回最终结果}
