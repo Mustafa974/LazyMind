@@ -520,6 +520,12 @@ async def run_subagent_stream(
         sid = task_id
         lazyllm.globals._init_sid(sid=sid)
         lazyllm.locals._init_sid(sid=sid)
+        lazyllm.set_trace_context({
+            'session_id': params.get('session_id') or params.get('chat_session_id') or None,
+            'sampled': True,
+            'module_trace': {'default': True},
+            'request_tags': ['subagent'],
+        })
         inject_model_config(model_config)
         inject_tool_config(tool_config)
         set_context(ctx)
