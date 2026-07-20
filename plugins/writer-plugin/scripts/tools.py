@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,8 @@ from lazymind.chat.engine.tools.writer import (
 )
 
 
+_FEISHU_URL_PATTERN = re.compile(r'https?://[A-Za-z0-9.\-]+\.feishu\.cn/\S+')
+_FEISHU_DOC_PATTERN = re.compile(r'/(wiki|docx|docs)/([A-Za-z0-9_-]+)', re.IGNORECASE)
 def _workspace_root() -> Path:
     ctx = require_context()
     root = Path(ctx.workspace_path) if ctx.workspace_path else Path('/tmp')
@@ -60,6 +63,33 @@ def _save_json_artifact(name: str, content_json: str, schema_name: str, *, direc
         created_by='writer-plugin-wrapper',
     )
 
+def _build_feishu_writeback_target(text_or_url: str) -> dict[str, Any] | None:
+    seen_urls: set[str] = set()
+    for match in _FEISHU_URL_PATTERN.finditer(text_or_url or ''):
+        url = match.group(0).rstrip(').,，。；;')
+        if url in seen_urls:
+            continue
+        seen_urls.add(url)
+        doc_match = _FEISHU_DOC_PATTERN.search(url.split('?')[0].split('#')[0])
+        if not doc_match:
+            continue
+        doc_type = doc_match.group(1).lower()
+        return {
+            'uri': url,
+            'adapter': 'feishu',
+            'meta': {
+                'enabled': True,
+                'provider': 'feishu',
+                'url': url,
+                'doc_type': 'doc' if doc_type == 'docs' else doc_type,
+                'token': doc_match.group(2),
+                'source': 'user_input',
+                'permission_required': 'read_write',
+                'resolved_at': datetime.now(timezone.utc).isoformat(),
+            },
+        }
+    return None
+
 
 def _collect_resources(user_input: str) -> str:
     ctx = require_context()
@@ -78,10 +108,9 @@ def _collect_resources(user_input: str) -> str:
             'meta': {},
         })
 
-    pattern = re.compile(r'https?://[A-Za-z0-9.\-]+\.feishu\.cn/\S+')
     seen_urls: set[str] = set()
-    for idx, match in enumerate(pattern.finditer(user_input or '')):
-        url = match.group(0)
+    for idx, match in enumerate(_FEISHU_URL_PATTERN.finditer(user_input or '')):
+        url = match.group(0).rstrip(').,，。；;')
         if url in seen_urls:
             continue
         seen_urls.add(url)
@@ -96,6 +125,34 @@ def _collect_resources(user_input: str) -> str:
         })
 
     return json.dumps(resources, ensure_ascii=False)
+
+
+def writer_resolve_writeback_target(user_input: str) -> str:
+    """Resolve the optional Feishu writeback target.
+
+    Returns an empty string when the user input has no supported Feishu document
+    URL.
+    """
+    target = _build_feishu_writeback_target(user_input)
+    if not target:
+        return ''
+    return _save_json_artifact(
+        'writeback_target',
+        json.dumps(target, ensure_ascii=False),
+        writer_schema('task.TargetDocument'),
+    )
+
+
+def writer_load_target_docir(writeback_target_path: str) -> str:
+    """Read the target Feishu document and convert it to standard DocIR."""
+    content = WriterToolkitBase().document_to_docir(
+        target_document_json=_read_json_string(writeback_target_path),
+    )
+    return _save_json_artifact(
+        'doc_ir',
+        content,
+        writer_schema('docir.DocIR'),
+    )
 
 
 def writer_build_writing_task(query: str) -> str:
@@ -269,15 +326,22 @@ def writer_generate_patch_set(
     revise_task_path: str,
     draft_document_path: str,
     writing_context_path: str,
+    doc_ir_path: str = '',
 ) -> dict:
     """Generate a patch set and return the patch_set and doc_ir artifact paths."""
     group = WriterToolkitBase()
     task_json = _read_json_string(revise_task_path)
     context_json = _read_json_string(writing_context_path)
 
-    doc_ir_json = group.draft_to_doc_ir(
-        draft_document_json=_read_json_string(draft_document_path),
-    )
+    if doc_ir_path:
+        doc_ir_json = _read_json_string(doc_ir_path)
+        doc_ir_artifact_path = doc_ir_path
+    else:
+        doc_ir_json = group.draft_to_doc_ir(
+            draft_document_json=_read_json_string(draft_document_path),
+        )
+        doc_ir_artifact_path = _save_json_artifact('doc_ir', doc_ir_json, writer_schema('docir.DocIR'))
+
     locate_result_json = group.locate_revision_target(
         writing_task_json=task_json,
         doc_ir_json=doc_ir_json,
@@ -296,7 +360,7 @@ def writer_generate_patch_set(
     )
     return {
         'patch_set': _save_json_artifact('patch_set', patch_set_json, writer_schema('revision.PatchSet')),
-        'doc_ir': _save_json_artifact('doc_ir', doc_ir_json, writer_schema('docir.DocIR')),
+        'doc_ir': doc_ir_artifact_path,
     }
 
 
@@ -329,13 +393,14 @@ def writer_apply_patch(
     patch_set_path: str,
     writing_context_path: str,
 ) -> dict:
-    """Apply a patch set to the DocIR and return the patch_result and draft_document artifact paths."""
+    """Apply a patch set to the DocIR and return the revised DocIR plus draft paths."""
     content = WriterToolkitBase().apply_patch(
         doc_ir_json=_read_json_string(doc_ir_path),
         patch_set_json=_read_json_string(patch_set_path),
         writing_context_json=_read_json_string(writing_context_path),
     )
     payload = _json_loads(content, {})
+    revised_doc_ir = payload.get('revised_doc_ir') or {}
     root = _workspace_root()
     patch_result_path = save_artifact_json(
         payload.get('patch_result') or {},
@@ -343,10 +408,136 @@ def writer_apply_patch(
         schema_name=writer_schema('revision.PatchResult'),
         created_by='writer-plugin-wrapper',
     )
+    revised_doc_ir_path = save_artifact_json(
+        revised_doc_ir,
+        str(root / 'revised_doc_ir.json'),
+        schema_name=writer_schema('docir.DocIR'),
+        created_by='writer-plugin-wrapper',
+    )
     draft_json = WriterToolkitBase().doc_ir_to_draft(
-        doc_ir_json=json.dumps(payload.get('revised_doc_ir') or {}, ensure_ascii=False),
+        doc_ir_json=json.dumps(revised_doc_ir, ensure_ascii=False),
     )
     return {
         'patch_result': patch_result_path,
+        'revised_doc_ir': revised_doc_ir_path,
         'draft_document': _save_json_artifact('draft_document', draft_json, writer_schema('writing.DraftDocument')),
     }
+
+
+def writer_writeback_docir(
+    writeback_target_path: str = '',
+    patch_set_path: str = '',
+    patch_result_path: str = '',
+) -> str:
+    """Write applied replace hunks back to the target Feishu document."""
+    root = _workspace_root()
+    result: dict[str, Any] = {
+        'success': False,
+        'skipped': False,
+        'mode': 'partial_block_update',
+        'adapter': '',
+        'locator': '',
+        'updated_blocks': [],
+        'unsupported_hunks': [],
+        'failed_hunks': [],
+        'message': '',
+    }
+
+    if not writeback_target_path:
+        result.update({
+            'skipped': True,
+            'message': 'No writeback target is available.',
+        })
+        return save_artifact_json(
+            result,
+            str(root / 'writeback_result.json'),
+            schema_name='lazymind.writer.writeback_result',
+            created_by='writer-plugin-wrapper',
+        )
+
+    target = _read_json_file(writeback_target_path)
+    patch_set = _read_json_file(patch_set_path) if patch_set_path else {}
+    patch_result = _read_json_file(patch_result_path) if patch_result_path else {}
+
+    locator = target.get('uri') or target.get('doc_id') or ''
+    adapter = target.get('adapter') or ''
+    result['adapter'] = adapter
+    result['locator'] = locator
+
+    if not locator:
+        result['message'] = 'Writeback target does not provide uri or doc_id.'
+        return save_artifact_json(
+            result,
+            str(root / 'writeback_result.json'),
+            schema_name='lazymind.writer.writeback_result',
+            created_by='writer-plugin-wrapper',
+        )
+
+    applied_ids = set(patch_result.get('applied_hunks') or [])
+    hunks = patch_set.get('hunks') or []
+
+    try:
+        import lazyllm.tools.fs.client as _fs_client
+
+        protocol, space_id, real_path = _fs_client.FS._parse(locator)
+        fs = _fs_client.FS._get_or_create_fs(protocol, space_id, real_path)
+        result['adapter'] = adapter or protocol
+
+        if not hasattr(fs, 'update_doc_block_text'):
+            raise NotImplementedError(f'{type(fs).__name__}.update_doc_block_text is not available.')
+
+        for hunk in hunks:
+            hunk_id = hunk.get('hunk_id') or ''
+            block_id = hunk.get('target_block_id') or ''
+            modify_type = hunk.get('modify_type') or ''
+            if applied_ids and block_id not in applied_ids:
+                continue
+            if modify_type != 'replace':
+                result['unsupported_hunks'].append({
+                    'hunk_id': hunk_id,
+                    'target_block_id': block_id,
+                    'modify_type': modify_type,
+                    'reason': 'Only replace hunks support partial Feishu block writeback.',
+                })
+                continue
+            new_text = hunk.get('new_text')
+            if new_text is None:
+                result['failed_hunks'].append({
+                    'hunk_id': hunk_id,
+                    'target_block_id': block_id,
+                    'reason': 'replace hunk has no new_text.',
+                })
+                continue
+            try:
+                fs.update_doc_block_text(real_path, block_id, str(new_text))
+                result['updated_blocks'].append({
+                    'hunk_id': hunk_id,
+                    'block_id': block_id,
+                })
+            except Exception as exc:
+                result['failed_hunks'].append({
+                    'hunk_id': hunk_id,
+                    'target_block_id': block_id,
+                    'reason': str(exc),
+                })
+    except Exception as exc:
+        result['message'] = f'Writeback failed before block updates completed: {exc}'
+        return save_artifact_json(
+            result,
+            str(root / 'writeback_result.json'),
+            schema_name='lazymind.writer.writeback_result',
+            created_by='writer-plugin-wrapper',
+        )
+
+    result['success'] = bool(result['updated_blocks']) and not result['failed_hunks']
+    result['message'] = (
+        f"Updated {len(result['updated_blocks'])} Feishu block(s); "
+        f"{len(result['unsupported_hunks'])} unsupported hunk(s); "
+        f"{len(result['failed_hunks'])} failed hunk(s)."
+    )
+    return save_artifact_json(
+        result,
+        str(root / 'writeback_result.json'),
+        schema_name='lazymind.writer.writeback_result',
+        created_by='writer-plugin-wrapper',
+    )

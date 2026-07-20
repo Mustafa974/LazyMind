@@ -12,6 +12,7 @@ from lazyllm import AutoModel
 from lazyllm.tools.writer.data_models import (
     InputResource,
     SectionInstruction,
+    TargetDocument,
     WritingTask,
 )
 from lazyllm.tools.writer.tools import (
@@ -165,6 +166,16 @@ class WriterToolkitBase:
             llm=AutoModel(model='llm'),
             artifact_store=str(root),
         ).profile_resources(task=task_path, input_resources=input_resources)
+        return _json_dumps(_primary_data(result))
+
+    def document_to_docir(self, target_document_json: str) -> str:
+        """Convert a target document into DocIR as a JSON string."""
+        root = _temp_root()
+        target = TargetDocument.model_validate(_json_loads(target_document_json, {}))
+        result = WriterResourceTools(
+            llm=None,
+            artifact_store=str(root),
+        ).document_to_docir(target_document=target)
         return _json_dumps(_primary_data(result))
 
     def create_writing_context(self, writing_task_json: str, resource_profiles_json: str) -> str:

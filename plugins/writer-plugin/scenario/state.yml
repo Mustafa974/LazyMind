@@ -32,6 +32,9 @@ transitions:
       when: 用户不采用修改方案并希望直接进入审阅
 
   apply_patch:
+    - to: writeback_document
+
+  writeback_document:
     - to: review_document
 
   review_document:
@@ -46,20 +49,28 @@ steps:
     prompt: |
       {{runtime_instruction}}
 
-      This step produces three artifacts: writing_task, resource_profiles, and writing_context.
+      This step produces three required artifacts: writing_task, resource_profiles, and writing_context. It may also produce writeback_target and source_doc_ir when the user input contains a supported Feishu document URL.
 
-      Step 1: Call writer_build_writing_task(query="{{user_input}}") to get the writing_task path, then persist it with save_artifact(content_type='file', key='writing_task').
+      Step 1: Call writer_resolve_writeback_target(user_input="{{user_input}}"). If it returns a non-empty path, persist it with save_artifact(content_type='file', key='writeback_target'), then call writer_load_target_docir(writeback_target_path=<writeback_target path>) and persist the result with save_artifact(content_type='file', key='source_doc_ir'). If writer_resolve_writeback_target returns an empty string, skip these optional artifacts and continue normally.
 
-      Step 2: Call writer_profile_resources(writing_task_path=<writing_task path>, user_input="{{user_input}}") to get the resource_profiles path, then persist it with save_artifact(content_type='file', key='resource_profiles').
+      Step 2: Call writer_build_writing_task(query="{{user_input}}") to get the writing_task path, then persist it with save_artifact(content_type='file', key='writing_task').
 
-      Step 3: Call writer_create_writing_context(writing_task_path=<writing_task path>, resource_profiles_path=<resource_profiles path>) to get the writing_context path, then persist it with save_artifact(content_type='file', key='writing_context').
+      Step 3: Call writer_profile_resources(writing_task_path=<writing_task path>, user_input="{{user_input}}") to get the resource_profiles path, then persist it with save_artifact(content_type='file', key='resource_profiles').
+
+      Step 4: Call writer_create_writing_context(writing_task_path=<writing_task path>, resource_profiles_path=<resource_profiles path>) to get the writing_context path, then persist it with save_artifact(content_type='file', key='writing_context').
 
       If any of the above tool calls fails, do not perform any extra fallback — stop the step immediately. In particular, do not write content yourself to persist.
     tools:
+      - writer_resolve_writeback_target
+      - writer_load_target_docir
       - writer_build_writing_task
       - writer_profile_resources
       - writer_create_writing_context
     outputs:
+      - material: writeback_target
+        required: false
+      - material: source_doc_ir
+        required: false
       - material: writing_task
       - material: resource_profiles
       - material: writing_context
@@ -178,7 +189,7 @@ steps:
 
       Step 1: Call writer_build_revise_task(query="{{user_input}}") to get the revise_task path, then persist it with save_artifact(content_type='file', key='revise_task').
 
-      Step 2: Call get_artifact to retrieve draft_document and writing_context_after_draft. Call writer_generate_patch_set(revise_task_path=<revise_task path>, draft_document_path=<draft_document path>, writing_context_path=<writing_context_after_draft path>) to get the patch_set and doc_ir paths. Persist the patch_set and doc_ir; doc_ir is required by apply_patch.
+      Step 2: Call get_artifact to retrieve draft_document, writing_context_after_draft, and the optional existing source_doc_ir if present. Call writer_generate_patch_set(revise_task_path=<revise_task path>, draft_document_path=<draft_document path>, writing_context_path=<writing_context_after_draft path>, doc_ir_path=<existing source_doc_ir path or empty string>) to get the patch_set and doc_ir paths. If an existing Feishu source_doc_ir is present, the tool will reuse it and must not overwrite it with a draft-derived doc_ir. Persist the patch_set and doc_ir; doc_ir is required by apply_patch.
 
       Step 3: Call writer_validate_patch_set(patch_set_path=<patch_set path>, revise_task_path=<revise_task path>, writing_context_path=<writing_context_after_draft path>) to get the patch_set_review path and patch_set_review_summary text. Persist them separately.
 
@@ -188,6 +199,8 @@ steps:
       - writer_generate_patch_set
       - writer_validate_patch_set
     inputs:
+      - material: source_doc_ir
+        required: false
       - material: draft_document
         required: true
       - material: writing_context_after_draft
@@ -224,9 +237,9 @@ steps:
     prompt: |
       {{runtime_instruction}}
 
-      This step applies the validated patch_set to the DocIR, converts the revised DocIR back into a draft, and updates the writing context.
+      This step applies the validated patch_set to the DocIR, saves the revised DocIR, converts it back into a draft, and updates the writing context.
 
-      Step 1: Call get_artifact to retrieve doc_ir, patch_set, and writing_context_after_draft. Call writer_apply_patch(doc_ir_path=<doc_ir path>, patch_set_path=<patch_set path>, writing_context_path=<writing_context_after_draft path>) to get the patch_result path and revised draft path. Persist them separately with save_artifact(content_type='file', key='patch_result') and save_artifact(content_type='file', key='revised_draft_document').
+      Step 1: Call get_artifact to retrieve doc_ir, patch_set, and writing_context_after_draft. Call writer_apply_patch(doc_ir_path=<doc_ir path>, patch_set_path=<patch_set path>, writing_context_path=<writing_context_after_draft path>) to get the patch_result path, revised_doc_ir path, and revised draft path. Persist them separately with save_artifact(content_type='file', key='patch_result'), save_artifact(content_type='file', key='revised_doc_ir'), and save_artifact(content_type='file', key='revised_draft_document').
 
       Step 2: Call writer_update_writing_context(content_artifact_path=<revised draft path>, writing_context_path=<writing_context_after_draft path>) to get the updated context path, then persist it with save_artifact(content_type='file', key='writing_context_after_revision').
 
@@ -243,10 +256,39 @@ steps:
         required: true
     outputs:
       - material: patch_result
+      - material: revised_doc_ir
       - material: revised_draft_document
       - material: writing_context_after_revision
     acceptance_criteria: |
-      All three artifacts present: patch_result, revised_draft_document, writing_context_after_revision.
+      All four artifacts present: patch_result, revised_doc_ir, revised_draft_document, writing_context_after_revision.
+
+  writeback_document:
+    label: Write Back Document
+    prompt: |
+      {{runtime_instruction}}
+
+      This step writes the applied replacement hunks back to the Feishu target document when a writeback_target is available. If no writeback_target exists, still call writer_writeback_docir(writeback_target_path='', patch_set_path=<patch_set path>, patch_result_path=<patch_result path>) and persist the skipped writeback_result.
+
+      Step 1: Call get_artifact to retrieve the optional writeback_target plus patch_set and patch_result. The revised_doc_ir artifact is available for audit, but the partial writeback should use patch_set hunks and patch_result applied_hunks as the source of truth.
+
+      Step 2: Call writer_writeback_docir(writeback_target_path=<writeback_target path or empty string>, patch_set_path=<patch_set path>, patch_result_path=<patch_result path>) to get writeback_result. Persist it with save_artifact(content_type='file', key='writeback_result').
+
+      The first implementation supports only replace hunks with text blocks. Insert, delete, and unsupported block edits must be recorded in writeback_result rather than silently falling back to full-document overwrite.
+    tools:
+      - writer_writeback_docir
+    inputs:
+      - material: writeback_target
+        required: false
+      - material: patch_set
+        required: true
+      - material: patch_result
+        required: true
+      - material: revised_doc_ir
+        required: true
+    outputs:
+      - material: writeback_result
+    acceptance_criteria: |
+      Artifact present: writeback_result.
 
   review_document:
     label: Review Document

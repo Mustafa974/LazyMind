@@ -23,6 +23,8 @@ when_to_use: >
 tool_scripts:
   - path: scripts/tools.py
     functions:
+      - writer_resolve_writeback_target
+      - writer_load_target_docir
       - writer_build_writing_task
       - writer_profile_resources
       - writer_create_writing_context
@@ -37,6 +39,7 @@ tool_scripts:
       - writer_generate_patch_set
       - writer_validate_patch_set
       - writer_apply_patch
+      - writer_writeback_docir
 
 steps:
   - id: build_context
@@ -47,6 +50,7 @@ steps:
   - id: generate_patch
   - id: decide_patch_action
   - id: apply_patch
+  - id: writeback_document
   - id: review_document
   - id: finalize_report
 
@@ -61,6 +65,11 @@ slots:
     cardinality: single
   - id: writing_context
     label: Writing Context
+    type: text
+    cardinality: single
+    summary_max_chars: 600
+  - id: writeback_target
+    label: Writeback Target
     type: text
     cardinality: single
     summary_max_chars: 600
@@ -95,6 +104,10 @@ slots:
     label: Revise Task
     type: text
     cardinality: single
+  - id: source_doc_ir
+    label: Source Doc IR
+    type: text
+    cardinality: single
   - id: doc_ir
     label: Doc IR
     type: text
@@ -113,6 +126,14 @@ slots:
     cardinality: single
   - id: patch_result
     label: Patch Result
+    type: text
+    cardinality: single
+  - id: revised_doc_ir
+    label: Revised Doc IR
+    type: text
+    cardinality: single
+  - id: writeback_result
+    label: Writeback Result
     type: text
     cardinality: single
   - id: revision_requested
@@ -155,6 +176,8 @@ ui:
       label: Context
       layout: list
       slots:
+        - id: writeback_target
+        - id: source_doc_ir
         - id: writing_task
         - id: resource_profiles
         - id: writing_context
@@ -199,8 +222,16 @@ ui:
       layout: list
       slots:
         - id: patch_result
+        - id: revised_doc_ir
         - id: revised_draft_document
         - id: writing_context_after_revision
+
+    - id: writeback
+      step_id: writeback_document
+      label: Writeback
+      layout: list
+      slots:
+        - id: writeback_result
 
     - id: review
       step_id: review_document
@@ -230,6 +261,7 @@ i18n:
       generate_patch: {label: 生成补丁}
       decide_patch_action: {label: 决定是否应用补丁}
       apply_patch: {label: 应用补丁}
+      writeback_document: {label: 写回文档}
       review_document: {label: 审阅初稿}
       finalize_report: {label: 最终成稿}
     tabs:
@@ -239,6 +271,7 @@ i18n:
       draft: {label: 生成初稿}
       generate_patch: {label: 生成补丁}
       apply_patch: {label: 应用补丁}
+      writeback: {label: 写回文档}
       review: {label: 审阅初稿}
       result: {label: 最终成稿}
     slots:
@@ -250,11 +283,14 @@ i18n:
       draft_sections: {label: 章节草稿}
       draft_document: {label: 完整初稿}
       revise_task: {label: 修订任务}
+      source_doc_ir: {label: 源文档 IR}
       doc_ir: {label: 文档 IR}
       patch_set: {label: 补丁集}
       patch_set_review: {label: 补丁校验}
       patch_set_review_summary: {label: 补丁校验摘要}
       patch_result: {label: 补丁应用}
+      revised_doc_ir: {label: 修订后文档 IR}
+      writeback_result: {label: 写回结果}
       revision_requested: {label: 请求修订}
       patch_accepted: {label: 接受补丁}
       revised_draft_document: {label: 修订后初稿}
