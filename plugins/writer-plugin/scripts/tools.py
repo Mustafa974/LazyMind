@@ -13,10 +13,10 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from lazyllm.tools.writer.data_models import WriterDocument
-from lazyllm.tools.writer.prompts import WRITER_IMAGE_ACQUISITION_PROMPT
 from lazyllm.tools.writer.utils import parse_document_markdown, save_artifact_json
 
 from lazymind.chat.engine.subagent.context import require_context
+from lazymind.chat.engine.prompts.writer_media import WRITER_IMAGE_ACQUISITION_PROMPT
 from lazymind.chat.engine.tools.writer import (
     WriterCreateToolkit,
     WriterResourceToolkit,
