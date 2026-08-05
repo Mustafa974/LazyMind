@@ -210,9 +210,10 @@ steps:
     prompt: |
       {{runtime_instruction}}
 
-      Artifact persistence rule: writer tools return absolute local file paths.
-      Save every declared output in this step with content_type="file" and the exact
-      returned path as value. Never save a path with content_type="json" or "text".
+      Artifact persistence rule: writer tools returning file paths must be saved with
+      content_type="file" and the exact returned path as value. Scalar outputs must use
+      their declared slot type; published_link is text and must be saved with
+      content_type="text". Never save a file path with content_type="json" or "text".
 
       Maintain one user-visible full-document artifact: draft_document. Preserve the
       selected representation: Markdown stays `.md`; IR stays `.lmd` and ui_editable=true.
@@ -220,9 +221,10 @@ steps:
       second card.
 
       Retrieve the latest selected draft_document when it exists, plus source_document,
-      outline_document, writing_task, writing_context, writing_context_after_outline, and
-      writing_context_after_draft when available. Also retrieve media_assets for
-      generation mode and resolved_media_assets when resuming an earlier generation.
+      target_document, outline_document, writing_task, writing_context,
+      writing_context_after_outline, and writing_context_after_draft when available. Also
+      retrieve media_assets for generation mode and resolved_media_assets when resuming an
+      earlier generation.
 
       Dynamically select exactly one mode:
 
@@ -294,12 +296,13 @@ steps:
          2. If document_revision_set exists for a targeted IR revision, call
             writer_publish_revision with source_document and document_revision_set.
          3. For a generated or rewritten document bound to an existing source, call
-            writer_replace_document with the selected content and source_document.
-         4. For an unbound document, call writer_create_document once when no
-            publish_target_document exists, save that target artifact, then call
+            writer_replace_document with the selected content and source_document. Pass
+            target_document_path when target_document exists.
+         4. For an unbound document, append to target_document when it exists. Otherwise
+            reuse publish_target_document on retry. Only when neither target exists, call
+            writer_create_document once, save that target artifact, then call
             writer_append_document with the selected content and target path.
-         5. Reuse an existing publish_target_document on retry; never create a second
-            target for the same delivery attempt.
+         5. Never create a second target for the same delivery attempt.
          6. When resolved_media_assets exists, pass its path as media_assets_path to
             writer_replace_document or writer_append_document. This is required for
             Image WriterBlocks and keeps local media outside the Writer IR.
