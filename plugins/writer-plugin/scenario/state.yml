@@ -211,14 +211,14 @@ steps:
       {{runtime_instruction}}
 
       Artifact persistence rule: writer tools returning file paths must be saved with
-      content_type="file" and the exact returned path as value. Scalar outputs must use
-      their declared slot type; published_link is text and must be saved with
-      content_type="text". Never save a file path with content_type="json" or "text".
+      content_type="file" and the exact returned path as value. Feishu provider results
+      are internal to this step; save the provider read-back document as a new
+      draft_document revision instead of creating delivery or publish artifacts.
 
-      Maintain one user-visible full-document artifact: draft_document. Preserve the
-      selected representation: Markdown stays `.md`; IR stays `.lmd` and ui_editable=true.
-      Save every successful result under that same slot as a new revision rather than a
-      second card.
+      Maintain one user-visible full-document artifact: draft_document. Local generation
+      preserves the selected representation: Markdown stays `.md`; IR stays `.lmd` and
+      ui_editable=true. After a Feishu write, the provider read-back is saved as the next
+      draft_document revision rather than a second card.
 
       Retrieve the latest selected draft_document when it exists, plus source_document,
       target_document, outline_document, writing_task, writing_context,
@@ -277,38 +277,34 @@ steps:
          document local unless the user explicitly requests a Feishu write in this step.
          Human frontend edits remain revisions of this same slot.
 
-      After the selected generation or revision mode succeeds, handle delivery in this
-      same step only when requested by the user:
+      After the selected generation or revision mode succeeds, keep the result in
+      draft_document. If the user requested Feishu delivery or a Feishu target is bound,
+      perform the provider write in this same step and replace draft_document with the
+      provider read-back as its next revision:
 
-      A. Local result:
-         Keep draft_document as the completed local artifact. Do not call a Feishu tool.
+      1. For a local result without a Feishu target, keep draft_document as-is.
 
-      B. Markdown result:
-         When the user explicitly requests a Markdown file, call writer_export_markdown
-         with the latest draft_document path and save the returned .md path as
-         delivered_markdown with content_type="file".
+      2. When a Markdown file is explicitly requested, call writer_export_markdown and
+         save the returned .md path as the next draft_document revision.
 
-      C. Feishu result:
-         Use this mode only when the user explicitly asks to write, publish, create,
-         replace, append, or save the document to Feishu/Lark.
-         1. If the selected content is Markdown, call writer_convert_markdown_to_ir once
-            and save its returned path as delivery_ir. Otherwise use draft_document directly.
-         2. If document_revision_set exists for a targeted IR revision, call
-            writer_publish_revision with source_document and document_revision_set.
-         3. For a generated or rewritten document bound to an existing source, call
-            writer_replace_document with the selected content and source_document. Pass
-            target_document_path when target_document exists.
-         4. For an unbound document, append to target_document when it exists. Otherwise
-            reuse publish_target_document on retry. Only when neither target exists, call
-            writer_create_document once, save that target artifact, then call
-            writer_append_document with the selected content and target path.
-         5. Never create a second target for the same delivery attempt.
-         6. When resolved_media_assets exists, pass its path as media_assets_path to
-            writer_replace_document or writer_append_document. This is required for
-            Image WriterBlocks and keeps local media outside the Writer IR.
-         7. Save publish_result, published_document, and published_link only after the
-            provider write and read-back succeed. A failed image upload must be reported
-            as a partial delivery result and must not be claimed as successful.
+      3. For Feishu delivery, if the selected content is Markdown, call
+         writer_convert_markdown_to_ir once and keep the returned path transiently.
+         Otherwise use draft_document directly.
+      4. If document_revision_set exists for a targeted IR revision, call
+         writer_publish_revision with source_document and document_revision_set.
+      5. For a generated or rewritten document bound to an existing source, call
+         writer_replace_document with the selected content and source_document. Pass
+         target_document_path when target_document exists.
+      6. For an unbound document, append to target_document when it exists. Otherwise
+         call writer_create_document once, save its target under target_document, then
+         call writer_append_document with the selected content and target path. Reuse
+         target_document on retry; never create a second target for the same attempt.
+      7. When resolved_media_assets exists, pass its path as media_assets_path to
+         writer_replace_document or writer_append_document. This is required for Image
+         WriterBlocks and keeps local media outside the Writer IR.
+      8. After provider write and read-back succeed, save the returned provider document
+         path as the next draft_document revision. A failed image upload must be reported
+         as a partial delivery result and must not be claimed as successful.
 
       Before passing an existing artifact to a writer tool, call get_artifact, extract
       the absolute path string from value.path, and pass that string to the tool. When a
@@ -359,6 +355,8 @@ steps:
     outputs:
       - material: draft_document
       - material: writing_context_after_draft
+      - material: target_document
+        required: false
       - material: section_instructions
         required: false
       - material: visual_plan
@@ -368,18 +366,6 @@ steps:
       - material: draft_blocks
         required: false
       - material: draft_document_md
-        required: false
-      - material: delivered_markdown
-        required: false
-      - material: delivery_ir
-        required: false
-      - material: publish_target_document
-        required: false
-      - material: publish_result
-        required: false
-      - material: published_document
-        required: false
-      - material: published_link
         required: false
       - material: document_revision_task
         required: false
@@ -397,6 +383,5 @@ steps:
       for generation/rewrite mode; IR generation also requires visual_plan and
       resolved_media_assets. A targeted revision requires document_revision_task,
       document_locate_result, document_modify_plan, document_revision_set, and a successful
-      document_revision_result. When Markdown delivery is requested, delivered_markdown
-      must be a real file. When Feishu delivery is requested, publish_result,
-      published_document, and published_link must come from a successful provider write.
+      document_revision_result. When Feishu delivery is requested, the latest
+      draft_document must be the provider-confirmed read-back document.

@@ -144,30 +144,6 @@ slots:
     label: Writing Context After Draft
     type: file
     cardinality: single
-  - id: delivered_markdown
-    label: Delivered Markdown
-    type: file
-    cardinality: single
-  - id: delivery_ir
-    label: Delivery IR
-    type: file
-    cardinality: single
-  - id: publish_target_document
-    label: Publish Target
-    type: file
-    cardinality: single
-  - id: publish_result
-    label: Publish Result
-    type: file
-    cardinality: single
-  - id: published_document
-    label: Published Document
-    type: file
-    cardinality: single
-  - id: published_link
-    label: Published Document Link
-    type: text
-    cardinality: single
   - id: document_revision_task
     label: Document Revision Task
     type: file
@@ -210,9 +186,6 @@ ui:
       layout: list
       slots:
         - id: draft_document
-        - id: delivered_markdown
-        - id: published_document
-        - id: published_link
 
 i18n:
   zh-CN:
@@ -239,9 +212,3 @@ i18n:
       draft_blocks: {label: 章节草稿}
       draft_document: {label: 成稿}
       draft_document_md: {label: 成稿 Markdown}
-      delivered_markdown: {label: 交付 Markdown}
-      delivery_ir: {label: 交付 IR}
-      publish_target_document: {label: 发布目标}
-      publish_result: {label: 发布结果}
-      published_document: {label: 已发布文档}
-      published_link: {label: 飞书文档链接}
