@@ -9,7 +9,7 @@ steps operate on either Markdown or WriterDocument IR:
 - generate an outline or use a supplied outline;
 - generate, regenerate, or revise that same outline artifact;
 - plan sections and write a complete document;
-- generate, rewrite, or revise that same full-document artifact.
+- generate, rewrite, revise, and explicitly deliver that same full-document artifact.
 
 Do not route users between separate creation and revision plugins or expose separate
 revision cards. The ChatAgent chooses the applicable mode inside the current product step.
@@ -66,8 +66,19 @@ Targeted revision mode:
 Do not run section planning for a targeted body revision. Do run it again whenever the
 body is generated or rewritten from a changed outline.
 
-Frontend edits and AI body revisions are revisions of the same `draft_document` slot and
-remain local. Cloud synchronization is a separate user-triggered action.
+Frontend edits and AI body revisions are revisions of the same `draft_document` slot.
+When the user explicitly requests delivery, the same step exports Markdown or writes the
+selected document to Feishu. A request without a destination remains local and does not
+mutate a cloud document.
+
+Delivery mode:
+
+- Markdown requests produce `delivered_markdown` from the latest `draft_document`.
+- Feishu requests convert Markdown to IR when necessary, then create, replace, append, or
+  publish a revision using the existing resource tools.
+- `resolved_media_assets` is passed to Feishu replace/append operations whenever the
+  document contains Image WriterBlocks.
+- Publish result artifacts are saved only after provider write and read-back succeed.
 
 ## Supported paths
 
@@ -85,6 +96,9 @@ a hidden current-document pointer.
 - From-scratch and Markdown inputs remain Markdown. Feishu and `.lmd` inputs remain IR.
 - `outline_document` and `draft_document` preserve that representation across steps.
 - User-visible IR outline and draft documents have ui_editable=true.
+- Explicit Markdown delivery produces `delivered_markdown`.
+- Explicit Feishu delivery produces `publish_result`, `published_document`, and
+  `published_link`; Markdown-to-IR conversion is saved as `delivery_ir` when needed.
 - Internal locate results, modify plans, revision sets, section plans, and draft blocks are
   persisted but are not exposed as separate product cards.
 - Plugin tools pass artifact paths and do not copy complete documents into ChatAgent

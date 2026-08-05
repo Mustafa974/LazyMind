@@ -34,7 +34,13 @@ value is merely a local path string does not satisfy an output and must be RETRY
 - IR generation also requires visual_plan and resolved_media_assets.
 - For targeted revision mode, document_revision_task, document_locate_result,
   document_modify_plan, document_revision_set, and document_revision_result must exist.
-- A cloud-bound body revision must remain local in this step.
+- A cloud-bound body revision remains local unless the user explicitly requests a Feishu
+  write in this step.
+- For an explicit Markdown delivery, delivered_markdown must be a real `.md` file.
+- For an explicit Feishu delivery, publish_result, published_document, and published_link
+  must come from a successful provider write and read-back.
+- If the selected document contains images, resolved_media_assets must be passed to the
+  provider write; a skipped image must be reported as partial delivery rather than success.
 - Missing mode-specific outputs → RETRY.
 
 Use exactly:
