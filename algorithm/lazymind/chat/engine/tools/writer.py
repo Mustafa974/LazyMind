@@ -344,10 +344,11 @@ class WriterToolkitBase:
         self,
         writing_task_json: str,
         input_resources_json: str = '[]',
+        source_document_json: str = '',
         media_store: str = '',
         use_vision_model: bool = False,
     ) -> str:
-        """Collect available images through LazyLLM's multimodal writer tools."""
+        """Collect attached, Markdown-linked, and source-document images."""
         root = _temp_root()
         task_path = _write_input_artifact(
             root,
@@ -361,17 +362,28 @@ class WriterToolkitBase:
             _json_loads(input_resources_json, []),
             writer_schema('task.InputResource'),
         )
+        source_document_path = (
+            _write_document_input(root, 'source_document', source_document_json)
+            if source_document_json.strip() else None
+        )
         artifact_store = Path(media_store.strip()) if media_store.strip() else root
         artifact_store.mkdir(parents=True, exist_ok=True)
         result = WriterMultimodalTools(
             llm=AutoModel(model='vlm') if use_vision_model else None,
             artifact_store=str(artifact_store),
-        ).collect_available_media(task=task_path, input_resources=resources_path)
-        return _json_dumps({
+        ).collect_available_media(
+            task=task_path,
+            input_resources=resources_path,
+            source_document=source_document_path,
+        )
+        output = {
             'media_assets': _result_data(result, 'media_assets'),
             'profile_input_resources': _result_data(result, 'profile_input_resources'),
             'warnings': (result.get('metadata') or {}).get('warnings') or [],
-        })
+        }
+        if source_document_path:
+            output['source_document'] = _result_data(result, 'source_document')
+        return _json_dumps(output)
 
     def resolve_visual_needs(
         self,
@@ -1232,7 +1244,12 @@ class WriterToolkitBase:
         output['write_result'] = published.get('publish_result') or {}
         return _json_dumps(output)
 
-    def load_document(self, user_input: str, stage: str = 'final') -> str:
+    def load_document(
+        self,
+        user_input: str,
+        stage: str = 'final',
+        media_store: str = '',
+    ) -> str:
         """Load a Feishu/Lark document and return its IR and target binding."""
         if stage not in {'outline', 'draft', 'final'}:
             raise ValueError('stage must be outline, draft, or final.')
@@ -1244,11 +1261,15 @@ class WriterToolkitBase:
         )
         result = WriterResourceTools(
             llm=None, artifact_store=str(root),
-        ).document_to_docir(target)
-        return _json_dumps({
+        ).document_to_docir(target, media_store=media_store)
+        output = {
             'source_document': _primary_data(result),
             'target_document': target.model_dump(exclude_defaults=True),
-        })
+            'warnings': (result.get('metadata') or {}).get('warnings') or [],
+        }
+        if media_store.strip():
+            output['source_media_resources'] = _result_data(result, 'media_input_resources')
+        return _json_dumps(output)
 
     def create_document(self, title: str, parent_uri: str = '') -> str:
         """Create an empty Feishu document and return its target binding."""

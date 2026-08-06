@@ -229,7 +229,11 @@ def writer_load_document(user_input: str, stage: str = 'final') -> dict:
     """Load a Feishu/Lark document as source IR and preserve its target binding."""
     root = _run_root('load-document')
     payload = _json_loads(
-        WriterResourceToolkit().load_document(user_input=user_input, stage=stage),
+        WriterResourceToolkit().load_document(
+            user_input=user_input,
+            stage=stage,
+            media_store=str(root / 'source-media'),
+        ),
         {},
     )
     return {
@@ -245,6 +249,13 @@ def writer_load_document(user_input: str, stage: str = 'final') -> dict:
             writer_schema('task.TargetDocument'),
             directory=root,
         ),
+        'source_media_resources': _save_json_artifact(
+            'source_media_resources',
+            json.dumps(payload.get('source_media_resources') or [], ensure_ascii=False),
+            writer_schema('task.InputResource'),
+            directory=root,
+        ),
+        'warnings': payload.get('warnings') or [],
     }
 
 
@@ -286,8 +297,12 @@ def writer_profile_resources(
     )
 
 
-def writer_collect_available_media(writing_task_path: str) -> dict:
-    """Collect user-attached images into the task's authoritative media library."""
+def writer_collect_available_media(
+    writing_task_path: str,
+    source_media_resources_path: str = '',
+    source_document_path: str = '',
+) -> dict:
+    """Collect attached, Markdown-linked, and Feishu-source images into the media library."""
     ctx = require_context()
     files_by_turn = ctx.params.get('history_files_per_turn') or {}
     file_paths: list[str] = []
@@ -306,6 +321,8 @@ def writer_collect_available_media(writing_task_path: str) -> dict:
         ),
         [],
     )
+    if source_media_resources_path:
+        resources.extend(_read_json_file(source_media_resources_path) or [])
     root = _run_root('collect-media')
     media_root = root / 'media'
     media_root.mkdir(parents=True, exist_ok=True)
@@ -314,6 +331,9 @@ def writer_collect_available_media(writing_task_path: str) -> dict:
         payload = _json_loads(toolkit.collect_available_media(
             writing_task_json=writing_task_json,
             input_resources_json=json.dumps(resources, ensure_ascii=False),
+            source_document_json=(
+                _read_json_string(source_document_path) if source_document_path else ''
+            ),
             media_store=str(media_root),
             use_vision_model=is_model_role_available('vlm'),
         ), {})
@@ -344,6 +364,13 @@ def writer_collect_available_media(writing_task_path: str) -> dict:
     return {
         'media_assets': media_assets_path,
         'profile_input_resources': profile_input_resources_path,
+        **({
+            'source_document': _save_writer_document(
+                'source_document',
+                payload.get('source_document') or {},
+                directory=root,
+            ),
+        } if payload.get('source_document') else {}),
         'warnings': payload.get('warnings') or [],
     }
 
