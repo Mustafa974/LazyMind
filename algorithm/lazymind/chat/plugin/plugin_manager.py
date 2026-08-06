@@ -1294,17 +1294,29 @@ def _commit_prepared_plugin(
 def build_cold_advance_tools(plugin_mode: str = 'dynamic') -> List[Any]:
     """Build only the cold-start advance tools allowed by the current policy."""
 
-    def advance_step(step_id: str) -> str:
+    def _cold_step_id(steps: List[Dict[str, Any]]) -> str:
+        if not isinstance(steps, list) or len(steps) != 1:
+            raise ValueError('cold-start advance requires exactly one step command.')
+        command = steps[0]
+        if not isinstance(command, dict):
+            raise ValueError('each steps item must be an object.')
+        step_id = str(command.get('step_id') or '').strip()
+        if not step_id:
+            raise ValueError('steps[0].step_id is required.')
+        return step_id
+
+    def advance_step(steps: List[Dict[str, Any]]) -> str:
         """Start the prepared plugin and wait for its first step to finish.
 
         Use after a ready trigger when current request policy calls for synchronous continuation.
 
         Args:
-            step_id: The launch_plan.first_step_id returned by trigger.
+            steps: Exactly one command containing the launch_plan.first_step_id returned by trigger.
 
         Returns:
             The first step result and live next-step guidance.
         """
+        step_id = _cold_step_id(steps)
         cfg = _agentic_config()
         if cfg.get('plugin_session_id') and cfg.get('plugin_id'):
             prepared = cfg.get('prepared_plugin') or {}
@@ -1319,17 +1331,18 @@ def build_cold_advance_tools(plugin_mode: str = 'dynamic') -> List[Any]:
             )
         return _commit_prepared_plugin(step_id, hand_off=False)
 
-    def advance_step_and_hand_off(step_id: str) -> str:
+    def advance_step_and_hand_off(steps: List[Dict[str, Any]]) -> str:
         """Start the prepared plugin and hand control off immediately.
 
         Use after a ready trigger when current request policy calls for an asynchronous boundary.
 
         Args:
-            step_id: The launch_plan.first_step_id returned by trigger.
+            steps: Exactly one command containing the launch_plan.first_step_id returned by trigger.
 
         Returns:
             Confirmation that the first plugin step was queued.
         """
+        step_id = _cold_step_id(steps)
         cfg = _agentic_config()
         if cfg.get('plugin_session_id') and cfg.get('plugin_id'):
             prepared = cfg.get('prepared_plugin') or {}

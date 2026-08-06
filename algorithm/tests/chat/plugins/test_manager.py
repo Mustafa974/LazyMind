@@ -192,6 +192,14 @@ def test_dynamic_launch_policy_defaults_to_hand_off():
     ]
 
 
+def test_cold_advance_tools_use_the_same_steps_schema_as_session_tools():
+    import inspect
+    from lazymind.chat.plugin import plugin_manager
+
+    for tool in plugin_manager.build_cold_advance_tools():
+        assert list(inspect.signature(tool).parameters) == ['steps']
+
+
 def test_cold_start_trigger_prepares_launch_without_creating_task(
         loaded_plugin, mock_write_agent_data, mock_agentic_config):
     from lazymind.chat.plugin import plugin_manager
@@ -438,7 +446,7 @@ def test_cold_advance_commits_exact_prepared_plan(
         if t.__name__ == 'advance_step_and_hand_off'
     )
 
-    result = handoff(step_id='step_a')
+    result = handoff(steps=[{'step_id': 'step_a'}])
 
     assert 'acceptance is pending' in result.lower()
     params = mock_write_agent_data.call_args.kwargs['params']
@@ -494,7 +502,7 @@ def test_cold_advance_rejects_tool_that_disagrees_with_launch_plan(
     )
 
     with pytest.raises(ValueError, match='requires advance_step'):
-        handoff(step_id='step_a')
+        handoff(steps=[{'step_id': 'step_a'}])
     assert not mock_write_agent_data.called
 
 
