@@ -51,8 +51,9 @@ provider-confirmed IR as the next artifact revision.
 Generation/rewrite mode:
 
 1. read the latest selected `outline_document`;
-2. regenerate section instructions;
-3. draft sections in the outline's representation;
+2. regenerate section instructions and the visual plan;
+3. resolve visual media into `resolved_media_assets`, then draft sections in the outline's
+   representation (Markdown sections may carry `media-asset://` image markers);
 4. assemble the complete draft without changing representation;
 5. save `draft_document`.
 

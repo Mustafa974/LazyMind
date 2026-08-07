@@ -867,6 +867,8 @@ class WriterToolkitBase:
         writing_context_json: str,
         on_delta: Callable[[str], None],
         on_section_end: Callable[[], None] | None = None,
+        visual_plan_json: str = '',
+        media_assets_json: str = '',
     ) -> str:
         """Generate Markdown sections through LazyLLM's non-tool streaming API."""
         return self._stream_draft_blocks(
@@ -876,6 +878,8 @@ class WriterToolkitBase:
             representation='markdown',
             on_delta=on_delta,
             on_section_end=on_section_end,
+            visual_plan_json=visual_plan_json,
+            media_assets_json=media_assets_json,
         )
 
     def stream_draft_blocks_ir(
@@ -962,11 +966,10 @@ class WriterToolkitBase:
                 'context': context_path,
                 'previous_blocks': sections,
             }
-            if representation == 'ir':
-                if visual_plan_path is not None:
-                    stream_kwargs['visual_plan'] = visual_plan_path
-                if media_assets_path is not None:
-                    stream_kwargs['media_assets'] = media_assets_path
+            if visual_plan_path is not None:
+                stream_kwargs['visual_plan'] = visual_plan_path
+            if media_assets_path is not None:
+                stream_kwargs['media_assets'] = media_assets_path
             with stream_factory(
                 **stream_kwargs,
             ) as stream:
