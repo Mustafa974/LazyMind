@@ -16,6 +16,7 @@ import (
 )
 
 const taskSSEHeartbeatInterval = 30 * time.Second
+const taskWriterSSEHeartbeatInterval = 2 * time.Second
 
 func isTerminal(status string) bool {
 	switch status {
@@ -40,6 +41,36 @@ func writeTaskHeartbeat(w http.ResponseWriter, flusher http.Flusher) {
 	if flusher != nil {
 		flusher.Flush()
 	}
+}
+
+func resetTaskHeartbeatTimer(timer *time.Timer) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	timer.Reset(taskWriterSSEHeartbeatInterval)
+}
+
+func isWriterDraftStreamTask(task *orm.SubAgentTask) bool {
+	if task == nil || task.AgentType != "plugin_step" {
+		return false
+	}
+	var params struct {
+		PluginID string `json:"plugin_id"`
+		StepID   string `json:"step_id"`
+	}
+	return json.Unmarshal(task.Params, &params) == nil &&
+		params.PluginID == "writer-plugin" && params.StepID == "write_document"
+}
+
+func writerDraftHeartbeatsEnabled(ctx context.Context, db *gorm.DB, taskID string) bool {
+	if db == nil {
+		return false
+	}
+	task, err := GetTask(ctx, db, taskID)
+	return err == nil && isWriterDraftStreamTask(task)
 }
 
 func isArtifactStreamEvent(eventType string) bool {
@@ -287,10 +318,16 @@ func tailRedisStream(
 		flusher.Flush()
 		return
 	}
+	artifactStreamStarted := len(sentArtifactStreamEvents) > 0
 	pollTicker := time.NewTicker(300 * time.Millisecond)
 	defer pollTicker.Stop()
-	heartbeatTicker := time.NewTicker(taskSSEHeartbeatInterval)
-	defer heartbeatTicker.Stop()
+	var heartbeatTimer *time.Timer
+	var heartbeat <-chan time.Time
+	if writerDraftHeartbeatsEnabled(ctx, db, taskID) {
+		heartbeatTimer = time.NewTimer(taskWriterSSEHeartbeatInterval)
+		heartbeat = heartbeatTimer.C
+		defer heartbeatTimer.Stop()
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -300,15 +337,21 @@ func tailRedisStream(
 				continue
 			}
 			ev = prepareTaskEventForSSE(ev, workspacePath)
-			writeArtifactStreamEventOnce(
+			if writeArtifactStreamEventOnce(
 				w, flusher, ev, sentArtifactStreamEvents,
-			)
+			) {
+				artifactStreamStarted = true
+				if heartbeatTimer != nil {
+					resetTaskHeartbeatTimer(heartbeatTimer)
+				}
+			}
 		case <-pollTicker.C:
 			events, err := StreamEventsFrom(ctx, stateStore, taskID, from)
 			if err != nil {
 				pollDBUntilTerminal(ctx, db, w, flusher, taskID, workspacePath)
 				return
 			}
+			wroteEvent := false
 			for _, raw := range events {
 				var ev TaskEvent
 				if json.Unmarshal([]byte(raw), &ev) != nil {
@@ -317,11 +360,14 @@ func tailRedisStream(
 				}
 				ev = prepareTaskEventForSSE(ev, workspacePath)
 				if isArtifactStreamEvent(ev.Type) {
-					writeArtifactStreamEventOnce(
+					wroteStreamEvent := writeArtifactStreamEventOnce(
 						w, flusher, ev, sentArtifactStreamEvents,
 					)
+					wroteEvent = wroteStreamEvent || wroteEvent
+					artifactStreamStarted = artifactStreamStarted || wroteStreamEvent
 				} else {
 					writeTaskSSE(w, flusher, ev)
+					wroteEvent = true
 				}
 				from++
 				if ev.Type == "done" || ev.Type == "error" {
@@ -329,6 +375,9 @@ func tailRedisStream(
 					flusher.Flush()
 					return
 				}
+			}
+			if heartbeatTimer != nil && artifactStreamStarted && wroteEvent {
+				resetTaskHeartbeatTimer(heartbeatTimer)
 			}
 			// Check DB terminal state in case: (a) Redis stream expired mid-flight, or
 			// (b) the task finished between the initial GetTask snapshot and the moment we
@@ -340,8 +389,9 @@ func tailRedisStream(
 				flusher.Flush()
 				return
 			}
-		case <-heartbeatTicker.C:
+		case <-heartbeat:
 			writeTaskHeartbeat(w, flusher)
+			heartbeatTimer.Reset(taskWriterSSEHeartbeatInterval)
 		}
 	}
 }
@@ -358,6 +408,8 @@ func pollDBUntilTerminal(
 	lastProgress := -1
 	sentArtifacts := map[string]bool{}
 	lastHeartbeat := time.Now()
+	heartbeatsEnabled := false
+	heartbeatsConfigured := false
 	for {
 		select {
 		case <-ctx.Done():
@@ -367,6 +419,10 @@ func pollDBUntilTerminal(
 		t, err := GetTask(ctx, db, taskID)
 		if err != nil {
 			return
+		}
+		if !heartbeatsConfigured {
+			heartbeatsEnabled = isWriterDraftStreamTask(t)
+			heartbeatsConfigured = true
 		}
 		if t.ProgressPct != lastProgress {
 			writeTaskSSE(w, flusher, TaskEvent{
@@ -397,7 +453,7 @@ func pollDBUntilTerminal(
 			flusher.Flush()
 			return
 		}
-		if time.Since(lastHeartbeat) >= taskSSEHeartbeatInterval {
+		if heartbeatsEnabled && time.Since(lastHeartbeat) >= taskWriterSSEHeartbeatInterval {
 			writeTaskHeartbeat(w, flusher)
 			lastHeartbeat = time.Now()
 		}
