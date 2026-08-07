@@ -11,6 +11,47 @@ DRAFT_STREAM_EVENT_TYPES = frozenset({
     'artifact_stream_abort',
 })
 
+SUBAGENT_SSE_HEARTBEAT_INTERVAL = 2.0
+SUBAGENT_SSE_HEARTBEAT = ': heartbeat\n\n'
+
+
+async def with_idle_sse_heartbeats(
+    events: AsyncIterator[str],
+    heartbeat_interval: float = SUBAGENT_SSE_HEARTBEAT_INTERVAL,
+) -> AsyncIterator[str]:
+    """Emit an SSE comment only when the upstream has been idle."""
+    iterator = events.__aiter__()
+    next_event: asyncio.Task[Any] | None = asyncio.create_task(iterator.__anext__())
+    timeout = heartbeat_interval if heartbeat_interval > 0 else None
+    try:
+        while next_event is not None:
+            done, _ = await asyncio.wait(
+                {next_event},
+                timeout=timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not done:
+                # Prefer a business event that became ready at the timeout boundary.
+                await asyncio.sleep(0)
+                if not next_event.done():
+                    yield SUBAGENT_SSE_HEARTBEAT
+                    continue
+
+            try:
+                event = next_event.result()
+            except StopAsyncIteration:
+                next_event = None
+                continue
+            yield event
+            next_event = asyncio.create_task(iterator.__anext__())
+    finally:
+        if next_event is not None and not next_event.done():
+            next_event.cancel()
+            try:
+                await next_event
+            except (asyncio.CancelledError, StopAsyncIteration):
+                pass
+
 
 async def merge_agent_and_stream_events(
     agent_events: AsyncIterator[Any],
@@ -60,4 +101,10 @@ async def merge_agent_and_stream_events(
                 pending.cancel()
 
 
-__all__ = ['DRAFT_STREAM_EVENT_TYPES', 'merge_agent_and_stream_events']
+__all__ = [
+    'DRAFT_STREAM_EVENT_TYPES',
+    'SUBAGENT_SSE_HEARTBEAT',
+    'SUBAGENT_SSE_HEARTBEAT_INTERVAL',
+    'merge_agent_and_stream_events',
+    'with_idle_sse_heartbeats',
+]

@@ -15,7 +15,7 @@ import (
 	"lazymind/core/store"
 )
 
-const taskSSEHeartbeatInterval = 30 * time.Second
+const taskSSEHeartbeatInterval = 2 * time.Second
 
 func isTerminal(status string) bool {
 	switch status {
@@ -40,6 +40,16 @@ func writeTaskHeartbeat(w http.ResponseWriter, flusher http.Flusher) {
 	if flusher != nil {
 		flusher.Flush()
 	}
+}
+
+func resetTaskHeartbeatTimer(timer *time.Timer) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	timer.Reset(taskSSEHeartbeatInterval)
 }
 
 func isArtifactStreamEvent(eventType string) bool {
@@ -287,10 +297,11 @@ func tailRedisStream(
 		flusher.Flush()
 		return
 	}
+	artifactStreamStarted := len(sentArtifactStreamEvents) > 0
 	pollTicker := time.NewTicker(300 * time.Millisecond)
 	defer pollTicker.Stop()
-	heartbeatTicker := time.NewTicker(taskSSEHeartbeatInterval)
-	defer heartbeatTicker.Stop()
+	heartbeatTimer := time.NewTimer(taskSSEHeartbeatInterval)
+	defer heartbeatTimer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -300,15 +311,19 @@ func tailRedisStream(
 				continue
 			}
 			ev = prepareTaskEventForSSE(ev, workspacePath)
-			writeArtifactStreamEventOnce(
+			if writeArtifactStreamEventOnce(
 				w, flusher, ev, sentArtifactStreamEvents,
-			)
+			) {
+				artifactStreamStarted = true
+				resetTaskHeartbeatTimer(heartbeatTimer)
+			}
 		case <-pollTicker.C:
 			events, err := StreamEventsFrom(ctx, stateStore, taskID, from)
 			if err != nil {
 				pollDBUntilTerminal(ctx, db, w, flusher, taskID, workspacePath)
 				return
 			}
+			wroteEvent := false
 			for _, raw := range events {
 				var ev TaskEvent
 				if json.Unmarshal([]byte(raw), &ev) != nil {
@@ -317,11 +332,14 @@ func tailRedisStream(
 				}
 				ev = prepareTaskEventForSSE(ev, workspacePath)
 				if isArtifactStreamEvent(ev.Type) {
-					writeArtifactStreamEventOnce(
+					wroteStreamEvent := writeArtifactStreamEventOnce(
 						w, flusher, ev, sentArtifactStreamEvents,
 					)
+					wroteEvent = wroteStreamEvent || wroteEvent
+					artifactStreamStarted = artifactStreamStarted || wroteStreamEvent
 				} else {
 					writeTaskSSE(w, flusher, ev)
+					wroteEvent = true
 				}
 				from++
 				if ev.Type == "done" || ev.Type == "error" {
@@ -329,6 +347,9 @@ func tailRedisStream(
 					flusher.Flush()
 					return
 				}
+			}
+			if artifactStreamStarted && wroteEvent {
+				resetTaskHeartbeatTimer(heartbeatTimer)
 			}
 			// Check DB terminal state in case: (a) Redis stream expired mid-flight, or
 			// (b) the task finished between the initial GetTask snapshot and the moment we
@@ -340,8 +361,9 @@ func tailRedisStream(
 				flusher.Flush()
 				return
 			}
-		case <-heartbeatTicker.C:
+		case <-heartbeatTimer.C:
 			writeTaskHeartbeat(w, flusher)
+			heartbeatTimer.Reset(taskSSEHeartbeatInterval)
 		}
 	}
 }
