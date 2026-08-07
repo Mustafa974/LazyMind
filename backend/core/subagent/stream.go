@@ -15,7 +15,7 @@ import (
 	"lazymind/core/store"
 )
 
-const taskSSEHeartbeatInterval = 2 * time.Second
+const taskSSEHeartbeatInterval = 30 * time.Second
 const taskWriterSSEHeartbeatInterval = 2 * time.Second
 
 func isTerminal(status string) bool {
