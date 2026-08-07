@@ -15,6 +15,7 @@ from lazymind.chat.api import (
     model_check_routes,
     model_features_routes,
     plugin_routes,
+    plugin_action_routes,
     subagent_routes,
 )
 from lazymind.chat.service.utils.trace_archive import start_local_trace_maintenance
@@ -31,6 +32,7 @@ def register_chat_routers(app: FastAPI) -> FastAPI:
     # plugin routes must always be registered: Go backend calls /api/plugin/slot-binding
     # and /api/plugin/driver regardless of whether router mode is enabled.
     app.include_router(plugin_routes.router)
+    app.include_router(plugin_action_routes.router)
 
     if not config['enable_router']:
         app.include_router(chat_routes.router)
