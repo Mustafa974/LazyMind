@@ -9,14 +9,14 @@
   transition: border-color 0.2s;
 
   &--expanded {
-    // Fit content height instead of stretching to the full viewport;
-    // only grow up to the available area, then scroll the body.
+    // Keep the expanded panel inside the viewport. Individual artifact content
+    // owns scrolling so the middle workspace never becomes a scroll container.
     position: absolute;
     top: 16px;
     left: 16px;
     right: calc(clamp(320px, 27vw, 440px) + 16px);
-    bottom: auto;
-    max-height: calc(100% - 32px);
+    bottom: 16px;
+    min-height: 0;
     z-index: 100;
     border-color: #dbe4f0;
     border-radius: 12px;
@@ -29,10 +29,64 @@
     }
 
     .plugin-panel__body {
-      flex: 1 1 auto;
+      display: flex;
+      flex: 1 1 0;
+      flex-direction: column;
+      min-height: 0;
+      max-height: none;
+      overflow: hidden;
+    }
+
+    .plugin-panel__body > [role='tabpanel']:not([hidden]),
+    .plugin-panel__tab-content {
+      display: flex;
+      flex: 1 1 0;
+      flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .plugin-panel__tab-content--list > .plugin-panel__named-slot {
+      flex: 1 1 0;
+      min-height: 0;
+    }
+
+    .plugin-panel__tab-content--list
+      > .plugin-panel__named-slot
+      > [role='button'] {
+      display: flex;
+      flex: 1 1 0;
+      min-height: 0;
+    }
+
+    .plugin-panel__tab-content--list
+      > .plugin-panel__named-slot
+      > [role='button']
+      > .plugin-slot--artifact:not(.plugin-slot--pending):not(.plugin-slot--error) {
+      flex: 1 1 0;
+      min-height: 0;
+    }
+
+    .plugin-panel__tab-content--list
+      > .plugin-panel__named-slot
+      .plugin-slot__artifact-body {
+      flex: 1 1 0;
       min-height: 0;
       max-height: none;
       overflow: auto;
+      overscroll-behavior: contain;
+    }
+
+    .writer-markdown-editor {
+      flex: 1 1 0;
+      min-height: 0;
+      max-height: none;
+    }
+
+    .writer-markdown-editor__surface {
+      flex: 1 1 0;
+      min-height: 0;
+      max-height: none;
     }
   }
 
@@ -2200,6 +2254,12 @@
     background: #dbe2ea;
     border-radius: 999px;
   }
+}
+
+.plugin-slot__artifact-body--markdown {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .plugin-slot__artifact-footer {

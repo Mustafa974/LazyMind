@@ -26,8 +26,8 @@ import {
   isWriterIrSource,
   SlotRenderer,
   SlotDownloadContext,
-  SlotEditingContext,
 } from './SlotComponents';
+import { MarkdownWorkflowActionContext, SlotEditingContext } from './slotEditingContext';
 import './PluginPanel.scss';
 
 /** Parse a JSON intent context string and return the text field, or '' if empty/invalid. */
@@ -1294,7 +1294,23 @@ export function PluginPanel({
     void runFooterAction(() => onSendMessage?.(`${t('chat.pluginRollbackPrefix')}${stepId}`));
   }
 
+  const nextTab = tabs[activeTabIdx + 1];
+  const markdownWorkflowAction = !sessionReadOnly && onSendMessage
+    ? displayStatus === 'waiting'
+      ? {
+        label: t('chat.writerMarkdown.saveAndContinue'),
+        onProceed: handleContinue,
+      }
+      : session.status === 'completed' && nextTab
+        ? {
+          label: t('chat.writerMarkdown.saveAndReexecute', { step: nextTab.label }),
+          onProceed: () => handleRollback(getTabStepId(nextTab)),
+        }
+        : null
+    : null;
+
   const panel = (
+    <MarkdownWorkflowActionContext.Provider value={markdownWorkflowAction}>
     <SlotEditingContext.Provider value={{ setEditing: handleSlotEditingChange, registerFlush }}>
     <div
       className={`plugin-panel plugin-panel--${displayStatus}${collapsed ? ' plugin-panel--collapsed' : ''}${expanded ? ' plugin-panel--expanded' : ''}`}
@@ -1597,6 +1613,7 @@ export function PluginPanel({
       />
     )}
     </SlotEditingContext.Provider>
+    </MarkdownWorkflowActionContext.Provider>
   );
 
   if (expanded) {

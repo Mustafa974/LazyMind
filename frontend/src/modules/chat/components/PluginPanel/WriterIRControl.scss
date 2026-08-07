@@ -194,6 +194,14 @@
   line-height: 1;
 }
 
+.writer-ir__format-toolbar .writer-ir__format-button--rewrite {
+  width: auto;
+  min-width: 58px;
+  padding: 0 8px !important;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .writer-ir__format-toolbar .writer-ir__format-button:hover:not(:disabled) {
   border-color: transparent;
   background: #f1f5f9;

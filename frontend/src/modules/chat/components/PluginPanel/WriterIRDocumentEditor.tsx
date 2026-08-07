@@ -85,6 +85,11 @@ const WRITER_CODE_LANGUAGES = [
   ['docker', 'Dockerfile'],
 ] as const;
 
+export interface WriterIRRewriteSelection {
+  nodeId: string;
+  selectedText: string;
+}
+
 interface WriterIRDocumentEditorProps {
   document: WriterDocument;
   ariaLabel: string;
@@ -92,6 +97,7 @@ interface WriterIRDocumentEditorProps {
   onFocus: () => void;
   onBlur: () => void;
   disabled?: boolean;
+  onRewriteSelection?: (selection: WriterIRRewriteSelection) => void;
 }
 
 function escapeHtml(value: string): string {
@@ -992,6 +998,7 @@ export function WriterIRDocumentEditor({
   onFocus,
   onBlur,
   disabled = false,
+  onRewriteSelection,
 }: WriterIRDocumentEditorProps) {
   const { t } = useTranslation();
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -2009,6 +2016,19 @@ export function WriterIRDocumentEditor({
     recordSelection();
   };
 
+  const requestRewriteSelection = useCallback(() => {
+    const selection = savedSelectionRef.current;
+    if (!selection || selection.end <= selection.start || !onRewriteSelection) return;
+    const block = findWriterBlock(document.blocks, selection.nodeId);
+    if (!block) return;
+    const selectedText = Array.from(block.content ?? '')
+      .slice(selection.start, selection.end)
+      .join('')
+      .trim();
+    if (!selectedText) return;
+    onRewriteSelection({ nodeId: block.node_id, selectedText });
+  }, [document.blocks, onRewriteSelection]);
+
   return (
     <div
       className='writer-ir__editor-shell'
@@ -2257,6 +2277,22 @@ export function WriterIRDocumentEditor({
               </div>
             )}
           </div>
+          {onRewriteSelection && (
+            <>
+              <span className='writer-ir__format-divider' aria-hidden='true' />
+              <button
+                type='button'
+                className='writer-ir__format-button writer-ir__format-button--rewrite'
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={requestRewriteSelection}
+                disabled={disabled || !hasTextSelection}
+                aria-label={t('chat.artifactRewrite.action')}
+                title={t('chat.artifactRewrite.action')}
+              >
+                {t('chat.artifactRewrite.action')}
+              </button>
+            </>
+          )}
         </div>
       )}
       <article

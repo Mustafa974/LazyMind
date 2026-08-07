@@ -363,6 +363,7 @@ interface PluginStore {
     value: any,
     contentType?: string,
     mode?: 'draft' | 'checkpoint',
+    baseRevision?: number,
   ) => Promise<number | undefined>;
   reorderSlotItems: (sessionId: string, slotId: string, newSortOrderSeq: number[], version: number) => Promise<void>;
   getSlotVersions: (sessionId: string, slotId: string, listIndex: number) => Promise<SlotVersionEntry[]>;
@@ -570,9 +571,9 @@ export const usePluginStore = create<PluginStore>()((set, get) => ({
     await PluginSessionApi().deleteSlotItem(sessionId, slotId, listIndex, orderVersion);
   },
 
-  patchSlotItemValue: async (sessionId, slotId, listIndex, value, contentType, mode) => {
+  patchSlotItemValue: async (sessionId, slotId, listIndex, value, contentType, mode, baseRevision) => {
     const res = await PluginSessionApi().patchSlotItem(
-      sessionId, slotId, listIndex, value, contentType, mode,
+      sessionId, slotId, listIndex, value, contentType, mode, baseRevision,
     );
     const revision = res?.data?.data?.revision;
     return typeof revision === 'number' ? revision : undefined;
