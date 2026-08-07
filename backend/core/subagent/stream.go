@@ -16,6 +16,7 @@ import (
 )
 
 const taskSSEHeartbeatInterval = 2 * time.Second
+const taskWriterSSEHeartbeatInterval = 2 * time.Second
 
 func isTerminal(status string) bool {
 	switch status {
@@ -49,7 +50,7 @@ func resetTaskHeartbeatTimer(timer *time.Timer) {
 		default:
 		}
 	}
-	timer.Reset(taskSSEHeartbeatInterval)
+	timer.Reset(taskWriterSSEHeartbeatInterval)
 }
 
 func isWriterDraftStreamTask(task *orm.SubAgentTask) bool {
@@ -323,7 +324,7 @@ func tailRedisStream(
 	var heartbeatTimer *time.Timer
 	var heartbeat <-chan time.Time
 	if writerDraftHeartbeatsEnabled(ctx, db, taskID) {
-		heartbeatTimer = time.NewTimer(taskSSEHeartbeatInterval)
+		heartbeatTimer = time.NewTimer(taskWriterSSEHeartbeatInterval)
 		heartbeat = heartbeatTimer.C
 		defer heartbeatTimer.Stop()
 	}
@@ -390,7 +391,7 @@ func tailRedisStream(
 			}
 		case <-heartbeat:
 			writeTaskHeartbeat(w, flusher)
-			heartbeatTimer.Reset(taskSSEHeartbeatInterval)
+			heartbeatTimer.Reset(taskWriterSSEHeartbeatInterval)
 		}
 	}
 }
@@ -452,7 +453,7 @@ func pollDBUntilTerminal(
 			flusher.Flush()
 			return
 		}
-		if heartbeatsEnabled && time.Since(lastHeartbeat) >= taskSSEHeartbeatInterval {
+		if heartbeatsEnabled && time.Since(lastHeartbeat) >= taskWriterSSEHeartbeatInterval {
 			writeTaskHeartbeat(w, flusher)
 			lastHeartbeat = time.Now()
 		}
