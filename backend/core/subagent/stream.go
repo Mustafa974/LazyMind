@@ -52,6 +52,26 @@ func resetTaskHeartbeatTimer(timer *time.Timer) {
 	timer.Reset(taskSSEHeartbeatInterval)
 }
 
+func isWriterDraftStreamTask(task *orm.SubAgentTask) bool {
+	if task == nil || task.AgentType != "plugin_step" {
+		return false
+	}
+	var params struct {
+		PluginID string `json:"plugin_id"`
+		StepID   string `json:"step_id"`
+	}
+	return json.Unmarshal(task.Params, &params) == nil &&
+		params.PluginID == "writer-plugin" && params.StepID == "write_document"
+}
+
+func writerDraftHeartbeatsEnabled(ctx context.Context, db *gorm.DB, taskID string) bool {
+	if db == nil {
+		return false
+	}
+	task, err := GetTask(ctx, db, taskID)
+	return err == nil && isWriterDraftStreamTask(task)
+}
+
 func isArtifactStreamEvent(eventType string) bool {
 	switch eventType {
 	case "artifact_stream_start", "artifact_stream", "artifact_stream_end", "artifact_stream_abort":
@@ -300,8 +320,13 @@ func tailRedisStream(
 	artifactStreamStarted := len(sentArtifactStreamEvents) > 0
 	pollTicker := time.NewTicker(300 * time.Millisecond)
 	defer pollTicker.Stop()
-	heartbeatTimer := time.NewTimer(taskSSEHeartbeatInterval)
-	defer heartbeatTimer.Stop()
+	var heartbeatTimer *time.Timer
+	var heartbeat <-chan time.Time
+	if writerDraftHeartbeatsEnabled(ctx, db, taskID) {
+		heartbeatTimer = time.NewTimer(taskSSEHeartbeatInterval)
+		heartbeat = heartbeatTimer.C
+		defer heartbeatTimer.Stop()
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -315,7 +340,9 @@ func tailRedisStream(
 				w, flusher, ev, sentArtifactStreamEvents,
 			) {
 				artifactStreamStarted = true
-				resetTaskHeartbeatTimer(heartbeatTimer)
+				if heartbeatTimer != nil {
+					resetTaskHeartbeatTimer(heartbeatTimer)
+				}
 			}
 		case <-pollTicker.C:
 			events, err := StreamEventsFrom(ctx, stateStore, taskID, from)
@@ -348,7 +375,7 @@ func tailRedisStream(
 					return
 				}
 			}
-			if artifactStreamStarted && wroteEvent {
+			if heartbeatTimer != nil && artifactStreamStarted && wroteEvent {
 				resetTaskHeartbeatTimer(heartbeatTimer)
 			}
 			// Check DB terminal state in case: (a) Redis stream expired mid-flight, or
@@ -361,7 +388,7 @@ func tailRedisStream(
 				flusher.Flush()
 				return
 			}
-		case <-heartbeatTimer.C:
+		case <-heartbeat:
 			writeTaskHeartbeat(w, flusher)
 			heartbeatTimer.Reset(taskSSEHeartbeatInterval)
 		}
@@ -380,6 +407,8 @@ func pollDBUntilTerminal(
 	lastProgress := -1
 	sentArtifacts := map[string]bool{}
 	lastHeartbeat := time.Now()
+	heartbeatsEnabled := false
+	heartbeatsConfigured := false
 	for {
 		select {
 		case <-ctx.Done():
@@ -389,6 +418,10 @@ func pollDBUntilTerminal(
 		t, err := GetTask(ctx, db, taskID)
 		if err != nil {
 			return
+		}
+		if !heartbeatsConfigured {
+			heartbeatsEnabled = isWriterDraftStreamTask(t)
+			heartbeatsConfigured = true
 		}
 		if t.ProgressPct != lastProgress {
 			writeTaskSSE(w, flusher, TaskEvent{
@@ -419,7 +452,7 @@ func pollDBUntilTerminal(
 			flusher.Flush()
 			return
 		}
-		if time.Since(lastHeartbeat) >= taskSSEHeartbeatInterval {
+		if heartbeatsEnabled && time.Since(lastHeartbeat) >= taskSSEHeartbeatInterval {
 			writeTaskHeartbeat(w, flusher)
 			lastHeartbeat = time.Now()
 		}

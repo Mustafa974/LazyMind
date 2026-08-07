@@ -30,18 +30,16 @@ async def run_subagent(
     tool_config: Annotated[Optional[Dict[str, Any]], Body(description='Per-request tool credentials (API keys)')] = None,
 ):
     from lazymind.chat.engine.subagent.runner import run_subagent_stream
-    from lazymind.chat.engine.subagent.stream_events import with_idle_sse_heartbeats
 
-    events = run_subagent_stream(
-        task_id=task_id,
-        db_dsn=db_dsn,
-        resume=bool(resume),
-        model_config=llm_config,
-        tool_config=tool_config,
-        agent_type=agent_type,
-        tools=tools,
-    )
     return StreamingResponse(
-        with_idle_sse_heartbeats(events),
+        run_subagent_stream(
+            task_id=task_id,
+            db_dsn=db_dsn,
+            resume=bool(resume),
+            model_config=llm_config,
+            tool_config=tool_config,
+            agent_type=agent_type,
+            tools=tools,
+        ),
         media_type='text/event-stream',
     )
