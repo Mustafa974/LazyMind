@@ -9,6 +9,9 @@ import (
 type WriterDocumentSyncRequest struct {
 	SourceDocument  json.RawMessage `json:"source_document"`
 	RevisedDocument json.RawMessage `json:"revised_document"`
+	MarkdownContent string          `json:"markdown_content"`
+	TargetDocument  json.RawMessage `json:"target_document"`
+	Title           string          `json:"title"`
 	ToolConfig      map[string]any  `json:"tool_config"`
 }
 
@@ -24,15 +27,28 @@ func SyncWriterDocument(
 	ctx context.Context,
 	req WriterDocumentSyncRequest,
 ) (*WriterDocumentSyncResponse, int, error) {
+	arguments := map[string]any{}
+	if len(req.SourceDocument) > 0 {
+		arguments["source_document"] = req.SourceDocument
+	}
+	if len(req.RevisedDocument) > 0 {
+		arguments["revised_document"] = req.RevisedDocument
+	}
+	if req.MarkdownContent != "" {
+		arguments["markdown_content"] = req.MarkdownContent
+	}
+	if len(req.TargetDocument) > 0 {
+		arguments["target_document"] = req.TargetDocument
+	}
+	if req.Title != "" {
+		arguments["title"] = req.Title
+	}
 	action, status, err := InvokePluginAction(ctx, PluginActionInvokeRequest{
-		PluginID: "writer-plugin",
-		Action:   "sync_document",
-		Phase:    "execute",
-		Slot:     "draft_document",
-		Arguments: map[string]any{
-			"source_document":  req.SourceDocument,
-			"revised_document": req.RevisedDocument,
-		},
+		PluginID:   "writer-plugin",
+		Action:     "sync_document",
+		Phase:      "execute",
+		Slot:       "draft_document",
+		Arguments:  arguments,
 		ToolConfig: req.ToolConfig,
 	})
 	if err != nil {
