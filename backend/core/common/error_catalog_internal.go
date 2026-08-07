@@ -444,6 +444,7 @@ func init() {
 		"session_ids required", "invalid cadence expression", "invalid cadence metadata",
 		"cadence interval must be between 1 and 52", "task description contains sensitive content",
 		"task description contains sensitive word",
+		"invalid artifact action preview request", "invalid artifact action target",
 	} {
 		registerAdditionalErrorAlias(source, "Invalid request", http.StatusBadRequest, 2000103)
 	}
@@ -454,12 +455,16 @@ func init() {
 		registerAdditionalErrorAlias(source, "Conflict", http.StatusConflict, 2000107)
 	}
 	registerAdditionalErrorAlias("knowledge base is not readable", "forbidden", http.StatusForbidden, 2000102)
+	for _, source := range []string{"plugin session not found", "selected artifact not found"} {
+		registerAdditionalErrorAlias(source, "Resource not found", http.StatusNotFound, 2000106)
+	}
 	registerAdditionalErrorAlias("feishu authorization required", "unauthorized", http.StatusUnauthorized, 2000104)
 	registerAdditionalErrorAlias("dataset_ids is required", "dataset_ids required", http.StatusBadRequest, 2001349)
 	for _, source := range []string{
 		"no chat model configured", "failed to deliver tool-limit decision", "update search config failed",
 		"marshal writerdocument artifact failed", "artifact save failed", "decrypt api key failed",
 		"encrypt api key failed", "failed to create waiting task",
+		"invalid plugin action response",
 		"unsupported model provider credential ciphertext", "decode sensitive-word check",
 	} {
 		registerAdditionalErrorAlias(source, "Internal server error", http.StatusInternalServerError, 2000000)
@@ -467,6 +472,7 @@ func init() {
 	for _, source := range []string{
 		"channel intent classification failed", "writer document sync failed", "sensitive-word check unavailable",
 		"sensitive-word check failed",
+		"plugin artifact action failed",
 	} {
 		registerAdditionalErrorAlias(source, "Upstream service error", http.StatusBadGateway, 2000110)
 	}

@@ -3,10 +3,7 @@ package algo
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"time"
-
-	"lazymind/core/common"
+	"fmt"
 )
 
 type WriterDocumentSyncRequest struct {
@@ -27,19 +24,23 @@ func SyncWriterDocument(
 	ctx context.Context,
 	req WriterDocumentSyncRequest,
 ) (*WriterDocumentSyncResponse, int, error) {
-	var response WriterDocumentSyncResponse
-	err := common.ApiPost(
-		ctx,
-		common.JoinURL(common.ChatServiceEndpoint(), "/api/writer/documents:sync"),
-		req,
-		nil,
-		&response,
-		2*time.Minute,
-	)
-	status := 0
-	var httpErr *common.HTTPError
-	if errors.As(err, &httpErr) {
-		status = httpErr.StatusCode
+	action, status, err := InvokePluginAction(ctx, PluginActionInvokeRequest{
+		PluginID: "writer-plugin",
+		Action:   "sync_document",
+		Phase:    "execute",
+		Slot:     "draft_document",
+		Arguments: map[string]any{
+			"source_document":  req.SourceDocument,
+			"revised_document": req.RevisedDocument,
+		},
+		ToolConfig: req.ToolConfig,
+	})
+	if err != nil {
+		return nil, status, err
 	}
-	return &response, status, err
+	var response WriterDocumentSyncResponse
+	if err := json.Unmarshal(action.Result, &response); err != nil {
+		return nil, status, fmt.Errorf("decode sync_document action response: %w", err)
+	}
+	return &response, status, nil
 }

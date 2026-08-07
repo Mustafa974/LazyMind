@@ -1974,6 +1974,18 @@ type writerDocumentWriteBackOpenAPIRequest struct {
 	BaseRevision int `json:"base_revision"`
 }
 
+type artifactActionPathParams struct {
+	SessionID string `path:"session_id"`
+	SlotID    string `path:"slot_id"`
+	ListIndex int    `path:"list_index"`
+}
+
+type artifactActionPreviewOpenAPIRequest struct {
+	Action       string         `json:"action"`
+	BaseRevision int            `json:"base_revision"`
+	Input        map[string]any `json:"input"`
+}
+
 func registeredCoreOperations() []openAPIOperation {
 	jsonBodyOf := func(v any, required bool) *openAPIBody {
 		return &openAPIBody{Required: required, ContentType: "application/json", Schema: schemaSource{Type: v}}
@@ -2029,6 +2041,15 @@ func registeredCoreOperations() []openAPIOperation {
 		{Method: "POST", Path: "/plugin-drafts/{draft_id}:confirm-workflow", Summary: "Confirm Skill workflow candidate", Tags: []string{"plugin"}, PathParams: pluginDraftPathParams{}, RequestBody: jsonBodyOf(pluginWorkflowConfirmOpenAPIRequest{}, true), Responses: map[int]openAPIResponse{200: evoJSONResp("Confirmation result")}},
 		{Method: "POST", Path: "/plugin-drafts/{draft_id}:repair-preview", Summary: "Preview Plugin repair", Tags: []string{"plugin"}, PathParams: pluginDraftPathParams{}, RequestBody: jsonBodyOf(pluginRepairPreviewOpenAPIRequest{}, true), Responses: map[int]openAPIResponse{200: evoJSONResp("Repair preview")}},
 		{Method: "GET", Path: "/plugin-drafts/{draft_id}/repair-runs/{repair_id}", Summary: "Get Plugin repair run", Tags: []string{"plugin"}, PathParams: pluginRepairRunPathParams{}, Responses: map[int]openAPIResponse{200: evoJSONResp("Repair run")}},
+		{
+			Method:      "POST",
+			Path:        "/plugin-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}:action-preview",
+			Summary:     "Preview a plugin-owned artifact action",
+			Tags:        []string{"plugin"},
+			PathParams:  artifactActionPathParams{},
+			RequestBody: jsonBodyOf(artifactActionPreviewOpenAPIRequest{}, true),
+			Responses:   map[int]openAPIResponse{200: evoJSONResp("Artifact action preview")},
+		},
 		{
 			Method:      "POST",
 			Path:        "/plugin-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}:sync-writer-document",
