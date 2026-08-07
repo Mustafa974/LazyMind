@@ -1,4 +1,5 @@
 .writer-markdown-editor {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -35,6 +36,21 @@
 .writer-markdown-editor__surface .mdxeditor-root-contenteditable {
   min-height: 300px;
   padding: 20px 24px;
+}
+
+.writer-markdown-editor__rewrite-layer {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  pointer-events: none;
+}
+
+.writer-markdown-editor__surface p.artifact-rewrite-inline-diff,
+.writer-markdown-editor__surface p.artifact-rewrite-inline-diff [data-lexical-text='true'] {
+  color: transparent;
+  caret-color: transparent;
+  text-decoration-color: transparent;
+  user-select: none;
 }
 
 .writer-markdown-editor__notice {

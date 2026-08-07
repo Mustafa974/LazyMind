@@ -234,6 +234,12 @@ export interface WriteBackWriterDocumentResult {
   document: Record<string, unknown>;
 }
 
+export interface WriteBackWriterDocumentRequest {
+  base_revision: number;
+  source_document: Record<string, unknown>;
+  revised_document: Record<string, unknown>;
+}
+
 export type RewriteSelection =
   | { type: 'ir'; node_id: string }
   | { type: 'markdown'; selected_text: string };

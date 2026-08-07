@@ -1,20 +1,29 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
 import ReactDOM from 'react-dom';
+import { diffWordsWithSpace } from 'diff';
 import { useTranslation } from 'react-i18next';
 import {
   PluginSessionApi,
   type RewriteSelection,
   type RewriteSelectionPreview,
 } from '@/modules/chat/utils/request';
+import type { SelectionActionAnchor } from './artifactRewriteSelection';
 import './ArtifactRewriteDialog.scss';
 
-export type ArtifactRewriteSelection = RewriteSelection & { selectedText: string };
+export type ArtifactRewriteSelection = RewriteSelection & {
+  selectedText: string;
+  anchor?: SelectionActionAnchor;
+  paragraph?: HTMLElement;
+  startOffset?: number;
+};
 
 interface ArtifactRewriteDialogProps {
   open: boolean;
@@ -25,6 +34,7 @@ interface ArtifactRewriteDialogProps {
   selection: ArtifactRewriteSelection | null;
   onClose: () => void;
   onApplied: (revision?: number) => void;
+  onPreviewReady?: (preview: RewriteSelectionPreview) => void;
 }
 
 type DialogPhase = 'form' | 'previewing' | 'ready' | 'applying';
@@ -54,6 +64,21 @@ function errorMessage(code: string | undefined, fallback: string): string {
   return fallback;
 }
 
+function renderDiff(oldText: string, newText: string) {
+  return diffWordsWithSpace(oldText, newText).map((part, index) => (
+    <span
+      className={part.added
+        ? 'artifact-rewrite-dialog__diff-addition'
+        : part.removed
+          ? 'artifact-rewrite-dialog__diff-removal'
+          : undefined}
+      key={`${part.value}-${index}`}
+    >
+      {part.value}
+    </span>
+  ));
+}
+
 function isReadyPreview(value: unknown): value is RewriteSelectionPreview {
   if (!value || typeof value !== 'object') return false;
   const data = value as RewriteSelectionPreview;
@@ -75,6 +100,7 @@ export function ArtifactRewriteDialog({
   selection,
   onClose,
   onApplied,
+  onPreviewReady,
 }: ArtifactRewriteDialogProps) {
   const { t } = useTranslation();
   const [instruction, setInstruction] = useState('');
@@ -140,6 +166,11 @@ export function ArtifactRewriteDialog({
         throw new Error('invalid preview response');
       }
       if (!mountedRef.current || requestId !== requestIdRef.current) return;
+      if (onPreviewReady) {
+        onPreviewReady(result);
+        onClose();
+        return;
+      }
       setPreview(result);
       setPhase('ready');
     } catch (requestError) {
@@ -147,7 +178,7 @@ export function ArtifactRewriteDialog({
       setError(t(errorMessage(errorCode(requestError), 'chat.artifactRewrite.errors.previewFailed')));
       setPhase('form');
     }
-  }, [baseRevision, instruction, listIndex, phase, selection, sessionId, slotId, t]);
+  }, [baseRevision, instruction, listIndex, onClose, onPreviewReady, phase, selection, sessionId, slotId, t]);
 
   const applyPreview = useCallback(async () => {
     if (!preview || phase !== 'ready') return;
@@ -162,7 +193,7 @@ export function ArtifactRewriteDialog({
         preview.artifact.value,
         preview.artifact.content_type,
         'checkpoint',
-        undefined,
+        preview.base_revision,
         { silentError: true } as never,
       );
       const result = response?.data?.data;
@@ -184,93 +215,259 @@ export function ArtifactRewriteDialog({
     if (event.key === 'Escape') {
       event.preventDefault();
       close();
-      return;
-    }
-    if (event.key !== 'Tab') return;
-    const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(
-      'button:not(:disabled), textarea:not(:disabled)',
-    ));
-    if (focusable.length === 0) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
     }
   }, [close]);
 
   if (!open || !selection) return null;
   const busy = phase === 'previewing' || phase === 'applying';
   const canPreview = phase === 'form' && instruction.trim().length > 0;
+  const maxTop = Math.max(16, window.innerHeight - 320);
+  const horizontalInset = Math.min(260, Math.max(16, (window.innerWidth - 32) / 2));
+  const dialogStyle: CSSProperties = selection.anchor
+    ? {
+      top: Math.min(Math.max(16, selection.anchor.top + 10), maxTop),
+      left: Math.min(
+        Math.max(horizontalInset, selection.anchor.left),
+        window.innerWidth - horizontalInset,
+      ),
+    }
+    : { top: 24, left: '50%' };
 
   return ReactDOM.createPortal(
     <div
-      className='artifact-rewrite-dialog__overlay'
-      role='presentation'
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) close();
-      }}
+      className='artifact-rewrite-dialog'
+      role='dialog'
+      aria-labelledby='artifact-rewrite-dialog-title'
+      style={dialogStyle}
+      onKeyDown={handleKeyDown}
     >
-      <div
-        className='artifact-rewrite-dialog'
-        role='dialog'
-        aria-modal='true'
-        aria-labelledby='artifact-rewrite-dialog-title'
-        onKeyDown={handleKeyDown}
-      >
-        <header className='artifact-rewrite-dialog__header'>
-          <h2 id='artifact-rewrite-dialog-title'>{t('chat.artifactRewrite.title')}</h2>
-          <button type='button' onClick={close} disabled={busy} aria-label={t('chat.artifactRewrite.close')}>×</button>
-        </header>
+      <header className='artifact-rewrite-dialog__header'>
+        <h2 id='artifact-rewrite-dialog-title'>{t('chat.artifactRewrite.title')}</h2>
+        <button type='button' onClick={close} disabled={busy} aria-label={t('chat.artifactRewrite.close')}>×</button>
+      </header>
 
-        <div className='artifact-rewrite-dialog__body'>
-          <p className='artifact-rewrite-dialog__selection'>
-            {t('chat.artifactRewrite.selectedText')}: {selection.selectedText}
-          </p>
-          {preview ? (
-            <div className='artifact-rewrite-dialog__diff' aria-live='polite'>
-              <div>
-                <h3>{t('chat.artifactRewrite.before')}</h3>
-                <pre>{preview.preview.old_text}</pre>
-              </div>
-              <div>
-                <h3>{t('chat.artifactRewrite.after')}</h3>
-                <pre>{preview.preview.new_text}</pre>
-              </div>
+      <div className='artifact-rewrite-dialog__body'>
+        {preview ? (
+          <div className='artifact-rewrite-dialog__diff' aria-live='polite'>
+            <div className='artifact-rewrite-dialog__diff-summary'>
+              <span className='artifact-rewrite-dialog__diff-label artifact-rewrite-dialog__diff-label--before'>
+                {t('chat.artifactRewrite.before')}
+              </span>
+              <span className='artifact-rewrite-dialog__diff-label artifact-rewrite-dialog__diff-label--after'>
+                {t('chat.artifactRewrite.after')}
+              </span>
             </div>
-          ) : (
-            <label className='artifact-rewrite-dialog__instruction'>
-              <span>{t('chat.artifactRewrite.instruction')}</span>
-              <textarea
-                ref={inputRef}
-                value={instruction}
-                onChange={(event) => setInstruction(event.target.value)}
-                placeholder={t('chat.artifactRewrite.instructionPlaceholder')}
-                disabled={busy}
-                aria-describedby={error ? 'artifact-rewrite-dialog-error' : undefined}
-              />
-            </label>
-          )}
-          {error && <p id='artifact-rewrite-dialog-error' className='artifact-rewrite-dialog__error' role='alert'>{error}</p>}
-        </div>
-
-        <footer className='artifact-rewrite-dialog__footer'>
-          <button type='button' onClick={close} disabled={busy}>{t('common.cancel')}</button>
-          {preview ? (
-            <button type='button' className='artifact-rewrite-dialog__primary' onClick={() => void applyPreview()} disabled={busy}>
-              {phase === 'applying' ? t('chat.artifactRewrite.applying') : t('chat.artifactRewrite.apply')}
-            </button>
-          ) : (
-            <button type='button' className='artifact-rewrite-dialog__primary' onClick={() => void requestPreview()} disabled={!canPreview || busy}>
-              {phase === 'previewing' ? t('chat.artifactRewrite.previewing') : t('chat.artifactRewrite.preview')}
-            </button>
-          )}
-        </footer>
+            <div className='artifact-rewrite-dialog__diff-content'>
+              {renderDiff(preview.preview.old_text, preview.preview.new_text)}
+            </div>
+          </div>
+        ) : (
+          <label className='artifact-rewrite-dialog__instruction'>
+            <span>{t('chat.artifactRewrite.instruction')}</span>
+            <textarea
+              ref={inputRef}
+              value={instruction}
+              onChange={(event) => setInstruction(event.target.value)}
+              placeholder={t('chat.artifactRewrite.instructionPlaceholder')}
+              disabled={busy}
+              aria-describedby={error ? 'artifact-rewrite-dialog-error' : undefined}
+            />
+          </label>
+        )}
+        {error && <p id='artifact-rewrite-dialog-error' className='artifact-rewrite-dialog__error' role='alert'>{error}</p>}
       </div>
+
+      <footer className='artifact-rewrite-dialog__footer'>
+        <button type='button' onClick={close} disabled={busy}>
+          {preview ? t('chat.artifactRewrite.reject') : t('common.cancel')}
+        </button>
+        {preview ? (
+          <button type='button' className='artifact-rewrite-dialog__primary' onClick={() => void applyPreview()} disabled={busy}>
+            {phase === 'applying' ? t('chat.artifactRewrite.applying') : t('chat.artifactRewrite.apply')}
+          </button>
+        ) : (
+          <button type='button' className='artifact-rewrite-dialog__primary' onClick={() => void requestPreview()} disabled={!canPreview || busy}>
+            {phase === 'previewing' ? t('chat.artifactRewrite.previewing') : t('chat.artifactRewrite.preview')}
+          </button>
+        )}
+      </footer>
     </div>,
     document.body,
+  );
+}
+
+interface ArtifactRewriteInlineDiffProps {
+  paragraph: HTMLElement;
+  layer: HTMLElement;
+  startOffset?: number;
+  sessionId: string;
+  slotId: string;
+  listIndex: number;
+  preview: RewriteSelectionPreview;
+  onApplied: (revision?: number) => void;
+  onReject: () => void;
+}
+
+function renderInlineDiff(oldText: string, newText: string) {
+  return diffWordsWithSpace(oldText, newText).map((part, index) => (
+    <span
+      className={part.added
+        ? 'artifact-rewrite-inline-diff__added'
+        : part.removed
+          ? 'artifact-rewrite-inline-diff__removed'
+          : undefined}
+      key={`${part.value}-${index}`}
+    >
+      {part.value}
+    </span>
+  ));
+}
+
+/** Temporarily renders the proposed changes inside the selected Markdown paragraph. */
+export function ArtifactRewriteInlineDiff({
+  paragraph,
+  layer,
+  startOffset,
+  sessionId,
+  slotId,
+  listIndex,
+  preview,
+  onApplied,
+  onReject,
+}: ArtifactRewriteInlineDiffProps) {
+  const { t } = useTranslation();
+  const [overlay, setOverlay] = useState<HTMLDivElement | null>(null);
+  const [overlayStyle, setOverlayStyle] = useState<CSSProperties>();
+  const [applying, setApplying] = useState(false);
+  const [error, setError] = useState<string>();
+  const baseMarginBottomRef = useRef(0);
+
+  useLayoutEffect(() => {
+    const originalContentEditable = paragraph.getAttribute('contenteditable');
+    const originalAriaLabel = paragraph.getAttribute('aria-label');
+    const originalStyle = paragraph.getAttribute('style');
+    baseMarginBottomRef.current = Number.parseFloat(window.getComputedStyle(paragraph).marginBottom) || 0;
+    paragraph.classList.add('artifact-rewrite-inline-diff');
+    paragraph.setAttribute('contenteditable', 'false');
+    paragraph.setAttribute('aria-label', t('chat.artifactRewrite.diffAria'));
+
+    return () => {
+      paragraph.classList.remove('artifact-rewrite-inline-diff');
+      if (originalContentEditable === null) paragraph.removeAttribute('contenteditable');
+      else paragraph.setAttribute('contenteditable', originalContentEditable);
+      if (originalAriaLabel === null) paragraph.removeAttribute('aria-label');
+      else paragraph.setAttribute('aria-label', originalAriaLabel);
+      if (originalStyle === null) paragraph.removeAttribute('style');
+      else paragraph.setAttribute('style', originalStyle);
+    };
+  }, [paragraph, t]);
+
+  const paragraphText = paragraph.textContent ?? '';
+  const selectedTextAtOffset = typeof startOffset === 'number'
+    && paragraphText.slice(startOffset, startOffset + preview.preview.old_text.length) === preview.preview.old_text;
+  const start = selectedTextAtOffset ? startOffset : paragraphText.indexOf(preview.preview.old_text);
+  const before = start >= 0 ? paragraphText.slice(0, start) : '';
+  const after = start >= 0
+    ? paragraphText.slice(start + preview.preview.old_text.length)
+    : '';
+
+  useLayoutEffect(() => {
+    if (!overlay) return;
+    const container = layer.parentElement;
+    const surface = paragraph.closest('.writer-markdown-editor__surface');
+    if (!container || !surface) return;
+
+    let frameId: number | undefined;
+    const updatePosition = () => {
+      const paragraphRect = paragraph.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      const computed = window.getComputedStyle(paragraph);
+      setOverlayStyle({
+        top: paragraphRect.top - containerRect.top,
+        left: paragraphRect.left - containerRect.left,
+        width: paragraphRect.width,
+        fontFamily: computed.fontFamily,
+        fontSize: computed.fontSize,
+        fontWeight: computed.fontWeight,
+        letterSpacing: computed.letterSpacing,
+        lineHeight: computed.lineHeight,
+        textAlign: computed.textAlign as CSSProperties['textAlign'],
+      });
+      const extraHeight = Math.max(0, overlay.getBoundingClientRect().height - paragraphRect.height);
+      paragraph.style.marginBottom = `${baseMarginBottomRef.current + extraHeight}px`;
+    };
+    const schedulePosition = () => {
+      if (frameId !== undefined) window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(updatePosition);
+    };
+    const resizeObserver = new ResizeObserver(schedulePosition);
+    resizeObserver.observe(paragraph);
+    resizeObserver.observe(overlay);
+    resizeObserver.observe(container);
+    const mutationObserver = new MutationObserver(schedulePosition);
+    mutationObserver.observe(surface, { childList: true, characterData: true, subtree: true });
+    surface.addEventListener('scroll', schedulePosition, { passive: true });
+    window.addEventListener('resize', schedulePosition);
+    schedulePosition();
+
+    return () => {
+      if (frameId !== undefined) window.cancelAnimationFrame(frameId);
+      resizeObserver.disconnect();
+      mutationObserver.disconnect();
+      surface.removeEventListener('scroll', schedulePosition);
+      window.removeEventListener('resize', schedulePosition);
+    };
+  }, [layer, overlay, paragraph]);
+
+  const apply = useCallback(async () => {
+    if (applying) return;
+    setApplying(true);
+    setError(undefined);
+    try {
+      const response = await PluginSessionApi().patchSlotItem(
+        sessionId,
+        slotId,
+        listIndex,
+        preview.artifact.value,
+        preview.artifact.content_type,
+        'checkpoint',
+        preview.base_revision,
+        { silentError: true } as never,
+      );
+      const result = response?.data?.data;
+      if (response?.data?.code !== 0 || result?.type !== 'slot_item_patched') {
+        throw new Error('invalid patch response');
+      }
+      onApplied(typeof result.revision === 'number' ? result.revision : undefined);
+    } catch (applyError) {
+      setError(t(errorMessage(errorCode(applyError), 'chat.artifactRewrite.errors.applyFailed')));
+      setApplying(false);
+    }
+  }, [applying, listIndex, onApplied, preview, sessionId, slotId, t]);
+
+  if (!layer) return null;
+  return ReactDOM.createPortal(
+    <div ref={setOverlay} className='artifact-rewrite-inline-diff__overlay' style={overlayStyle}>
+      <div className='artifact-rewrite-inline-diff__content' aria-live='polite'>
+        {before}
+        {renderInlineDiff(preview.preview.old_text, preview.preview.new_text)}
+        {after}
+      </div>
+      <div className='artifact-rewrite-inline-diff__actions'>
+        {error && <p className='artifact-rewrite-inline-diff__error' role='alert'>{error}</p>}
+        <button type='button' onClick={onReject} disabled={applying}>
+          {t('chat.artifactRewrite.reject')}
+        </button>
+        <button
+          type='button'
+          className='artifact-rewrite-inline-diff__apply'
+          onClick={() => void apply()}
+          disabled={applying}
+        >
+          {applying ? t('chat.artifactRewrite.applying') : t('chat.artifactRewrite.apply')}
+        </button>
+      </div>
+    </div>,
+    layer,
   );
 }

@@ -774,8 +774,8 @@ export function WriterIRControl({
 
   useEffect(() => {
     if (!documentReadOnly || !onRewriteSelection) return undefined;
-    document.addEventListener('selectionchange', recordReadOnlySelection);
-    return () => document.removeEventListener('selectionchange', recordReadOnlySelection);
+    globalThis.document.addEventListener('selectionchange', recordReadOnlySelection);
+    return () => globalThis.document.removeEventListener('selectionchange', recordReadOnlySelection);
   }, [documentReadOnly, onRewriteSelection, recordReadOnlySelection]);
 
   return (

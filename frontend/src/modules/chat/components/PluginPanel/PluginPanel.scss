@@ -67,6 +67,16 @@
       min-height: 0;
     }
 
+    // Stream previews are rendered directly in the named slot instead of
+    // through SlotRenderer's clickable wrapper, so they need the same height
+    // contract as a persisted artifact.
+    .plugin-panel__tab-content--list
+      > .plugin-panel__named-slot
+      > .plugin-slot--artifact-stream {
+      flex: 1 1 0;
+      min-height: 0;
+    }
+
     .plugin-panel__tab-content--list
       > .plugin-panel__named-slot
       .plugin-slot__artifact-body {
@@ -2260,6 +2270,31 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+.plugin-slot--artifact-stream {
+  min-height: 72px;
+}
+
+.plugin-slot__artifact-stream-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.plugin-slot__artifact-stream-cursor {
+  width: 6px;
+  height: 14px;
+  background: #2563eb;
+  animation: plugin-artifact-stream-cursor 0.9s steps(2, start) infinite;
+}
+
+@keyframes plugin-artifact-stream-cursor {
+  50% {
+    opacity: 0;
+  }
 }
 
 .plugin-slot__artifact-footer {

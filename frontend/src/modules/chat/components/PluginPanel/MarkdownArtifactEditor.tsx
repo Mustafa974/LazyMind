@@ -30,8 +30,10 @@ import '@mdxeditor/editor/style.css';
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArtifactRewriteSelectionAction } from './ArtifactRewriteSelectionAction';
+import { ArtifactRewriteInlineDiff } from './ArtifactRewriteDialog';
 import { selectedMarkdownParagraph, type MarkdownSelection } from './artifactRewriteSelection';
 import { MarkdownWorkflowActionContext } from './slotEditingContext';
+import type { RewriteSelectionPreview } from '@/modules/chat/utils/request';
 import './MarkdownArtifactEditor.scss';
 
 const MARKDOWN_CODE_LANGUAGES = {
@@ -48,6 +50,15 @@ const MARKDOWN_CODE_LANGUAGES = {
   yaml: 'YAML',
 };
 
+export interface MarkdownRewritePreview {
+  paragraph: HTMLElement;
+  startOffset?: number;
+  sessionId: string;
+  slotId: string;
+  listIndex: number;
+  preview: RewriteSelectionPreview;
+}
+
 interface MarkdownArtifactEditorProps {
   markdown: string;
   sourceRevision: number;
@@ -55,8 +66,11 @@ interface MarkdownArtifactEditorProps {
   onSave: (markdown: string, baseRevision: number) => Promise<number | undefined>;
   onRefresh?: () => void;
   onDownload?: () => void;
-  onRewriteSelection?: (selectedText: string) => void;
+  onRewriteSelection?: (selection: MarkdownSelection) => void;
   rewriteUnavailableReason?: string;
+  rewritePreview?: MarkdownRewritePreview | null;
+  onRewritePreviewApplied?: (revision?: number) => void;
+  onRewritePreviewRejected?: () => void;
 }
 
 function isRevisionConflict(error: unknown): boolean {
@@ -74,6 +88,9 @@ export function MarkdownArtifactEditor({
   onDownload,
   onRewriteSelection,
   rewriteUnavailableReason,
+  rewritePreview,
+  onRewritePreviewApplied,
+  onRewritePreviewRejected,
 }: MarkdownArtifactEditorProps) {
   const { t } = useTranslation();
   const workflowAction = useContext(MarkdownWorkflowActionContext);
@@ -85,6 +102,7 @@ export function MarkdownArtifactEditor({
   const [saveError, setSaveError] = useState<string>();
   const [conflict, setConflict] = useState(false);
   const [selection, setSelection] = useState<MarkdownSelection | null>(null);
+  const [rewriteLayer, setRewriteLayer] = useState<HTMLDivElement | null>(null);
   const rootRef = useRef<HTMLElement>(null);
   const latestSourceRef = useRef({ markdown, revision: sourceRevision });
   const pendingSourceRef = useRef<{ markdown: string; revision: number }>();
@@ -235,6 +253,20 @@ export function MarkdownArtifactEditor({
           }),
         ]}
       />
+      <div className='writer-markdown-editor__rewrite-layer' ref={setRewriteLayer} />
+      {rewritePreview && rewriteLayer && onRewritePreviewApplied && onRewritePreviewRejected && (
+        <ArtifactRewriteInlineDiff
+          paragraph={rewritePreview.paragraph}
+          layer={rewriteLayer}
+          startOffset={rewritePreview.startOffset}
+          sessionId={rewritePreview.sessionId}
+          slotId={rewritePreview.slotId}
+          listIndex={rewritePreview.listIndex}
+          preview={rewritePreview.preview}
+          onApplied={onRewritePreviewApplied}
+          onReject={onRewritePreviewRejected}
+        />
+      )}
 
       {!readOnly && (
         <div className='writer-markdown-editor__actions'>
@@ -266,7 +298,7 @@ export function MarkdownArtifactEditor({
               ? t('chat.artifactRewrite.saveFirstHint')
               : rewriteUnavailableReason ?? t('chat.artifactRewrite.action')}
           disabled={!selection.supported || dirty || Boolean(rewriteUnavailableReason)}
-          onActivate={() => onRewriteSelection(selection.text)}
+          onActivate={() => onRewriteSelection(selection)}
           onDismiss={() => setSelection(null)}
         />
       )}

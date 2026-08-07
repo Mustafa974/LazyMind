@@ -8,6 +8,8 @@ export interface MarkdownSelection {
   text: string;
   anchor: SelectionActionAnchor;
   supported: boolean;
+  paragraph?: HTMLElement;
+  startOffset?: number;
 }
 
 function closestElement(node: Node | null): HTMLElement | null {
@@ -44,7 +46,8 @@ export function selectedMarkdownParagraph(container: HTMLElement): MarkdownSelec
 
   const startParagraph = closestElement(range.startContainer)?.closest('p');
   const endParagraph = closestElement(range.endContainer)?.closest('p');
-  const text = selection.toString().trim();
+  const selectedText = selection.toString();
+  const text = selectedText.trim();
   const anchor = selectionActionAnchor(range);
   if (!text || !anchor) return null;
 
@@ -54,5 +57,12 @@ export function selectedMarkdownParagraph(container: HTMLElement): MarkdownSelec
       && container.contains(startParagraph)
       && !startParagraph.closest('li, blockquote, pre, td, th'),
   );
-  return { text, anchor, supported };
+  let startOffset: number | undefined;
+  if (supported && startParagraph) {
+    const prefixRange = range.cloneRange();
+    prefixRange.selectNodeContents(startParagraph);
+    prefixRange.setEnd(range.startContainer, range.startOffset);
+    startOffset = prefixRange.toString().length + selectedText.length - selectedText.trimStart().length;
+  }
+  return { text, anchor, supported, paragraph: startParagraph ?? undefined, startOffset };
 }
