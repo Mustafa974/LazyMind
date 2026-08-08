@@ -100,6 +100,18 @@ function artifactKey(a: TaskArtifact): string {
   return `${a.slot}#${a.seq}`;
 }
 
+function isWriterIRArtifact(artifact: TaskArtifact): boolean {
+  const value = artifact.value;
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  const format = String(record.document_format ?? "").toLowerCase();
+  if (format === "writer_ir" || format === "lmd") return true;
+  return [record.filename, record.name, record.path, record.url].some((source) => {
+    const path = String(source ?? "").split(/[?#]/, 1)[0].toLowerCase();
+    return path.endsWith(".lmd") || path.endsWith("_ir.json");
+  });
+}
+
 interface TaskCenterStore {
   // tasks keyed by conversation_id, each an ordered list.
   tasksByConversation: Record<string, SubAgentTask[]>;
@@ -293,6 +305,10 @@ export const useTaskCenterStore = create<TaskCenterStore>()((set, get) => ({
             nextStreams[streamIndex] = {
               ...nextStreams[streamIndex],
               artifact: newArtifact,
+              // A .lmd file is the final Writer IR, not Markdown text. Keep the
+              // streamed Markdown preview until the plugin session exposes the
+              // IR revision, then let the slot renderer switch to its editor.
+              state: isWriterIRArtifact(newArtifact) ? "ready" : nextStreams[streamIndex].state,
             };
             task.artifact_streams = nextStreams;
           }
@@ -438,6 +454,7 @@ export const useTaskCenterStore = create<TaskCenterStore>()((set, get) => ({
 
   loadArtifactStreamContent: async (conversationId, taskId, artifact) => {
     if (artifact.slot !== "draft_document" || artifact.content_type !== "file") return;
+    if (isWriterIRArtifact(artifact)) return;
     const rawUrl = typeof artifact.value?.url === "string" ? artifact.value.url : "";
     const url = resolveCoreAssetUrl(rawUrl);
     if (!url) return;

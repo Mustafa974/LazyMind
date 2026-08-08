@@ -92,6 +92,24 @@ function findTaskDraftStream(
   return liveStreams.length === 1 ? liveStreams[0] : undefined;
 }
 
+const WRITER_DRAFT_STEP_ID = 'write_document';
+
+/** Return the running task created for the writer's final-document step. */
+function findActiveWriterDraftTaskId(session: PluginSession | null): string | undefined {
+  if (session?.status !== 'active') {
+    return undefined;
+  }
+  return session.steps
+    ?.filter((step) => (
+      step.step_id === WRITER_DRAFT_STEP_ID
+      && step.validity !== 'stale'
+      && (step.status === 'pending' || step.status === 'running')
+      && Boolean(step.task_id)
+    ))
+    .sort((a, b) => b.attempt - a.attempt)[0]
+    ?.task_id;
+}
+
 /** IntentPopover shows global intent + per-step intent inside a floating popover. */
 function IntentPopover({
   session,
@@ -332,8 +350,8 @@ function getTabStepId(tab: TabDef): string | undefined {
 
 /**
  * Lock slot editing only while the plugin session is actively running.
- * When idle (waiting / failed / completed), ui_editable artifacts stay editable
- * so the user can revise and re-run a later step from the updated content.
+ * When idle (waiting / failed / completed), Writer documents stay editable so
+ * the user can revise and re-run a later step from the updated content.
  */
 function isPluginSessionReadOnly(
   session: PluginSession,
@@ -939,7 +957,9 @@ function NamedTabSlot({
   const isImageList = slotDef.type === 'image' && slotDef.cardinality === 'list';
   const isDraggable = Boolean(slotDef.ordered) && !readOnly;
   const showStream = Boolean(artifactStream && (
-    revisions.length === 0 || artifactStream.state !== 'ready'
+    revisions.length === 0 || (
+      artifactStream.state !== 'ready' && !artifactStream.final_content_error
+    )
   ));
 
   return (
@@ -1147,6 +1167,7 @@ export function PluginPanel({
   const taskCenterTasks = useTaskCenterStore((state) =>
     conversationId ? state.tasksByConversation[conversationId] ?? [] : [],
   );
+  const subscribeTask = useTaskCenterStore((state) => state.subscribeTask);
   const bumpDismissedRefresh = usePluginStore((s) => s.bumpDismissedRefresh);
   const autoRunning = usePluginStore((s) =>
     conversationId ? (s.autoRunningByConversation[conversationId] ?? false) : false,
@@ -1260,6 +1281,16 @@ export function PluginPanel({
     const id = setInterval(refresh, pollIntervalMs);
     return () => clearInterval(id);
   }, [session, refresh, pollIntervalMs]);
+
+  const writerDraftTaskId = findActiveWriterDraftTaskId(session);
+
+  // The task-created notification and the plugin-session refresh can arrive in
+  // either order. Once the writer enters its final-document step, subscribe as
+  // soon as its task ID is present so draft Markdown deltas are not missed.
+  useEffect(() => {
+    if (!conversationId || !writerDraftTaskId) return;
+    subscribeTask(conversationId, writerDraftTaskId);
+  }, [conversationId, subscribeTask, writerDraftTaskId]);
 
   // Track focused tab changes.
   const handleTabChange = useCallback((idx: number, tabId: string) => {

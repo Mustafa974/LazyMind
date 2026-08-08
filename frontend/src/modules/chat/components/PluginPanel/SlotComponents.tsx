@@ -2270,7 +2270,6 @@ function SlotJsonFile({
     && displayRevision > 0;
   const canEditWriterIR = Boolean(sessionId && slotId)
     && !readOnly
-    && writerDocument?.ui_editable === true
     && (loadedSourceKey === sourceKey || writerEditing);
   const editingKey = `${sessionId}:${slotId}:${apiListIndex}:writer-ir`;
   const showVersionBadge =
@@ -2577,8 +2576,7 @@ function SlotInlineStructured({
     && typeof displayRevision === 'number'
     && displayRevision > 0;
   const canEditWriterIR = Boolean(sessionId && slotId)
-    && !readOnly
-    && writerDocument?.ui_editable === true;
+    && !readOnly;
   const editingKey = `${sessionId}:${slotId}:${apiListIndex}:writer-ir`;
   const showVersionBadge =
     displayRevisionCount !== undefined && displayRevisionCount > 0 && Boolean(sessionId && slotId);
@@ -2796,16 +2794,18 @@ export function SlotMarkdownStream({ stream }: { stream: TaskArtifactStream }) {
     ? stream.message || tr('chat.slots.contentLoadFailed')
     : stream.final_content_error || (stream.state === 'streaming'
       ? tr('chat.slots.inProgress')
-      : tr('common.loading'));
+      : '');
 
   return (
     <div className={`plugin-slot plugin-slot--artifact plugin-slot--artifact-stream${showError ? ' plugin-slot--error' : ''}`}>
-      <div className='plugin-slot__artifact-stream-status' role='status' aria-live='polite'>
-        {!isAborted && stream.state === 'streaming' && (
-          <span className='plugin-slot__artifact-stream-cursor' aria-hidden='true' />
-        )}
-        <span>{status}</span>
-      </div>
+      {status && (
+        <div className='plugin-slot__artifact-stream-status' role='status' aria-live='polite'>
+          {!isAborted && stream.state === 'streaming' && (
+            <span className='plugin-slot__artifact-stream-cursor' aria-hidden='true' />
+          )}
+          <span>{status}</span>
+        </div>
+      )}
       {content ? (
         <div className='plugin-slot__artifact-body'>
           <div className='writer-artifact__markdown'>
