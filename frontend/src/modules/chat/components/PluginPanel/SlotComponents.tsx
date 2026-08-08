@@ -25,6 +25,7 @@ import {
   isWriterDocument,
   normalizeWriterDocumentForSync,
   sameWriterDocumentForSync,
+  updateWriterBlockContent,
   type WriterBlock,
   type WriterDocument,
 } from './writerIR';
@@ -2483,6 +2484,9 @@ function SlotJsonFile({
   const editingKey = `${sessionId}:${slotId}:${apiListIndex}:writer-ir`;
   const showVersionBadge =
     displayRevisionCount !== undefined && displayRevisionCount > 0 && Boolean(sessionId && slotId);
+  const currentArtifactValue = displayRevision > slot.revision && writerDocument
+    ? replaceStructuredArtifactPayload(sourceJson, writerDocument)
+    : slot.artifact_value;
   // AI polish is only available on the drafting (成稿) step.
   const canRewriteIR = resolvedSlotId === 'draft_document'
     && Boolean(sessionId && slotId)
@@ -2606,13 +2610,20 @@ function SlotJsonFile({
   }, [canRewriteIR]);
 
   const handleIRRewriteApplied = useCallback((revision?: number) => {
+    if (writerDocument && rewritePreview?.selection.type === 'ir') {
+      setPayload(updateWriterBlockContent(
+        writerDocument,
+        rewritePreview.selection.node_id,
+        rewritePreview.preview.preview.new_text,
+      ));
+    }
     applySavedRevision(revision);
     setHasWriteBackChanges(true);
     setRewriteSelection(null);
     setRewritePreview(null);
     setReloadToken((value) => value + 1);
     onRefresh?.();
-  }, [applySavedRevision, onRefresh]);
+  }, [applySavedRevision, onRefresh, rewritePreview, writerDocument]);
 
   const handleIRRewritePreview = useCallback((preview: RewriteSelectionPreview) => {
     if (rewriteSelection?.type !== 'ir') return;
@@ -2760,7 +2771,8 @@ function SlotJsonFile({
               listIndex={apiListIndex}
               revisionCount={displayRevisionCount!}
               currentRevision={displayRevision}
-              currentValue={slot.artifact_value}
+              currentValue={currentArtifactValue}
+              currentChangeSource={slot.change_source}
               contentType='json'
               feishuVersionsOnly={resolvedSlotId === 'draft_document'}
               onRollbackDone={onRefresh}
@@ -2861,6 +2873,9 @@ function SlotInlineStructured({
   const editingKey = `${sessionId}:${slotId}:${apiListIndex}:writer-ir`;
   const showVersionBadge =
     displayRevisionCount !== undefined && displayRevisionCount > 0 && Boolean(sessionId && slotId);
+  const currentArtifactValue = displayRevision > slot.revision && writerDocument
+    ? replaceStructuredArtifactPayload(slot.artifact_value, writerDocument)
+    : slot.artifact_value;
   // AI polish is only available on the drafting (成稿) step.
   const canRewriteIR = resolvedSlotId === 'draft_document'
     && Boolean(sessionId && slotId)
@@ -3028,12 +3043,22 @@ function SlotInlineStructured({
   }, [canRewriteIR]);
 
   const handleIRRewriteApplied = useCallback((revision?: number) => {
+    if (writerDocument && rewritePreview?.selection.type === 'ir') {
+      setSyncedWriterDocument(updateWriterBlockContent(
+        writerDocument,
+        rewritePreview.selection.node_id,
+        rewritePreview.preview.preview.new_text,
+      ));
+      if (typeof revision === 'number' && revision > 0) {
+        setSyncedWriterRevision(revision);
+      }
+    }
     applySavedRevision(revision);
     setHasWriteBackChanges(true);
     setRewriteSelection(null);
     setRewritePreview(null);
     onRefresh?.();
-  }, [applySavedRevision, onRefresh]);
+  }, [applySavedRevision, onRefresh, rewritePreview, writerDocument]);
 
   const handleIRRewritePreview = useCallback((preview: RewriteSelectionPreview) => {
     if (rewriteSelection?.type !== 'ir') return;
@@ -3090,7 +3115,8 @@ function SlotInlineStructured({
               listIndex={apiListIndex}
               revisionCount={displayRevisionCount!}
               currentRevision={displayRevision}
-              currentValue={slot.artifact_value}
+              currentValue={currentArtifactValue}
+              currentChangeSource={slot.change_source}
               contentType='json'
               feishuVersionsOnly={resolvedSlotId === 'draft_document'}
               onRollbackDone={onRefresh}

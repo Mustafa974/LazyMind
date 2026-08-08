@@ -721,6 +721,39 @@
   overflow-wrap: anywhere;
 }
 
+.writer-ir__image {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  margin: 16px 0;
+}
+
+.writer-ir__image img,
+.writer-ir__image-placeholder {
+  display: block;
+  max-width: min(100%, 760px);
+  max-height: 560px;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.writer-ir__image-placeholder {
+  width: min(100%, 760px);
+  min-height: 160px;
+  background: #f1f5f9;
+}
+
+.writer-ir__image figcaption {
+  max-width: min(100%, 760px);
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.6;
+  text-align: center;
+  white-space: pre-wrap;
+}
+
 .writer-ir__quote {
   padding-left: 14px;
   border-left: 3px solid #cbd5e1;

@@ -65,6 +65,7 @@ import { ArtifactRewriteSelectionHighlight } from './ArtifactRewriteSelectionHig
 import { selectionActionAnchor, type SelectionActionAnchor } from './artifactRewriteSelection';
 import { highlightCode } from '../MarkdownViewer/syntaxHighlight';
 import type { RewriteSelectionPreview } from '@/modules/chat/utils/request';
+import { resolveMarkdownImageUrlAsync } from '@/modules/knowledge/utils/imageUrl';
 
 const WRITER_CODE_LANGUAGES = [
   ['text', 'Plain text'],
@@ -88,6 +89,12 @@ const WRITER_CODE_LANGUAGES = [
   ['markdown', 'Markdown'],
   ['docker', 'Dockerfile'],
 ] as const;
+
+function imageReferencePath(block: WriterBlock): string {
+  const reference = block.references?.find((item) => item.type === 'media_asset');
+  const value = reference?.url ?? reference?.path;
+  return typeof value === 'string' ? value.trim() : '';
+}
 
 export interface WriterIRRewriteSelection {
   nodeId: string;
@@ -502,6 +509,16 @@ function renderBlock(
   }
   if (block.type === 'list_item') {
     return `<li ${attributes}>${dragHandle}<span data-writer-block-content="true">${text}</span>${children}</li>`;
+  }
+  if (block.type === 'image') {
+    const source = imageReferencePath(block);
+    const image = source
+      ? `<img data-writer-image="true" data-writer-image-source="${escapeHtmlAttribute(source)}" alt="${escapeHtmlAttribute(block.content ?? '')}">`
+      : '<div class="writer-ir__image-placeholder" aria-hidden="true"></div>';
+    const caption = block.content?.trim()
+      ? `<figcaption data-writer-block-content="true">${text}</figcaption>`
+      : '<figcaption data-writer-block-content="true"></figcaption>';
+    return `<div ${attributes}>${dragHandle}<figure class="writer-ir__image" contenteditable="false">${image}${caption}</figure>${children}</div>`;
   }
   return `<div ${attributes}>${dragHandle}<div data-writer-block-content="true" class="writer-ir__fallback">${text}</div>${children}</div>`;
 }
@@ -1110,6 +1127,24 @@ export function WriterIRDocumentEditor({
       });
     }
   }, [collapseVersion, document, dragLabel, foldLabels]);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return undefined;
+    let cancelled = false;
+    editor.querySelectorAll<HTMLImageElement>('img[data-writer-image-source]').forEach((image) => {
+      const source = image.dataset.writerImageSource ?? '';
+      if (!source) return;
+      resolveMarkdownImageUrlAsync(source)
+        .then((resolved) => {
+          if (!cancelled && resolved) image.src = resolved;
+        })
+        .catch(() => {
+          // Keep the caption visible when an individual image cannot be resolved.
+        });
+    });
+    return () => { cancelled = true; };
+  }, [collapseVersion, document]);
 
   useLayoutEffect(() => {
     const editor = editorRef.current;
