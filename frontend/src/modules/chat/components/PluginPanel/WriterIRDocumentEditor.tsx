@@ -60,7 +60,9 @@ import {
   type WriterSpan,
   type WriterSpanColorField,
 } from './writerIR';
+import { ArtifactRewriteInlineDiff } from './ArtifactRewriteDialog';
 import { highlightCode } from '../MarkdownViewer/syntaxHighlight';
+import type { RewriteSelectionPreview } from '@/modules/chat/utils/request';
 
 const WRITER_CODE_LANGUAGES = [
   ['text', 'Plain text'],
@@ -98,6 +100,17 @@ interface WriterIRDocumentEditorProps {
   onBlur: () => void;
   disabled?: boolean;
   onRewriteSelection?: (selection: WriterIRRewriteSelection) => void;
+  rewritePreview?: WriterIRRewritePreview | null;
+  onRewritePreviewApplied?: (revision?: number) => void;
+  onRewritePreviewRejected?: () => void;
+}
+
+export interface WriterIRRewritePreview {
+  nodeId: string;
+  sessionId: string;
+  slotId: string;
+  listIndex: number;
+  preview: RewriteSelectionPreview;
 }
 
 function escapeHtml(value: string): string {
@@ -999,11 +1012,16 @@ export function WriterIRDocumentEditor({
   onBlur,
   disabled = false,
   onRewriteSelection,
+  rewritePreview,
+  onRewritePreviewApplied,
+  onRewritePreviewRejected,
 }: WriterIRDocumentEditorProps) {
   const { t } = useTranslation();
   const shellRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<HTMLElement | null>(null);
   const formatToolbarRef = useRef<HTMLDivElement | null>(null);
+  const [rewriteLayer, setRewriteLayer] = useState<HTMLDivElement | null>(null);
+  const [rewriteTarget, setRewriteTarget] = useState<HTMLElement | null>(null);
   const lastEmittedDocumentRef = useRef<WriterDocument>();
   const lastRenderedDocumentRef = useRef<WriterDocument | undefined>(undefined);
   const savedSelectionRef = useRef<WriterEditorSelection | null>(null);
@@ -1074,6 +1092,17 @@ export function WriterIRDocumentEditor({
       });
     }
   }, [collapseVersion, document, dragLabel, foldLabels]);
+
+  useLayoutEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || !rewritePreview) {
+      setRewriteTarget(null);
+      return;
+    }
+    const block = Array.from(editor.querySelectorAll<HTMLElement>('[data-writer-block][data-node-id]'))
+      .find((element) => element.dataset.nodeId === rewritePreview.nodeId);
+    setRewriteTarget(block ? blockContentElement(block) : null);
+  }, [document, rewritePreview]);
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -2321,6 +2350,19 @@ export function WriterIRDocumentEditor({
         onMouseUp={recordSelection}
         onKeyUp={handleKeyUp}
       />
+      <div className='writer-ir__rewrite-layer' ref={setRewriteLayer} />
+      {rewritePreview && rewriteTarget && rewriteLayer && onRewritePreviewApplied && onRewritePreviewRejected && (
+        <ArtifactRewriteInlineDiff
+          target={rewriteTarget}
+          layer={rewriteLayer}
+          sessionId={rewritePreview.sessionId}
+          slotId={rewritePreview.slotId}
+          listIndex={rewritePreview.listIndex}
+          preview={rewritePreview.preview}
+          onApplied={onRewritePreviewApplied}
+          onReject={onRewritePreviewRejected}
+        />
+      )}
     </div>
   );
 }

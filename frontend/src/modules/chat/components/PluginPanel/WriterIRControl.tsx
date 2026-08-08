@@ -21,6 +21,7 @@ import {
 } from './writerIR';
 import {
   WriterIRDocumentEditor,
+  type WriterIRRewritePreview,
   type WriterIRRewriteSelection,
 } from './WriterIRDocumentEditor';
 import { ArtifactRewriteSelectionAction } from './ArtifactRewriteSelectionAction';
@@ -56,6 +57,9 @@ export interface WriterIRControlProps {
   ) => Promise<WriterIRSaveResult | void>;
   onEditingChange?: (editing: boolean) => void;
   onRewriteSelection?: (selection: WriterIRRewriteSelection) => void;
+  rewritePreview?: WriterIRRewritePreview | null;
+  onRewritePreviewApplied?: (revision?: number) => void;
+  onRewritePreviewRejected?: () => void;
 }
 
 export interface WriterIRSaveResult {
@@ -231,6 +235,9 @@ export function WriterIRControl({
   onSave,
   onEditingChange,
   onRewriteSelection,
+  rewritePreview,
+  onRewritePreviewApplied,
+  onRewritePreviewRejected,
 }: WriterIRControlProps) {
   const { t } = useTranslation();
   const { registerFlush } = useContext(SlotEditingContext);
@@ -839,6 +846,9 @@ export function WriterIRControl({
           onRewriteSelection={
             !dirty && !saving && !externalUpdate ? onRewriteSelection : undefined
           }
+          rewritePreview={rewritePreview}
+          onRewritePreviewApplied={onRewritePreviewApplied}
+          onRewritePreviewRejected={onRewritePreviewRejected}
         />
       )}
     </section>

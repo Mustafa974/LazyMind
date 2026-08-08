@@ -4,6 +4,64 @@ export interface SelectionActionAnchor {
   placement: 'above' | 'below';
 }
 
+interface FloatingToolbarAnchorInput {
+  selectionRect: Pick<DOMRect, 'top' | 'right' | 'bottom' | 'left' | 'width'>;
+  containerRect: Pick<DOMRect, 'top' | 'right' | 'bottom' | 'left' | 'width'>;
+  toolbarWidth: number;
+  toolbarHeight: number;
+  gap?: number;
+  inset?: number;
+}
+
+export interface FloatingToolbarAnchor {
+  top: number;
+  left: number;
+  maxWidth: number;
+  placement: 'above' | 'below';
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+/**
+ * Returns a viewport-relative anchor for a rich-text selection toolbar while
+ * keeping the toolbar within the visible editor surface.
+ */
+export function floatingToolbarAnchor({
+  selectionRect,
+  containerRect,
+  toolbarWidth,
+  toolbarHeight,
+  gap = 8,
+  inset = 8,
+}: FloatingToolbarAnchorInput): FloatingToolbarAnchor {
+  const maxWidth = Math.max(0, containerRect.width - inset * 2);
+  const visibleWidth = Math.min(toolbarWidth, maxWidth);
+  const minLeft = containerRect.left + inset;
+  const maxLeft = Math.max(minLeft, containerRect.right - inset - visibleWidth);
+  const left = clamp(
+    selectionRect.left + selectionRect.width / 2 - visibleWidth / 2,
+    minLeft,
+    maxLeft,
+  );
+
+  const minTop = containerRect.top + inset;
+  const maxTop = Math.max(minTop, containerRect.bottom - inset - toolbarHeight);
+  const preferredAbove = selectionRect.top - toolbarHeight - gap;
+  const preferredBelow = selectionRect.bottom + gap;
+  const placement = preferredAbove >= minTop || preferredBelow > maxTop
+    ? 'above'
+    : 'below';
+
+  return {
+    top: clamp(placement === 'above' ? preferredAbove : preferredBelow, minTop, maxTop),
+    left,
+    maxWidth,
+    placement,
+  };
+}
+
 export interface MarkdownSelection {
   text: string;
   anchor: SelectionActionAnchor;

@@ -297,7 +297,7 @@ export function ArtifactRewriteDialog({
 }
 
 interface ArtifactRewriteInlineDiffProps {
-  paragraph: HTMLElement;
+  target: HTMLElement;
   layer: HTMLElement;
   startOffset?: number;
   sessionId: string;
@@ -323,9 +323,9 @@ function renderInlineDiff(oldText: string, newText: string) {
   ));
 }
 
-/** Temporarily renders the proposed changes inside the selected Markdown paragraph. */
+/** Temporarily renders the proposed changes inside the selected editable block. */
 export function ArtifactRewriteInlineDiff({
-  paragraph,
+  target,
   layer,
   startOffset,
   sessionId,
@@ -343,49 +343,49 @@ export function ArtifactRewriteInlineDiff({
   const baseMarginBottomRef = useRef(0);
 
   useLayoutEffect(() => {
-    const originalContentEditable = paragraph.getAttribute('contenteditable');
-    const originalAriaLabel = paragraph.getAttribute('aria-label');
-    const originalStyle = paragraph.getAttribute('style');
-    baseMarginBottomRef.current = Number.parseFloat(window.getComputedStyle(paragraph).marginBottom) || 0;
-    paragraph.classList.add('artifact-rewrite-inline-diff');
-    paragraph.setAttribute('contenteditable', 'false');
-    paragraph.setAttribute('aria-label', t('chat.artifactRewrite.diffAria'));
+    const originalContentEditable = target.getAttribute('contenteditable');
+    const originalAriaLabel = target.getAttribute('aria-label');
+    const originalStyle = target.getAttribute('style');
+    baseMarginBottomRef.current = Number.parseFloat(window.getComputedStyle(target).marginBottom) || 0;
+    target.classList.add('artifact-rewrite-inline-diff');
+    target.setAttribute('contenteditable', 'false');
+    target.setAttribute('aria-label', t('chat.artifactRewrite.diffAria'));
 
     return () => {
-      paragraph.classList.remove('artifact-rewrite-inline-diff');
-      if (originalContentEditable === null) paragraph.removeAttribute('contenteditable');
-      else paragraph.setAttribute('contenteditable', originalContentEditable);
-      if (originalAriaLabel === null) paragraph.removeAttribute('aria-label');
-      else paragraph.setAttribute('aria-label', originalAriaLabel);
-      if (originalStyle === null) paragraph.removeAttribute('style');
-      else paragraph.setAttribute('style', originalStyle);
+      target.classList.remove('artifact-rewrite-inline-diff');
+      if (originalContentEditable === null) target.removeAttribute('contenteditable');
+      else target.setAttribute('contenteditable', originalContentEditable);
+      if (originalAriaLabel === null) target.removeAttribute('aria-label');
+      else target.setAttribute('aria-label', originalAriaLabel);
+      if (originalStyle === null) target.removeAttribute('style');
+      else target.setAttribute('style', originalStyle);
     };
-  }, [paragraph, t]);
+  }, [target, t]);
 
-  const paragraphText = paragraph.textContent ?? '';
+  const targetText = target.textContent ?? '';
   const selectedTextAtOffset = typeof startOffset === 'number'
-    && paragraphText.slice(startOffset, startOffset + preview.preview.old_text.length) === preview.preview.old_text;
-  const start = selectedTextAtOffset ? startOffset : paragraphText.indexOf(preview.preview.old_text);
-  const before = start >= 0 ? paragraphText.slice(0, start) : '';
+    && targetText.slice(startOffset, startOffset + preview.preview.old_text.length) === preview.preview.old_text;
+  const start = selectedTextAtOffset ? startOffset : targetText.indexOf(preview.preview.old_text);
+  const before = start >= 0 ? targetText.slice(0, start) : '';
   const after = start >= 0
-    ? paragraphText.slice(start + preview.preview.old_text.length)
+    ? targetText.slice(start + preview.preview.old_text.length)
     : '';
 
   useLayoutEffect(() => {
     if (!overlay) return;
     const container = layer.parentElement;
-    const surface = paragraph.closest('.writer-markdown-editor__surface');
+    const surface = target.closest('.writer-markdown-editor__surface, .writer-ir__document--editable');
     if (!container || !surface) return;
 
     let frameId: number | undefined;
     const updatePosition = () => {
-      const paragraphRect = paragraph.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
       const containerRect = container.getBoundingClientRect();
-      const computed = window.getComputedStyle(paragraph);
+      const computed = window.getComputedStyle(target);
       setOverlayStyle({
-        top: paragraphRect.top - containerRect.top,
-        left: paragraphRect.left - containerRect.left,
-        width: paragraphRect.width,
+        top: targetRect.top - containerRect.top,
+        left: targetRect.left - containerRect.left,
+        width: targetRect.width,
         fontFamily: computed.fontFamily,
         fontSize: computed.fontSize,
         fontWeight: computed.fontWeight,
@@ -393,15 +393,15 @@ export function ArtifactRewriteInlineDiff({
         lineHeight: computed.lineHeight,
         textAlign: computed.textAlign as CSSProperties['textAlign'],
       });
-      const extraHeight = Math.max(0, overlay.getBoundingClientRect().height - paragraphRect.height);
-      paragraph.style.marginBottom = `${baseMarginBottomRef.current + extraHeight}px`;
+      const extraHeight = Math.max(0, overlay.getBoundingClientRect().height - targetRect.height);
+      target.style.marginBottom = `${baseMarginBottomRef.current + extraHeight}px`;
     };
     const schedulePosition = () => {
       if (frameId !== undefined) window.cancelAnimationFrame(frameId);
       frameId = window.requestAnimationFrame(updatePosition);
     };
     const resizeObserver = new ResizeObserver(schedulePosition);
-    resizeObserver.observe(paragraph);
+    resizeObserver.observe(target);
     resizeObserver.observe(overlay);
     resizeObserver.observe(container);
     const mutationObserver = new MutationObserver(schedulePosition);
@@ -417,7 +417,7 @@ export function ArtifactRewriteInlineDiff({
       surface.removeEventListener('scroll', schedulePosition);
       window.removeEventListener('resize', schedulePosition);
     };
-  }, [layer, overlay, paragraph]);
+  }, [layer, overlay, target]);
 
   const apply = useCallback(async () => {
     if (applying) return;

@@ -18,6 +18,7 @@
 }
 
 .writer-markdown-editor__surface {
+  position: relative;
   min-height: 0;
   max-height: 480px;
   overflow-y: auto;
@@ -26,11 +27,55 @@
 }
 
 .writer-markdown-editor__surface .mdxeditor-toolbar {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  border-bottom: 1px solid var(--color-border, #eef0f3);
+  position: fixed;
+  top: var(--writer-markdown-selection-toolbar-top, -9999px);
+  left: var(--writer-markdown-selection-toolbar-left, -9999px);
+  z-index: 3;
+  width: max-content;
+  max-width: var(--writer-markdown-selection-toolbar-max-width, calc(100vw - 16px));
+  padding: 5px;
+  overflow-x: auto;
+  border: 1px solid var(--color-border, #d9dce3);
+  border-radius: 8px;
   background: var(--color-bg-base, #fff);
+  box-shadow: 0 8px 24px rgba(31, 35, 41, 0.16);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.writer-markdown-editor--selection-toolbar-visible .writer-markdown-editor__surface .mdxeditor-toolbar {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.writer-markdown-editor__surface .mdxeditor-toolbar .writer-markdown-editor__polish-action {
+  flex: 0 0 auto;
+  min-height: 30px;
+  margin: 0 3px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--color-primary, #245bdb);
+  color: #fff;
+  font: 600 13px/1 inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.writer-markdown-editor__surface .mdxeditor-toolbar .writer-markdown-editor__polish-action:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.writer-markdown-editor__surface .mdxeditor-toolbar .writer-markdown-editor__polish-action:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
+}
+
+.writer-markdown-editor__surface .mdxeditor-toolbar .writer-markdown-editor__polish-action:disabled {
+  background: #94a3b8;
+  cursor: not-allowed;
 }
 
 .writer-markdown-editor__surface .mdxeditor-root-contenteditable {

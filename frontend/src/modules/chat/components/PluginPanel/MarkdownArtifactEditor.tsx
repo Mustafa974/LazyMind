@@ -1,15 +1,10 @@
 import {
   BlockTypeSelect,
   BoldItalicUnderlineToggles,
-  CodeToggle,
   CreateLink,
   DiffSourceToggleWrapper,
-  InsertCodeBlock,
-  InsertTable,
-  InsertThematicBreak,
   ListsToggle,
   MDXEditor,
-  StrikeThroughSupSubToggles,
   UndoRedo,
   codeBlockPlugin,
   codeMirrorPlugin,
@@ -27,11 +22,22 @@ import {
   toolbarPlugin,
 } from '@mdxeditor/editor';
 import '@mdxeditor/editor/style.css';
-import { useCallback, useContext, useEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArtifactRewriteSelectionAction } from './ArtifactRewriteSelectionAction';
 import { ArtifactRewriteInlineDiff } from './ArtifactRewriteDialog';
-import { selectedMarkdownParagraph, type MarkdownSelection } from './artifactRewriteSelection';
+import {
+  floatingToolbarAnchor,
+  selectedMarkdownParagraph,
+  type FloatingToolbarAnchor,
+  type MarkdownSelection,
+} from './artifactRewriteSelection';
 import { MarkdownWorkflowActionContext } from './slotEditingContext';
 import type { RewriteSelectionPreview } from '@/modules/chat/utils/request';
 import './MarkdownArtifactEditor.scss';
@@ -102,23 +108,126 @@ export function MarkdownArtifactEditor({
   const [saveError, setSaveError] = useState<string>();
   const [conflict, setConflict] = useState(false);
   const [selection, setSelection] = useState<MarkdownSelection | null>(null);
+  const [selectionToolbar, setSelectionToolbar] = useState<FloatingToolbarAnchor | null>(null);
   const [rewriteLayer, setRewriteLayer] = useState<HTMLDivElement | null>(null);
   const rootRef = useRef<HTMLElement>(null);
+  const selectionToolbarDismissedRef = useRef(false);
   const latestSourceRef = useRef({ markdown, revision: sourceRevision });
   const pendingSourceRef = useRef<{ markdown: string; revision: number }>();
 
   const dirty = draftMarkdown !== baseMarkdown;
 
-  const recordSelection = useCallback(() => {
-    const root = rootRef.current;
-    setSelection(root ? selectedMarkdownParagraph(root) : null);
+  const dismissSelectionToolbar = useCallback(() => {
+    selectionToolbarDismissedRef.current = true;
+    setSelectionToolbar(null);
   }, []);
 
+  const updateSelectionToolbar = useCallback(() => {
+    if (readOnly) {
+      dismissSelectionToolbar();
+      return;
+    }
+    const root = rootRef.current;
+    const surface = root?.querySelector<HTMLElement>('.writer-markdown-editor__surface');
+    const editable = surface?.querySelector<HTMLElement>(
+      '.mdxeditor-root-contenteditable [contenteditable="true"]',
+    );
+    const toolbar = surface?.querySelector<HTMLElement>('.mdxeditor-toolbar');
+    const browserSelection = globalThis.getSelection();
+    if (
+      !surface
+      || !editable
+      || !toolbar
+      || !browserSelection
+      || browserSelection.isCollapsed
+      || browserSelection.rangeCount === 0
+      || !browserSelection.toString().trim()
+      || !editable.contains(browserSelection.anchorNode)
+      || !editable.contains(browserSelection.focusNode)
+    ) {
+      dismissSelectionToolbar();
+      return;
+    }
+
+    const range = browserSelection.getRangeAt(0);
+    const selectionRect = Array.from(range.getClientRects()).find(
+      (rect) => rect.width > 0 || rect.height > 0,
+    ) ?? range.getBoundingClientRect();
+    const surfaceRect = surface.getBoundingClientRect();
+    if (
+      (selectionRect.width === 0 && selectionRect.height === 0)
+      || selectionRect.bottom < surfaceRect.top
+      || selectionRect.top > surfaceRect.bottom
+    ) {
+      dismissSelectionToolbar();
+      return;
+    }
+
+    const nextAnchor = floatingToolbarAnchor({
+      selectionRect,
+      containerRect: surfaceRect,
+      toolbarWidth: toolbar.offsetWidth,
+      toolbarHeight: toolbar.offsetHeight,
+    });
+    setSelectionToolbar((current) => (
+      current
+      && current.top === nextAnchor.top
+      && current.left === nextAnchor.left
+      && current.maxWidth === nextAnchor.maxWidth
+      && current.placement === nextAnchor.placement
+        ? current
+        : nextAnchor
+    ));
+  }, [dismissSelectionToolbar, readOnly]);
+
+  const recordSelection = useCallback((showToolbar = true) => {
+    const root = rootRef.current;
+    setSelection(root ? selectedMarkdownParagraph(root) : null);
+    if (!showToolbar) return;
+    selectionToolbarDismissedRef.current = false;
+    updateSelectionToolbar();
+  }, [updateSelectionToolbar]);
+
   useEffect(() => {
-    if (!onRewriteSelection) return undefined;
-    document.addEventListener('selectionchange', recordSelection);
-    return () => document.removeEventListener('selectionchange', recordSelection);
-  }, [onRewriteSelection, recordSelection]);
+    const handleSelectionChange = () => recordSelection(!selectionToolbarDismissedRef.current);
+    document.addEventListener('selectionchange', handleSelectionChange);
+    return () => document.removeEventListener('selectionchange', handleSelectionChange);
+  }, [recordSelection]);
+
+  useEffect(() => {
+    const dismissOnOutsidePointerDown = (event: MouseEvent) => {
+      const root = rootRef.current;
+      const target = event.target instanceof Node ? event.target : null;
+      const targetElement = target instanceof Element ? target : target?.parentElement;
+      if (
+        root
+        && target
+        && (root.contains(target) || targetElement?.closest('.mdxeditor-popup-container'))
+      ) return;
+      dismissSelectionToolbar();
+    };
+    const dismissOnScroll = (event: Event) => {
+      const root = rootRef.current;
+      const surface = root?.querySelector<HTMLElement>('.writer-markdown-editor__surface');
+      if (event.target === surface || !root || !(event.target instanceof Node) || !root.contains(event.target)) {
+        dismissSelectionToolbar();
+      }
+    };
+    const dismissOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') dismissSelectionToolbar();
+    };
+
+    document.addEventListener('mousedown', dismissOnOutsidePointerDown, true);
+    document.addEventListener('scroll', dismissOnScroll, true);
+    window.addEventListener('resize', dismissSelectionToolbar);
+    window.addEventListener('keydown', dismissOnEscape);
+    return () => {
+      document.removeEventListener('mousedown', dismissOnOutsidePointerDown, true);
+      document.removeEventListener('scroll', dismissOnScroll, true);
+      window.removeEventListener('resize', dismissSelectionToolbar);
+      window.removeEventListener('keydown', dismissOnEscape);
+    };
+  }, [dismissSelectionToolbar]);
 
   useEffect(() => {
     const latestSource = latestSourceRef.current;
@@ -175,13 +284,44 @@ export function MarkdownArtifactEditor({
     if (await saveChanges()) workflowAction?.onProceed();
   };
 
+  const showPolishAction = Boolean(onRewriteSelection || rewriteUnavailableReason);
+  const polishDisabled = !onRewriteSelection
+    || !selection?.supported
+    || dirty
+    || saving
+    || conflict
+    || Boolean(rewriteUnavailableReason);
+  const polishTitle = !selection?.supported
+    ? t('chat.artifactRewrite.singleParagraphHint')
+    : dirty
+      ? t('chat.artifactRewrite.saveFirstHint')
+      : rewriteUnavailableReason ?? t('chat.artifactRewrite.action');
+  const requestPolish = useCallback(() => {
+    if (polishDisabled || !selection || !onRewriteSelection) return;
+    onRewriteSelection(selection);
+    dismissSelectionToolbar();
+  }, [dismissSelectionToolbar, onRewriteSelection, polishDisabled, selection]);
+
+  const selectionToolbarStyle = selectionToolbar
+    ? {
+      '--writer-markdown-selection-toolbar-top': `${selectionToolbar.top}px`,
+      '--writer-markdown-selection-toolbar-left': `${selectionToolbar.left}px`,
+      '--writer-markdown-selection-toolbar-max-width': `${selectionToolbar.maxWidth}px`,
+    } as CSSProperties
+    : undefined;
+
   return (
     <section
-      className='writer-markdown-editor'
+      className={`writer-markdown-editor${
+        selectionToolbar ? ' writer-markdown-editor--selection-toolbar-visible' : ''
+      }`}
       aria-label={t('chat.writerMarkdown.documentRegion')}
       ref={rootRef}
+      style={selectionToolbarStyle}
       onMouseUp={recordSelection}
-      onKeyUp={recordSelection}
+      onKeyUp={(event) => {
+        if (event.key !== 'Escape') recordSelection();
+      }}
     >
       {conflict && (
         <div className='writer-markdown-editor__notice writer-markdown-editor__notice--warning' role='alert'>
@@ -240,14 +380,21 @@ export function MarkdownArtifactEditor({
               <DiffSourceToggleWrapper>
                 <UndoRedo />
                 <BoldItalicUnderlineToggles />
-                <StrikeThroughSupSubToggles />
-                <CodeToggle />
                 <BlockTypeSelect />
+                {showPolishAction && (
+                  <button
+                    type='button'
+                    className='writer-markdown-editor__polish-action'
+                    disabled={polishDisabled}
+                    title={polishTitle}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={requestPolish}
+                  >
+                    {t('chat.artifactRewrite.action')}
+                  </button>
+                )}
                 <ListsToggle />
                 <CreateLink />
-                <InsertTable />
-                <InsertCodeBlock />
-                <InsertThematicBreak />
               </DiffSourceToggleWrapper>
             ),
           }),
@@ -256,7 +403,7 @@ export function MarkdownArtifactEditor({
       <div className='writer-markdown-editor__rewrite-layer' ref={setRewriteLayer} />
       {rewritePreview && rewriteLayer && onRewritePreviewApplied && onRewritePreviewRejected && (
         <ArtifactRewriteInlineDiff
-          paragraph={rewritePreview.paragraph}
+          target={rewritePreview.paragraph}
           layer={rewriteLayer}
           startOffset={rewritePreview.startOffset}
           sessionId={rewritePreview.sessionId}
@@ -288,19 +435,6 @@ export function MarkdownArtifactEditor({
             {saving ? t('chat.writerMarkdown.saving') : workflowAction?.label ?? t('common.save')}
           </button>
         </div>
-      )}
-      {onRewriteSelection && selection && !saving && !conflict && (
-        <ArtifactRewriteSelectionAction
-          anchor={selection.anchor}
-          label={!selection.supported
-            ? t('chat.artifactRewrite.singleParagraphHint')
-            : dirty
-              ? t('chat.artifactRewrite.saveFirstHint')
-              : rewriteUnavailableReason ?? t('chat.artifactRewrite.action')}
-          disabled={!selection.supported || dirty || Boolean(rewriteUnavailableReason)}
-          onActivate={() => onRewriteSelection(selection)}
-          onDismiss={() => setSelection(null)}
-        />
       )}
     </section>
   );
