@@ -171,6 +171,8 @@ export interface SlotRevision {
   write_back_ready?: boolean;
   /** Whether the selected draft differs from that Feishu baseline. */
   write_back_dirty?: boolean;
+  /** Server-owned delivery state for the selected draft. */
+  write_back_state?: 'initial_delivery' | 'synced_clean' | 'synced_dirty' | 'blocked';
   /** Number of revisions for this (slot_id, list_index) — used to show version badge. */
   revision_count?: number;
 }

@@ -147,3 +147,122 @@ func TestPatchSlotItemByIndexOverlaysAfterProviderSync(t *testing.T) {
 		t.Fatalf("expected one human overlay artifact, got %#v", artifacts)
 	}
 }
+
+func TestGetSlotItemVersionsKeepsProviderSnapshotWhenDraftOverlayExists(t *testing.T) {
+	db := newHandlerTestDB(t)
+	if err := db.AutoMigrate(&orm.PluginHumanArtifact{}); err != nil {
+		t.Fatalf("migrate human artifacts: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := db.Create(&orm.PluginSession{
+		ID: "session-version-history", ConversationID: "conversation-version-history", PluginID: "writer-plugin",
+		Status: SessionStatusActive, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if err := db.Create(&orm.PluginHumanArtifact{
+		ID: "overlay-version-history", SessionID: "session-version-history", Slot: "draft_document",
+		ContentType: "json", Value: json.RawMessage(`{"data":{"content":"local draft"}}`), CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("create human overlay: %v", err)
+	}
+	overlayID := "overlay-version-history"
+	if err := db.Create(&orm.PluginSlotRevision{
+		ID: "revision-version-history", SessionID: "session-version-history", SlotID: "draft_document",
+		Revision: 2, Selected: true, ChangeSource: "provider_sync", Slot: "draft_document",
+		StepID: "write_document", Attempt: 1, HumanArtifactID: &overlayID,
+		ContentSnapshot: json.RawMessage(`{"data":{"content":"Feishu checkpoint"}}`), CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("create provider revision: %v", err)
+	}
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/plugin-sessions/session-version-history/slots/draft_document/items/idx/-1/versions",
+		nil,
+	)
+	req = mux.SetURLVars(req, map[string]string{
+		"session_id": "session-version-history", "slot_id": "draft_document", "list_index": "-1",
+	})
+	rec := httptest.NewRecorder()
+	GetSlotItemVersionsByIndex(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get versions: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	var response struct {
+		Data struct {
+			Versions []struct {
+				Revision        int             `json:"revision"`
+				ContentSnapshot json.RawMessage `json:"content_snapshot"`
+			} `json:"versions"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode versions response: %v", err)
+	}
+	if len(response.Data.Versions) != 1 {
+		t.Fatalf("versions=%#v", response.Data.Versions)
+	}
+	if got := string(response.Data.Versions[0].ContentSnapshot); got != `{"data":{"content":"Feishu checkpoint"}}` {
+		t.Fatalf("content_snapshot=%s, want immutable provider snapshot", got)
+	}
+}
+
+func TestWriterWriteBackState(t *testing.T) {
+	tests := []struct {
+		name  string
+		slot  slotDTO
+		value json.RawMessage
+		state string
+		ready bool
+		dirty bool
+	}{
+		{
+			name:  "new markdown draft is an initial delivery",
+			slot:  slotDTO{SlotID: "draft_document", ChangeSource: "human"},
+			value: json.RawMessage(`{"path":"/tmp/draft.md","document_format":"markdown"}`),
+			state: "initial_delivery",
+		},
+		{
+			name: "provider snapshot without edits is clean",
+			slot: slotDTO{
+				SlotID: "draft_document", ChangeSource: "provider_sync",
+				ContentSnapshot: json.RawMessage(`{"data":{"title":"same"}}`),
+			},
+			value: json.RawMessage(`{ "data": { "title": "same" } }`),
+			state: "synced_clean", ready: true,
+		},
+		{
+			name: "provider snapshot with an overlay is dirty",
+			slot: slotDTO{
+				SlotID: "draft_document", ChangeSource: "provider_sync",
+				ContentSnapshot: json.RawMessage(`{"data":{"title":"before"}}`),
+			},
+			value: json.RawMessage(`{"data":{"title":"after"}}`),
+			state: "synced_dirty", ready: true, dirty: true,
+		},
+		{
+			name:  "provider draft without a baseline is blocked",
+			slot:  slotDTO{SlotID: "draft_document", ChangeSource: "provider_sync"},
+			value: json.RawMessage(`{"path":"/tmp/draft.md","document_format":"markdown"}`),
+			state: "blocked",
+		},
+		{
+			name:  "unbound IR is blocked",
+			slot:  slotDTO{SlotID: "draft_document", ChangeSource: "human"},
+			value: json.RawMessage(`{"data":{"document_id":"draft"}}`),
+			state: "blocked",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			slot := tt.slot
+			setWriterWriteBackState(&slot, tt.value)
+			if slot.WriteBackState != tt.state || slot.WriteBackReady != tt.ready || slot.WriteBackDirty != tt.dirty {
+				t.Fatalf("state=%q ready=%t dirty=%t", slot.WriteBackState, slot.WriteBackReady, slot.WriteBackDirty)
+			}
+		})
+	}
+}

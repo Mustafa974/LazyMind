@@ -1155,6 +1155,15 @@ def writer_apply_revision(
             writer_schema('revision.PatchResult'),
             directory=root,
         )
+    if is_body_step and not is_markdown and require_context().params.get('initial_cloud_write_required'):
+        published = writer_publish_revision(
+            source_document_path=base_document_path,
+            revision_set_path=revision_set_path,
+            media_assets_path=media_assets_path,
+        )
+        result['revised_document'] = published['draft_document']
+        result['write_result'] = published['publish_result']
+        result['published_link'] = published['published_link']
     return result
 
 

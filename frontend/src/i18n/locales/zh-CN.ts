@@ -1480,6 +1480,8 @@ const zhCN = {
       refreshFailed: "最新文档加载失败，当前仅显示旧版本；重试后才能继续编辑。",
       writeBack: "一键写回飞书",
       writingBack: "写回中...",
+      writeToFeishu: "写入飞书",
+      writingToFeishu: "写入中...",
       writeBackSuccess: "已写回飞书",
       writeBackFailed: "写回失败，请重试",
       openFeishuDocument: "打开飞书文档",

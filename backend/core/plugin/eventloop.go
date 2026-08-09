@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -83,6 +85,11 @@ type PluginStepParams struct {
 	// RequiredOutputs is compiled by Go. Outputs not listed here are valid
 	// conditional products but do not gate attempt success.
 	RequiredOutputs []string `json:"required_outputs,omitempty"`
+
+	// InitialCloudWriteRequired marks the one body attempt that must establish
+	// the provider-confirmed baseline for a direct Feishu Writer IR revision.
+	// It is intentionally absent for Markdown and later local revisions.
+	InitialCloudWriteRequired bool `json:"initial_cloud_write_required,omitempty"`
 }
 
 // asMap serialises the params into the generic map expected by subagent.RunRequest.Params.
@@ -127,6 +134,9 @@ func (p PluginStepParams) asMap() map[string]any {
 	}
 	if p.UserID != "" {
 		m["user_id"] = p.UserID
+	}
+	if p.InitialCloudWriteRequired {
+		m["initial_cloud_write_required"] = true
 	}
 	return m
 }
@@ -490,6 +500,18 @@ func launchPluginAttempt(
 	if params.RetryHint != "" {
 		enrichedObjective += "\n\n--- Retry instruction (runtime only, not part of permanent prompt) ---\n" + params.RetryHint
 	}
+	params.InitialCloudWriteRequired = initialCloudWriterWriteRequired(
+		ctx, db, sessionID, pluginID, stepID,
+	)
+	if params.InitialCloudWriteRequired {
+		params.RequiredOutputs = appendRequiredOutput(params.RequiredOutputs, "document_write_result")
+		enrichedObjective += "\n\n--- Initial Feishu write-back requirement ---\n" +
+			"This is the first direct Writer IR body revision of a Feishu document. " +
+			"The write-back must succeed in this attempt. For a targeted revision, " +
+			"writer_apply_revision performs that write-back and returns a provider-confirmed " +
+			"revised_document plus write_result. Save write_result as document_write_result " +
+			"and save that revised_document as draft_document."
+	}
 
 	// Create sub_agent_tasks record.
 	// Python SubAgent reads params from the DB row (not the HTTP RunRequest body),
@@ -506,6 +528,9 @@ func launchPluginAttempt(
 		"session_id":    sessionID,
 		"user_input":    params.UserInput,
 		"is_cold_start": isCold,
+	}
+	if params.InitialCloudWriteRequired {
+		rawParamsMap["initial_cloud_write_required"] = true
 	}
 	if !legacyEvent {
 		// Compiled graph outputs are material guarantees. A v2 attempt cannot
@@ -1300,7 +1325,118 @@ func latestArtifactProviderSynced(ctx context.Context, db *gorm.DB, taskID, slot
 		First(&a).Error; err != nil {
 		return false
 	}
-	return artifactEnvelopeProviderSynced(a.Value)
+	return artifactEnvelopeProviderSynced(a.Value) || artifactFileEnvelopeProviderSynced(a.Value)
+}
+
+const maxProviderSyncArtifactBytes = 16 * 1024 * 1024
+
+// initialCloudWriterWriteRequired identifies the one direct Feishu Writer IR body
+// attempt that must establish a provider-confirmed draft baseline. Once a draft
+// exists, later revisions are deliberately local and the user controls write-back.
+func initialCloudWriterWriteRequired(
+	ctx context.Context,
+	db *gorm.DB,
+	sessionID, pluginID, stepID string,
+) bool {
+	if pluginID != "writer-plugin" || stepID != "write_document" || strings.TrimSpace(sessionID) == "" {
+		return false
+	}
+
+	var draftCount int64
+	if err := db.WithContext(ctx).Model(&orm.PluginSlotRevision{}).
+		Where("session_id = ? AND slot_id = ? AND list_index IS NULL AND selected = ?", sessionID, "draft_document", true).
+		Count(&draftCount).Error; err != nil || draftCount > 0 {
+		return false
+	}
+
+	var source orm.PluginSlotRevision
+	if err := db.WithContext(ctx).
+		Where("session_id = ? AND slot_id = ? AND list_index IS NULL AND selected = ?", sessionID, "source_document", true).
+		First(&source).Error; err != nil {
+		return false
+	}
+	value, err := loadSlotRevisionArtifactValue(ctx, db, &source)
+	if err != nil {
+		return false
+	}
+	return artifactEnvelopeHasFeishuProviderBinding(value)
+}
+
+func appendRequiredOutput(outputs []string, output string) []string {
+	for _, existing := range outputs {
+		if existing == output {
+			return outputs
+		}
+	}
+	result := append([]string(nil), outputs...)
+	return append(result, output)
+}
+
+// artifactFileEnvelopeProviderSynced reads the persisted WriterDocument envelope
+// for file artifacts. save_artifacts stores a file reference in the database,
+// while writer_replace_document writes the provider-sync marker inside the .lmd.
+func artifactFileEnvelopeProviderSynced(value json.RawMessage) bool {
+	contents, ok := writerIRFileArtifactEnvelope(value)
+	return ok && artifactEnvelopeProviderSynced(contents)
+}
+
+func artifactEnvelopeHasFeishuProviderBinding(value json.RawMessage) bool {
+	contents := value
+	if fileContents, ok := writerIRFileArtifactEnvelope(value); ok {
+		contents = fileContents
+	}
+	var envelope struct {
+		Data struct {
+			ProviderBinding struct {
+				Provider   string `json:"provider"`
+				DocumentID string `json:"document_id"`
+				URI        string `json:"uri"`
+			} `json:"provider_binding"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(contents, &envelope) != nil {
+		return false
+	}
+	binding := envelope.Data.ProviderBinding
+	return strings.EqualFold(strings.TrimSpace(binding.Provider), "feishu") &&
+		(strings.TrimSpace(binding.DocumentID) != "" || strings.TrimSpace(binding.URI) != "")
+}
+
+func writerIRFileArtifactEnvelope(value json.RawMessage) ([]byte, bool) {
+	var artifact struct {
+		Path string `json:"path"`
+	}
+	if json.Unmarshal(value, &artifact) != nil || strings.TrimSpace(artifact.Path) == "" {
+		return nil, false
+	}
+	// Markdown artifacts keep their existing initial-delivery flow. Only Writer IR
+	// envelopes use the .lmd provider-sync marker handled here.
+	if !strings.EqualFold(filepath.Ext(strings.TrimSpace(artifact.Path)), ".lmd") {
+		return nil, false
+	}
+
+	workspaceRoot, err := filepath.Abs(subagent.WorkspaceRoot())
+	if err != nil {
+		return nil, false
+	}
+	path, err := filepath.Abs(strings.TrimSpace(artifact.Path))
+	if err != nil {
+		return nil, false
+	}
+	rel, err := filepath.Rel(workspaceRoot, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, false
+	}
+
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maxProviderSyncArtifactBytes {
+		return nil, false
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false
+	}
+	return contents, true
 }
 
 // resolveSlotBinding looks up (slotID, cardinality) for a slot from the Python plugin API.

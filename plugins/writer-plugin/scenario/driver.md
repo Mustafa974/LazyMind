@@ -37,7 +37,8 @@ value is merely a local path string does not satisfy an output and must be RETRY
   document_modify_plan, document_revision_set, and document_revision_result must exist.
 - When the execution started without draft_document and used a cloud-bound `.lmd`
   source_document, document_write_result must report success and draft_document must be
-  the provider-confirmed document returned by the write-back.
+  the provider-confirmed document returned by the write-back. For a targeted revision,
+  initial_cloud_write_required makes writer_apply_revision perform this write-back.
 - Once draft_document already existed at execution start, a cloud-bound body revision
   must remain local in this step.
 - If the initial provider write contains images, resolved_media_assets must be passed to

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -88,6 +89,7 @@ type slotDTO struct {
 	ChangeSource   string          `json:"change_source,omitempty"`
 	WriteBackReady bool            `json:"write_back_ready,omitempty"`
 	WriteBackDirty bool            `json:"write_back_dirty,omitempty"`
+	WriteBackState string          `json:"write_back_state,omitempty"`
 	StepID         string          `json:"step_id,omitempty"`
 	RevisionCount  int             `json:"revision_count,omitempty"`
 	OrderVersion   *int            `json:"order_version,omitempty"`
@@ -292,11 +294,7 @@ func enrichSlots(ctx context.Context, db *gorm.DB, sessionID string, slots []slo
 			resolvedRaw = slot.ContentSnapshot
 		}
 
-		if slot.SlotID == "draft_document" && slot.ChangeSource == "provider_sync" &&
-			len(slot.ContentSnapshot) > 0 {
-			slot.WriteBackReady = true
-			slot.WriteBackDirty = !ArtifactValuesEqual(resolvedRaw, slot.ContentSnapshot)
-		}
+		setWriterWriteBackState(slot, resolvedRaw)
 
 		if resolved == nil {
 			fmt.Printf("[enrichSlots] WARN: resolved=nil for slot_id=%s list_index=%v revision=%d change_source=%s HumanArtifactID=%v ArtifactSeq=%v\n",
@@ -336,6 +334,61 @@ func enrichSlots(ctx context.Context, db *gorm.DB, sessionID string, slots []slo
 			ov := ord.OrderVersion
 			slot.OrderVersion = &ov
 		}
+	}
+}
+
+func isMarkdownArtifactValue(value json.RawMessage) bool {
+	var artifact struct {
+		DocumentFormat string `json:"document_format"`
+		Filename       string `json:"filename"`
+		Name           string `json:"name"`
+		Path           string `json:"path"`
+	}
+	if json.Unmarshal(value, &artifact) != nil {
+		return false
+	}
+	if strings.EqualFold(artifact.DocumentFormat, "markdown") {
+		return true
+	}
+	for _, candidate := range []string{artifact.Filename, artifact.Name, artifact.Path} {
+		name := strings.ToLower(strings.TrimSpace(candidate))
+		if strings.HasSuffix(name, ".md") || strings.HasSuffix(name, ".markdown") {
+			return true
+		}
+	}
+	return false
+}
+
+func setWriterWriteBackState(slot *slotDTO, resolvedRaw json.RawMessage) {
+	if slot == nil || slot.SlotID != "draft_document" {
+		return
+	}
+	if slot.ChangeSource == "provider_sync" {
+		if len(slot.ContentSnapshot) == 0 {
+			// A provider-synced draft without a baseline cannot safely be
+			// classified as a first delivery or diff-written back.
+			slot.WriteBackState = "blocked"
+			return
+		}
+		slot.WriteBackReady = true
+		slot.WriteBackDirty = !ArtifactValuesEqual(resolvedRaw, slot.ContentSnapshot)
+		if slot.WriteBackDirty {
+			slot.WriteBackState = "synced_dirty"
+		} else {
+			slot.WriteBackState = "synced_clean"
+		}
+		return
+	}
+	if isMarkdownArtifactValue(resolvedRaw) {
+		// A locally generated Markdown draft has no provider baseline yet. The
+		// first user action creates a Feishu document, so it is actionable even
+		// before the user makes a local edit.
+		slot.WriteBackState = "initial_delivery"
+		return
+	}
+	if len(resolvedRaw) > 0 {
+		// IR drafts require a provider-confirmed baseline for diff-based sync.
+		slot.WriteBackState = "blocked"
 	}
 }
 

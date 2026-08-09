@@ -856,9 +856,20 @@ export function SlotVersionPopover({
   const previewedVersion = versions[previewIndex] ?? null;
   // The currently-selected (active) version
   const currentVersion = versions.find((v) => v.selected) ?? versions[0] ?? null;
+  const currentVersionRevision = currentVersion?.revision;
+  const currentVersionIndex = versions.findIndex((v) => v.revision === currentVersionRevision);
   const activeCurrentValue = currentVersion?.content_snapshot ?? currentValue;
   // Whether the previewed version is already the current one
   const isPreviewingCurrent = previewedVersion?.selected ?? false;
+
+  // A write-back can create a newer selected revision while this dialog is
+  // still open. Reset only for that transition; a user's explicit historical
+  // selection remains in place until the current revision changes again.
+  useEffect(() => {
+    if (!open || currentVersionIndex < 0) return;
+    setSelectedRevision(null);
+    setPreviewIndex(currentVersionIndex);
+  }, [currentVersionIndex, currentVersionRevision, open]);
 
   // Format date as MM/DD HH:mm
   const formatDate = (isoStr: string) => {
@@ -2189,6 +2200,8 @@ function feishuDocumentUrl(document?: WriterDocument | null): string | undefined
 
 function useRegisterWriterWriteBack({
   enabled,
+  initialDelivery,
+  synced,
   actionKey,
   sessionId,
   revision,
@@ -2197,6 +2210,8 @@ function useRegisterWriterWriteBack({
   onSuccess,
 }: {
   enabled: boolean;
+  initialDelivery?: boolean;
+  synced?: boolean;
   actionKey?: string;
   sessionId?: string;
   revision: number;
@@ -2249,8 +2264,8 @@ function useRegisterWriterWriteBack({
     if (!enabled || !tabActive || !actionKey || !sessionId) return undefined;
     return registerFooterAction(actionKey, {
       label: status === 'loading'
-        ? tr('chat.writerIR.writingBack')
-        : tr('chat.writerIR.writeBack'),
+        ? tr(initialDelivery ? 'chat.writerIR.writingToFeishu' : 'chat.writerIR.writingBack')
+        : tr(initialDelivery ? 'chat.writerIR.writeToFeishu' : 'chat.writerIR.writeBack'),
       order: 30,
       tone: 'primary',
       icon: 'write-back',
@@ -2259,12 +2274,14 @@ function useRegisterWriterWriteBack({
       onClick: () => {
         void writeBack();
       },
-      statusText: status === 'success'
+      statusText: status === 'success' || (synced && status === 'idle')
         ? tr('chat.writerIR.writeBackSuccess')
         : status === 'error'
           ? tr('chat.writerIR.writeBackFailed')
           : undefined,
-      statusTone: status === 'success' ? 'success' : status === 'error' ? 'error' : undefined,
+      statusTone: status === 'success' || (synced && status === 'idle')
+        ? 'success'
+        : status === 'error' ? 'error' : undefined,
       statusLink: writeBackUrl
         ? { href: writeBackUrl, label: tr('chat.writerIR.openFeishuDocument') }
         : undefined,
@@ -2273,9 +2290,11 @@ function useRegisterWriterWriteBack({
     actionKey,
     disabled,
     enabled,
+    initialDelivery,
     registerFooterAction,
     sessionId,
     status,
+    synced,
     tabActive,
     writeBack,
     writeBackUrl,
@@ -2449,14 +2468,15 @@ function SlotJsonFile({
     && hasProviderTarget(writerDocument);
   const displayRevision = loadedRevision ?? slot.revision;
   const displayRevisionCount = localRevisionCount ?? revisionCount;
-  const canWriteBack = resolvedSlotId === 'draft_document'
+  const hasFeishuWriteBackTarget = resolvedSlotId === 'draft_document'
     && Boolean(sessionId)
     && apiListIndex === -1
     && !readOnly
-    && slot.write_back_ready === true
     && hasFeishuProviderTarget(writerDocument)
     && typeof displayRevision === 'number'
     && displayRevision > 0;
+  const canWriteBack = hasFeishuWriteBackTarget
+    && (slot.write_back_state === 'synced_clean' || slot.write_back_state === 'synced_dirty');
   const canEditWriterIR = Boolean(sessionId && slotId)
     && !readOnly
     && (loadedSourceKey === sourceKey || writerEditing);
@@ -2634,12 +2654,13 @@ function SlotJsonFile({
   }, [applySavedRevision, onRefresh]);
 
   useRegisterWriterWriteBack({
-    enabled: canWriteBack,
+    enabled: hasFeishuWriteBackTarget,
     actionKey: sessionId && slotId ? `${editingKey}:writeback` : undefined,
     sessionId,
     revision: displayRevision,
     document: writerDocument,
-    disabled: !hasWriteBackChanges,
+    disabled: !canWriteBack || !hasWriteBackChanges,
+    synced: canWriteBack,
     onSuccess: handleWriteBackSuccess,
   });
 
@@ -2794,9 +2815,15 @@ function SlotInlineStructured({
   } | null>(null);
   const [localRevision, setLocalRevision] = useState(slot.revision);
   const [localRevisionCount, setLocalRevisionCount] = useState<number | undefined>(revisionCount);
+  // A write-back response is the authoritative provider snapshot. Keep it until
+  // the session refresh catches up so the editor never pairs a new revision with
+  // the previous prop value.
+  const [syncedWriterDocument, setSyncedWriterDocument] = useState<WriterDocument | null>(null);
+  const [syncedWriterRevision, setSyncedWriterRevision] = useState<number>();
   const apiListIndex = slot.list_index ?? -1;
   const resolvedSlotId = slotId ?? slot.slot;
-  const writerDocument = isWriterDocument(payload) ? payload : null;
+  const serverWriterDocument = isWriterDocument(payload) ? payload : null;
+  const writerDocument = syncedWriterDocument ?? serverWriterDocument;
   const writeBackBaselineRef = useRef<WriterDocument | null>(writerDocument);
   const serverWriteBackDirtyRef = useRef(Boolean(slot.write_back_dirty));
   const currentWriterDocumentRef = useRef<WriterDocument | null>(writerDocument);
@@ -2820,14 +2847,15 @@ function SlotInlineStructured({
     && hasProviderTarget(writerDocument);
   const displayRevision = localRevision ?? slot.revision;
   const displayRevisionCount = localRevisionCount ?? revisionCount;
-  const canWriteBack = resolvedSlotId === 'draft_document'
+  const hasFeishuWriteBackTarget = resolvedSlotId === 'draft_document'
     && Boolean(sessionId)
     && apiListIndex === -1
     && !readOnly
-    && slot.write_back_ready === true
     && hasFeishuProviderTarget(writerDocument)
     && typeof displayRevision === 'number'
     && displayRevision > 0;
+  const canWriteBack = hasFeishuWriteBackTarget
+    && (slot.write_back_state === 'synced_clean' || slot.write_back_state === 'synced_dirty');
   const canEditWriterIR = Boolean(sessionId && slotId)
     && !readOnly;
   const editingKey = `${sessionId}:${slotId}:${apiListIndex}:writer-ir`;
@@ -2866,6 +2894,14 @@ function SlotInlineStructured({
   }, [revisionCount]);
 
   useEffect(() => {
+    if (!syncedWriterDocument || syncedWriterRevision === undefined) return;
+    if (typeof slot.revision === 'number' && slot.revision >= syncedWriterRevision) {
+      setSyncedWriterDocument(null);
+      setSyncedWriterRevision(undefined);
+    }
+  }, [slot.revision, syncedWriterDocument, syncedWriterRevision]);
+
+  useEffect(() => {
     if (!writerDocument) {
       setWriterMarkdownDownload(null);
       return;
@@ -2885,17 +2921,20 @@ function SlotInlineStructured({
     serverWriteBackDirtyRef.current = false;
     writeBackBaselineRef.current = document;
     setHasWriteBackChanges(false);
+    setSyncedWriterDocument(document);
+    setSyncedWriterRevision(revision);
     applySavedRevision(revision);
     onRefresh?.();
   }, [applySavedRevision, onRefresh]);
 
   useRegisterWriterWriteBack({
-    enabled: canWriteBack,
+    enabled: hasFeishuWriteBackTarget,
     actionKey: sessionId && slotId ? `${editingKey}:writeback` : undefined,
     sessionId,
     revision: displayRevision,
     document: writerDocument,
-    disabled: !hasWriteBackChanges,
+    disabled: !canWriteBack || !hasWriteBackChanges,
+    synced: canWriteBack,
     onSuccess: handleWriteBackSuccess,
   });
 
@@ -3224,9 +3263,12 @@ function SlotMarkdownFile({
     displayRevisionCount !== undefined && displayRevisionCount > 0 && Boolean(sessionId && slotId);
   const resolvedSlotId = slotId ?? slot.slot;
   const showArtifactActions = !WRITER_ARTIFACT_SLOT_IDS.has(resolvedSlotId);
+  const initialDelivery = slot.write_back_state === 'initial_delivery';
   const canWriteBack = resolvedSlotId === 'draft_document'
     && Boolean(sessionId)
-    && apiListIndex === -1;
+    && apiListIndex === -1
+    && !readOnly
+    && (initialDelivery || slot.write_back_state === 'synced_clean' || slot.write_back_state === 'synced_dirty');
   // AI polish is only available on the drafting (成稿) step.
   const supportsArtifactRewrite = resolvedSlotId === 'draft_document';
   const canRewriteMarkdown = supportsArtifactRewrite
@@ -3362,10 +3404,11 @@ function SlotMarkdownFile({
 
   useRegisterWriterWriteBack({
     enabled: canWriteBack,
+    initialDelivery,
     actionKey: markdownEditingKey ? `${markdownEditingKey}:writeback` : undefined,
     sessionId,
     revision: displayRevision,
-    disabled: !hasWriteBackChanges,
+    disabled: !(initialDelivery || hasWriteBackChanges),
     onSuccess: handleMarkdownWriteBackSuccess,
   });
 

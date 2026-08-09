@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -25,6 +27,127 @@ func makeSubAgentTask(t *testing.T, db interface {
 	CreateTask(in subagent.CreateTaskInput) error
 }, taskID, convID, sessionID, stepID string) {
 	t.Helper()
+}
+
+func TestLatestArtifactProviderSyncedReadsFileEnvelope(t *testing.T) {
+	db := newTestDB(t)
+	workspace := t.TempDir()
+	t.Setenv("LAZYMIND_SUBAGENT_WORKSPACE", workspace)
+
+	path := filepath.Join(workspace, "user-1", "task-1", "draft_document.lmd")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("create artifact directory: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`{
+		"meta": {"lazymind_provider_sync": {"confirmed": true, "provider": "feishu"}},
+		"data": {"document_id": "writer-doc"}
+	}`), 0o600); err != nil {
+		t.Fatalf("write artifact envelope: %v", err)
+	}
+	value, err := json.Marshal(map[string]string{"path": path, "filename": "draft_document.lmd"})
+	if err != nil {
+		t.Fatalf("marshal artifact value: %v", err)
+	}
+	if err := db.DB.Create(&orm.SubAgentArtifact{
+		ID:          "provider-sync-file-artifact",
+		TaskID:      "task-1",
+		Slot:        "draft_document",
+		ContentType: "file",
+		Value:       value,
+		Seq:         1,
+		CreatedAt:   time.Now().UTC(),
+	}).Error; err != nil {
+		t.Fatalf("create artifact: %v", err)
+	}
+
+	if !latestArtifactProviderSynced(context.Background(), db.DB, "task-1", "draft_document") {
+		t.Fatal("file-backed provider-sync envelope was not recognized")
+	}
+
+	markdownPath := filepath.Join(workspace, "user-1", "task-1", "draft.md")
+	if err := os.WriteFile(markdownPath, []byte(`{"meta":{"lazymind_provider_sync":{"confirmed":true}}}`), 0o600); err != nil {
+		t.Fatalf("write markdown artifact: %v", err)
+	}
+	markdownValue, err := json.Marshal(map[string]string{"path": markdownPath, "filename": "draft.md"})
+	if err != nil {
+		t.Fatalf("marshal markdown artifact value: %v", err)
+	}
+	if err := db.DB.Create(&orm.SubAgentArtifact{
+		ID:          "markdown-artifact",
+		TaskID:      "task-1",
+		Slot:        "draft_document",
+		ContentType: "file",
+		Value:       markdownValue,
+		Seq:         2,
+		CreatedAt:   time.Now().UTC(),
+	}).Error; err != nil {
+		t.Fatalf("create markdown artifact: %v", err)
+	}
+	if latestArtifactProviderSynced(context.Background(), db.DB, "task-1", "draft_document") {
+		t.Fatal("Markdown artifact must not be treated as a provider-synced Writer IR document")
+	}
+}
+
+func TestInitialCloudWriterWriteRequiredOnlyForFirstFeishuIRDraft(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	workspace := t.TempDir()
+	t.Setenv("LAZYMIND_SUBAGENT_WORKSPACE", workspace)
+
+	sourcePath := filepath.Join(workspace, "user-1", "task-prepare", "source_document.lmd")
+	if err := os.MkdirAll(filepath.Dir(sourcePath), 0o755); err != nil {
+		t.Fatalf("create source directory: %v", err)
+	}
+	if err := os.WriteFile(sourcePath, []byte(`{
+		"data": {"provider_binding": {"provider": "feishu", "document_id": "doc-1", "uri": "https://example.feishu.cn/docx/doc-1"}}
+	}`), 0o600); err != nil {
+		t.Fatalf("write source document: %v", err)
+	}
+	sourceValue, err := json.Marshal(map[string]string{"path": sourcePath, "filename": "source_document.lmd"})
+	if err != nil {
+		t.Fatalf("marshal source artifact value: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := db.DB.Create(&orm.PluginSessionStep{
+		ID: "step-prepare", SessionID: "ps-writer", StepID: "prepare", Attempt: 1,
+		TaskID: "task-prepare", Status: StepStatusSucceeded, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("create prepare step: %v", err)
+	}
+	if err := db.DB.Create(&orm.SubAgentArtifact{
+		ID: "source-artifact", TaskID: "task-prepare", Slot: "source_document",
+		ContentType: "file", Value: sourceValue, Seq: 1, CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("create source artifact: %v", err)
+	}
+	seq := 1
+	if err := db.DB.Create(&orm.PluginSlotRevision{
+		ID: "source-revision", SessionID: "ps-writer", SlotID: "source_document", Revision: 1,
+		Selected: true, ArtifactSeq: &seq, Slot: "source_document", StepID: "prepare",
+		Attempt: 1, Validity: "effective", CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("create source revision: %v", err)
+	}
+
+	if !initialCloudWriterWriteRequired(ctx, db.DB, "ps-writer", "writer-plugin", "write_document") {
+		t.Fatal("first direct Feishu Writer IR draft must require provider write-back")
+	}
+	if initialCloudWriterWriteRequired(ctx, db.DB, "ps-writer", "writer-plugin", "outline") {
+		t.Fatal("non-body Writer steps must not require a draft write-back")
+	}
+	if initialCloudWriterWriteRequired(ctx, db.DB, "ps-writer", "other-plugin", "write_document") {
+		t.Fatal("non-Writer plugins must not require a Feishu write-back")
+	}
+	if err := db.DB.Create(&orm.PluginSlotRevision{
+		ID: "draft-revision", SessionID: "ps-writer", SlotID: "draft_document", Revision: 1,
+		Selected: true, Slot: "draft_document", StepID: "write_document", Attempt: 1,
+		Validity: "effective", CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("create draft revision: %v", err)
+	}
+	if initialCloudWriterWriteRequired(ctx, db.DB, "ps-writer", "writer-plugin", "write_document") {
+		t.Fatal("later local Writer revisions must not require provider write-back")
+	}
 }
 
 // seedSession creates a session + step + sub_agent_task record for a given step.

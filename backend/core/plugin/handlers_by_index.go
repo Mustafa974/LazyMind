@@ -318,7 +318,12 @@ func GetSlotItemVersionsByIndex(w http.ResponseWriter, r *http.Request) {
 			"created_at":    rev.CreatedAt,
 			"selected":      rev.Selected,
 		}
-		if rev.HumanArtifactID != nil {
+		// A provider_sync revision is an immutable Feishu checkpoint. A human
+		// artifact attached to it is the current local draft for the next
+		// write-back, not historical content for this checkpoint.
+		if rev.ChangeSource == "provider_sync" && len(rev.ContentSnapshot) > 0 {
+			item["content_snapshot"] = enrichArtifactValue(rev.ContentSnapshot, "")
+		} else if rev.HumanArtifactID != nil {
 			var ha orm.PluginHumanArtifact
 			if db.WithContext(ctx).Where("id = ?", *rev.HumanArtifactID).First(&ha).Error == nil {
 				ct := resolveContentType(ha.ContentType, ha.Value)

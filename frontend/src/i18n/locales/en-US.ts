@@ -1522,6 +1522,8 @@ const enUS = {
       refreshFailed: "The latest document could not be loaded. An older read-only version is shown; retry to continue editing.",
       writeBack: "Write back to Feishu",
       writingBack: "Writing back...",
+      writeToFeishu: "Write to Feishu",
+      writingToFeishu: "Writing...",
       writeBackSuccess: "Written back to Feishu",
       writeBackFailed: "Write-back failed. Please retry.",
       openFeishuDocument: "Open Feishu document",

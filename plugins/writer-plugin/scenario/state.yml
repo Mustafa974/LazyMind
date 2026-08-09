@@ -308,14 +308,13 @@ steps:
             `document_revision_result`; those are returned paths, not artifact keys. Do not
             call read_user_attachment, list_artifacts, string_replace, or manually rebuild
             the document after apply_revision succeeds.
-         6. When this execution started without draft_document and the base is the
-            cloud-bound `.lmd` source_document, perform the one-time initial Feishu
-            write-back: call writer_publish_revision with source_document, the generated
-            document_revision_set, and resolved_media_assets when it exists. Save
-            publish_result as document_write_result and save the returned
-            provider-confirmed draft_document as the next revision of the same
-            draft_document slot. Do not automatically publish later revisions once
-            draft_document already existed at execution start.
+         6. When the runtime parameter initial_cloud_write_required is true,
+            writer_apply_revision performs the one-time initial Feishu write-back and
+            returns the provider-confirmed document in revised_document plus the provider
+            result in write_result. Save write_result as document_write_result and save the
+            returned revised_document as draft_document. Do not call writer_publish_revision
+            again. Do not automatically publish later revisions once draft_document already
+            existed at execution start.
          7. Call writer_update_writing_context using the final revised draft_document
             and save writing_context_after_draft.
 

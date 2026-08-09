@@ -92,6 +92,9 @@ a hidden current-document pointer.
 - After `writer_apply_revision` succeeds, its returned `revised_document` path is the
   authoritative next `draft_document` file. Save that exact path immediately; do not
   query it as an artifact key or reconstruct the document with generic file tools.
+- For the direct initial Feishu revision, `initial_cloud_write_required` makes
+  `writer_apply_revision` return the provider-confirmed `revised_document` and its
+  `write_result`; save the latter as `document_write_result` and do not publish twice.
 - A successful Feishu write produces a new provider-confirmed `draft_document` revision;
   provider result metadata remains internal to the step.
 - An IR draft does not produce a parallel Markdown artifact. Markdown export from IR is
