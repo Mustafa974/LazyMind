@@ -128,6 +128,11 @@ func PatchSlotItemByIndex(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "invalid mode: must be draft or checkpoint", http.StatusBadRequest)
 		return
 	}
+	// draft_document local saves try in-place draft overwrite first; a new revision is
+	// created only for non-draft_document slots or when no selected revision exists.
+	if slotID == "draft_document" {
+		mode = "draft"
+	}
 	db := store.DB()
 	if db == nil {
 		common.ReplyErr(w, "store not initialized", http.StatusInternalServerError)
@@ -165,7 +170,7 @@ func PatchSlotItemByIndex(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		// Selected revision is not an updatable human artifact; fall through to create one.
+		// Selected revision is not an updatable draft; fall through to create one.
 	}
 
 	// listIndex == -1 means single slot (list_index IS NULL)

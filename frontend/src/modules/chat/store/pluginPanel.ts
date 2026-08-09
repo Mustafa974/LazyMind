@@ -165,8 +165,12 @@ export interface SlotRevision {
   artifact_value?: any;
   /** Human-readable description for image/file artifacts. */
   caption?: string;
-  /** change_source: 'ai' (generated) or 'human' (manually edited). */
-  change_source?: "ai" | "human";
+  /** change_source: ai / human / provider_sync (Feishu-confirmed). */
+  change_source?: "ai" | "human" | "provider_sync";
+  /** Whether this draft has a server-owned Feishu baseline. */
+  write_back_ready?: boolean;
+  /** Whether the selected draft differs from that Feishu baseline. */
+  write_back_dirty?: boolean;
   /** Number of revisions for this (slot_id, list_index) — used to show version badge. */
   revision_count?: number;
 }
@@ -315,7 +319,7 @@ export interface PluginUI {
 
 export interface SlotVersionEntry {
   revision: number;
-  change_source: "ai" | "human";
+  change_source: "ai" | "human" | "provider_sync";
   created_at: string;
   selected: boolean;
   content_snapshot?: any;

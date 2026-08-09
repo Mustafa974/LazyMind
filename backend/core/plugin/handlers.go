@@ -75,20 +75,22 @@ type stepDTO struct {
 
 // slotDTO represents a currently-selected slot revision, with its artifact value inline.
 type slotDTO struct {
-	SlotID        string          `json:"slot_id"`
-	Revision      int             `json:"revision"`
-	ListIndex     *int            `json:"list_index,omitempty"`
-	SortOrder     *int            `json:"sort_order,omitempty"`
-	Selected      bool            `json:"selected"`
-	Slot          string          `json:"slot"`
-	CreatedAt     time.Time       `json:"created_at"`
-	ContentType   string          `json:"content_type,omitempty"`
-	ArtifactValue json.RawMessage `json:"artifact_value,omitempty"`
-	Caption       *string         `json:"caption,omitempty"`
-	ChangeSource  string          `json:"change_source,omitempty"`
-	StepID        string          `json:"step_id,omitempty"`
-	RevisionCount int             `json:"revision_count,omitempty"`
-	OrderVersion  *int            `json:"order_version,omitempty"`
+	SlotID         string          `json:"slot_id"`
+	Revision       int             `json:"revision"`
+	ListIndex      *int            `json:"list_index,omitempty"`
+	SortOrder      *int            `json:"sort_order,omitempty"`
+	Selected       bool            `json:"selected"`
+	Slot           string          `json:"slot"`
+	CreatedAt      time.Time       `json:"created_at"`
+	ContentType    string          `json:"content_type,omitempty"`
+	ArtifactValue  json.RawMessage `json:"artifact_value,omitempty"`
+	Caption        *string         `json:"caption,omitempty"`
+	ChangeSource   string          `json:"change_source,omitempty"`
+	WriteBackReady bool            `json:"write_back_ready,omitempty"`
+	WriteBackDirty bool            `json:"write_back_dirty,omitempty"`
+	StepID         string          `json:"step_id,omitempty"`
+	RevisionCount  int             `json:"revision_count,omitempty"`
+	OrderVersion   *int            `json:"order_version,omitempty"`
 
 	// Internal fields — used by enrichSlots, never serialised to the client.
 	ArtifactSeq     *int            `json:"-"`
@@ -239,8 +241,9 @@ func enrichSlots(ctx context.Context, db *gorm.DB, sessionID string, slots []slo
 		// Unified value resolution (priority order):
 		//   1. HumanArtifactID != nil → human revision: read from plugin_human_artifacts.
 		//   2. ArtifactSeq != nil     → AI revision: read from sub_agent_artifacts by seq.
-		//   3. ContentSnapshot        → legacy fallback (pre-migration rows).
+		//   3. ContentSnapshot        → snapshot-backed revision.
 		var resolved json.RawMessage
+		var resolvedRaw json.RawMessage
 		var resolvedContentType string
 		var resolvedCaption *string
 
@@ -250,6 +253,7 @@ func enrichSlots(ctx context.Context, db *gorm.DB, sessionID string, slots []slo
 			if haErr == nil {
 				resolvedContentType = resolveContentType(ha.ContentType, ha.Value)
 				resolved = enrichArtifactValue(ha.Value, resolvedContentType)
+				resolvedRaw = ha.Value
 				resolvedCaption = ha.Caption
 			} else {
 				fmt.Printf("[enrichSlots] WARN: HumanArtifactID=%s not found for slot_id=%s list_index=%v: %v\n",
@@ -267,6 +271,7 @@ func enrichSlots(ctx context.Context, db *gorm.DB, sessionID string, slots []slo
 						a := &artifactsByTask[k][j]
 						resolvedContentType = resolveContentType(a.ContentType, a.Value)
 						resolved = enrichArtifactValue(a.Value, resolvedContentType)
+						resolvedRaw = a.Value
 						resolvedCaption = a.Caption
 						break
 					}
@@ -281,9 +286,16 @@ func enrichSlots(ctx context.Context, db *gorm.DB, sessionID string, slots []slo
 				slot.SlotID, slot.ListIndex, slot.Revision, len(slot.ContentSnapshot))
 		}
 
-		// Legacy fallback: ContentSnapshot for pre-migration rows.
+		// Snapshot-backed revisions carry their displayed value directly.
 		if resolved == nil && len(slot.ContentSnapshot) > 0 {
 			resolved = enrichArtifactValue(slot.ContentSnapshot, "")
+			resolvedRaw = slot.ContentSnapshot
+		}
+
+		if slot.SlotID == "draft_document" && slot.ChangeSource == "provider_sync" &&
+			len(slot.ContentSnapshot) > 0 {
+			slot.WriteBackReady = true
+			slot.WriteBackDirty = !ArtifactValuesEqual(resolvedRaw, slot.ContentSnapshot)
 		}
 
 		if resolved == nil {

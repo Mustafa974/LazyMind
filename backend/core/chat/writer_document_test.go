@@ -49,40 +49,142 @@ func TestWriterSyncStatus_Default(t *testing.T) {
 	}
 }
 
-func TestLoadWriterWriteBackBaseline_UsesSourceDocumentForInitialSync(t *testing.T) {
+func TestLoadWriterWriteBackBaseline_UsesCurrentRevisionSnapshot(t *testing.T) {
 	db := orm.MigrateTestDB(t, &orm.PluginSlotRevision{})
-	source := json.RawMessage(`{"data":{"document_id":"feishu-doc","provider_binding":{"provider":"feishu","document_id":"feishu-doc"}}}`)
-	seedWriterRevision(t, db, "source", "source_document", 1, true, "ai", source)
-	seedWriterRevision(t, db, "draft-1", "draft_document", 1, false, "ai", source)
-	seedWriterRevision(t, db, "draft-2", "draft_document", 2, true, "human", source)
+	baselineValue := json.RawMessage(`{"data":{"document_id":"feishu-doc","title":"baseline","provider_binding":{"provider":"feishu","document_id":"feishu-doc"}}}`)
+	seedWriterRevision(t, db, "draft-2", "draft_document", 2, true, "provider_sync", baselineValue)
 
 	baseline, err := loadWriterWriteBackBaseline(context.Background(), db.DB, "session", 2)
 	if err != nil {
 		t.Fatalf("load baseline: %v", err)
 	}
-	if baseline.Revision.SlotID != "source_document" {
-		t.Fatalf("baseline slot = %q, want source_document", baseline.Revision.SlotID)
+	if baseline.Revision.ID != "draft-2" {
+		t.Fatalf("baseline id = %q, want draft-2", baseline.Revision.ID)
 	}
-	if baseline.Revision.Revision != 1 {
-		t.Fatalf("baseline revision = %d, want 1", baseline.Revision.Revision)
+	if !json.Valid(baseline.Value) || string(baseline.Value) != string(baselineValue) {
+		t.Fatalf("baseline value = %s, want %s", baseline.Value, baselineValue)
 	}
 }
 
-func TestLoadWriterWriteBackBaseline_PrefersLatestSyncedDraft(t *testing.T) {
+func TestLoadWriterWriteBackBaseline_RejectsMissingCurrentSnapshot(t *testing.T) {
 	db := orm.MigrateTestDB(t, &orm.PluginSlotRevision{})
-	source := json.RawMessage(`{"data":{"document_id":"source-doc","provider_binding":{"provider":"feishu","document_id":"source-doc"}}}`)
-	syncedDraft := json.RawMessage(`{"data":{"document_id":"synced-doc","provider_binding":{"provider":"feishu","document_id":"synced-doc"}}}`)
-	seedWriterRevision(t, db, "source", "source_document", 1, true, "ai", source)
-	seedWriterRevision(t, db, "draft-1", "draft_document", 1, false, "provider_sync", syncedDraft)
-	seedWriterRevision(t, db, "draft-2", "draft_document", 2, false, "human", syncedDraft)
-	seedWriterRevision(t, db, "draft-3", "draft_document", 3, true, "human", syncedDraft)
+	seedWriterRevision(t, db, "draft-1", "draft_document", 1, false, "provider_sync", json.RawMessage(`{"old":true}`))
+	seedWriterRevision(t, db, "draft-2", "draft_document", 2, true, "human", nil)
 
-	baseline, err := loadWriterWriteBackBaseline(context.Background(), db.DB, "session", 3)
-	if err != nil {
-		t.Fatalf("load baseline: %v", err)
+	if _, err := loadWriterWriteBackBaseline(context.Background(), db.DB, "session", 2); err == nil {
+		t.Fatal("missing current provider snapshot should be rejected")
 	}
-	if baseline.Revision.ID != "draft-1" {
-		t.Fatalf("baseline id = %q, want draft-1", baseline.Revision.ID)
+}
+
+func TestAlignWriterWriteBackRevised_CopiesIdentityKeepsContent(t *testing.T) {
+	source := json.RawMessage(`{
+		"document_id":"doc-1",
+		"stage":"final",
+		"title":"Baseline",
+		"revision":"42",
+		"provider_binding":{"provider":"feishu","document_id":"fs-1","revision":"42"},
+		"blocks":[{"node_id":"a","type":"paragraph","content":"old"}]
+	}`)
+	revised := json.RawMessage(`{
+		"document_id":"doc-1",
+		"stage":"draft",
+		"title":"Edited",
+		"revision":"99",
+		"provider_binding":{"provider":"feishu","document_id":"fs-1"},
+		"blocks":[{"node_id":"a","type":"paragraph","content":"new"}]
+	}`)
+
+	aligned, err := alignWriterWriteBackRevised(source, revised)
+	if err != nil {
+		t.Fatalf("align: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(aligned, &got); err != nil {
+		t.Fatalf("unmarshal aligned: %v", err)
+	}
+	if got["title"] != "Edited" {
+		t.Fatalf("title = %#v, want Edited", got["title"])
+	}
+	if got["revision"] != "42" {
+		t.Fatalf("revision = %#v, want 42", got["revision"])
+	}
+	if got["stage"] != "final" {
+		t.Fatalf("stage = %#v, want final", got["stage"])
+	}
+	binding, _ := got["provider_binding"].(map[string]any)
+	if binding["revision"] != "42" {
+		t.Fatalf("provider_binding.revision = %#v, want 42", binding["revision"])
+	}
+	blocks, _ := got["blocks"].([]any)
+	if len(blocks) != 1 {
+		t.Fatalf("blocks len = %d, want 1", len(blocks))
+	}
+	block, _ := blocks[0].(map[string]any)
+	if block["content"] != "new" {
+		t.Fatalf("block content = %#v, want new", block["content"])
+	}
+}
+
+func TestAlignWriterWriteBackRevised_ClearsMissingIdentityFields(t *testing.T) {
+	source := json.RawMessage(`{
+		"document_id":"doc-1",
+		"stage":"final",
+		"title":"Baseline",
+		"provider_binding":{"provider":"feishu","document_id":"fs-1"},
+		"blocks":[]
+	}`)
+	revised := json.RawMessage(`{
+		"document_id":"doc-1",
+		"stage":"draft",
+		"title":"Edited",
+		"revision":"99",
+		"provider_binding":{"provider":"feishu","document_id":"fs-1","revision":"99"},
+		"blocks":[]
+	}`)
+
+	aligned, err := alignWriterWriteBackRevised(source, revised)
+	if err != nil {
+		t.Fatalf("align: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(aligned, &got); err != nil {
+		t.Fatalf("unmarshal aligned: %v", err)
+	}
+	if _, ok := got["revision"]; ok {
+		t.Fatalf("revision should be cleared when baseline omits it, got %#v", got["revision"])
+	}
+	binding, _ := got["provider_binding"].(map[string]any)
+	if _, ok := binding["revision"]; ok {
+		t.Fatalf("provider_binding.revision should follow baseline, got %#v", binding["revision"])
+	}
+	if got["stage"] != "final" {
+		t.Fatalf("stage = %#v, want final", got["stage"])
+	}
+}
+
+func TestWriterArtifactRevisionSynced_ComparesOverlayWithSnapshot(t *testing.T) {
+	humanID := "pha_overlay"
+	clean := &selectedWriterArtifact{
+		Revision: orm.PluginSlotRevision{
+			ChangeSource:    "provider_sync",
+			HumanArtifactID: &humanID,
+			ContentSnapshot: json.RawMessage(`{"data":{"title":"same"}}`),
+		},
+		Value: json.RawMessage(`{ "data": { "title": "same" } }`),
+	}
+	if !writerArtifactRevisionSynced(clean) {
+		t.Fatal("semantically unchanged overlay should remain synchronized")
+	}
+	dirty := &selectedWriterArtifact{
+		Revision: orm.PluginSlotRevision{
+			ChangeSource:    "provider_sync",
+			HumanArtifactID: &humanID,
+			ContentSnapshot: json.RawMessage(`{"data":{"title":"before"}}`),
+		},
+		Value: json.RawMessage(`{"data":{"title":"after"}}`),
+	}
+	if writerArtifactRevisionSynced(dirty) {
+		t.Fatal("changed overlay should require write-back")
 	}
 }
 

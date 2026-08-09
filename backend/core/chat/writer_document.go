@@ -3,7 +3,6 @@ package chat
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -307,6 +306,14 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 			common.ReplyErr(w, pairErr.Error(), http.StatusConflict)
 			return
 		}
+		// Local edits may drift Feishu identity fields (revision / stage /
+		// provider_binding) away from the last synced baseline. Diff+patch
+		// requires them to match; content (title/blocks) stays from revised.
+		revisedDocument, alignErr := alignWriterWriteBackRevised(baselineDocument, revisedDocument)
+		if alignErr != nil {
+			common.ReplyErr(w, "invalid WriterDocument state", http.StatusConflict)
+			return
+		}
 		syncRequest.SourceDocument = baselineDocument
 		syncRequest.RevisedDocument = revisedDocument
 	}
@@ -341,10 +348,10 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "marshal WriterDocument artifact failed", http.StatusInternalServerError)
 		return
 	}
-	revision, err := plugin.WriteSlotRevisionWithHumanArtifact(
+	revision, err := plugin.WriteSlotRevisionWithSnapshot(
 		ctx, db, sessionID, draft.Revision.SlotID, draft.Revision.Slot,
 		draft.Revision.StepID, draft.Revision.Attempt, "single", nil,
-		"json", artifact, nil,
+		artifact, "provider_sync",
 	)
 	if err != nil {
 		common.ReplyErrWithData(w, "artifact save failed", map[string]any{
@@ -353,16 +360,6 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 		}, http.StatusInternalServerError)
 		return
 	}
-	if err := db.WithContext(ctx).Model(&orm.PluginSlotRevision{}).
-		Where("id = ?", revision.ID).
-		Update("change_source", "provider_sync").Error; err != nil {
-		common.ReplyErrWithData(w, "artifact sync state save failed", map[string]any{
-			"status": "artifact_state_save_failed", "feishu_synced": true,
-			"artifact_saved": true,
-		}, http.StatusInternalServerError)
-		return
-	}
-	revision.ChangeSource = "provider_sync"
 	plugin.NotifyPluginArtifactUpdated(
 		ctx, db, sessionID, revision.StepID, revision.SlotID, revision.Slot,
 		revision.Revision, revision.ListIndex, "provider_sync",
@@ -427,46 +424,26 @@ func loadWriterArtifactRevision(
 	return &selectedWriterArtifact{Revision: revision, Value: revision.ContentSnapshot}, nil
 }
 
-func loadLatestSyncedWriterArtifact(
-	ctx context.Context,
-	db *gorm.DB,
-	sessionID string,
-	beforeRevision int,
-) (*selectedWriterArtifact, error) {
-	var revisions []orm.PluginSlotRevision
-	if err := db.WithContext(ctx).
-		Where("session_id = ? AND slot_id = ? AND list_index IS NULL AND revision < ?",
-			sessionID, "draft_document", beforeRevision).
-		Order("revision DESC").
-		Find(&revisions).Error; err != nil {
-		return nil, err
-	}
-	for _, revision := range revisions {
-		artifact, err := loadWriterArtifactRevision(ctx, db, revision)
-		if err != nil {
-			continue
-		}
-		if writerArtifactRevisionSynced(artifact) {
-			return artifact, nil
-		}
-	}
-	return nil, gorm.ErrRecordNotFound
-}
-
-// loadWriterWriteBackBaseline prefers the latest provider-confirmed draft.  The
-// first manual write-back has no such draft yet, so its source_document is the
-// authoritative Feishu baseline instead.
+// loadWriterWriteBackBaseline returns the immutable provider baseline carried by
+// the current revision. Writer sessions created before this invariant are not
+// supported; local development data is reset when the invariant is introduced.
 func loadWriterWriteBackBaseline(
 	ctx context.Context,
 	db *gorm.DB,
 	sessionID string,
-	beforeRevision int,
+	revisionNumber int,
 ) (*selectedWriterArtifact, error) {
-	baseline, err := loadLatestSyncedWriterArtifact(ctx, db, sessionID, beforeRevision)
-	if err == nil || !errors.Is(err, gorm.ErrRecordNotFound) {
-		return baseline, err
+	var revision orm.PluginSlotRevision
+	if err := db.WithContext(ctx).
+		Where("session_id = ? AND slot_id = ? AND list_index IS NULL AND selected = ? AND revision = ? AND change_source = ?",
+			sessionID, "draft_document", true, revisionNumber, "provider_sync").
+		First(&revision).Error; err != nil {
+		return nil, err
 	}
-	return loadSelectedWriterArtifact(ctx, db, sessionID, "source_document")
+	if len(revision.ContentSnapshot) == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return &selectedWriterArtifact{Revision: revision, Value: revision.ContentSnapshot}, nil
 }
 
 type writerDocumentIdentity struct {
@@ -493,6 +470,32 @@ func validateWriterWriteBackPair(source, revised json.RawMessage) error {
 		return fmt.Errorf("current WriterDocument Feishu binding does not match baseline")
 	}
 	return nil
+}
+
+// alignWriterWriteBackRevised copies Feishu identity fields from the synced
+// baseline onto the locally edited document so patch diff can run. Title and
+// blocks from revised are preserved; optimistic-concurrency tokens come from
+// the last confirmed Feishu state.
+func alignWriterWriteBackRevised(source, revised json.RawMessage) (json.RawMessage, error) {
+	var sourceDoc, revisedDoc map[string]any
+	if err := json.Unmarshal(source, &sourceDoc); err != nil {
+		return nil, fmt.Errorf("invalid synchronized WriterDocument baseline")
+	}
+	if err := json.Unmarshal(revised, &revisedDoc); err != nil {
+		return nil, fmt.Errorf("invalid current WriterDocument")
+	}
+	for _, key := range []string{"revision", "stage", "provider_binding"} {
+		if value, ok := sourceDoc[key]; ok {
+			revisedDoc[key] = value
+		} else {
+			delete(revisedDoc, key)
+		}
+	}
+	aligned, err := json.Marshal(revisedDoc)
+	if err != nil {
+		return nil, err
+	}
+	return aligned, nil
 }
 
 // normalizeWriterDocumentForSync converts editor-compatible rich-text span
@@ -562,41 +565,11 @@ func normalizeWriterBlockForSync(value any) {
 }
 
 func writerArtifactRevisionSynced(artifact *selectedWriterArtifact) bool {
-	if artifact == nil {
+	if artifact == nil || artifact.Revision.ChangeSource != "provider_sync" ||
+		len(artifact.Revision.ContentSnapshot) == 0 {
 		return false
 	}
-	if artifact.Revision.ChangeSource == "provider_sync" {
-		return true
-	}
-	return artifact.Revision.ChangeSource == "ai" &&
-		writerArtifactEnvelopeProviderSynced(artifact.Value)
-}
-
-func writerArtifactEnvelopeProviderSynced(value json.RawMessage) bool {
-	var record map[string]json.RawMessage
-	if json.Unmarshal(value, &record) != nil {
-		return false
-	}
-	var metadata map[string]json.RawMessage
-	if json.Unmarshal(record["meta"], &metadata) == nil {
-		var marker struct {
-			Confirmed bool `json:"confirmed"`
-		}
-		if json.Unmarshal(metadata["lazymind_provider_sync"], &marker) == nil && marker.Confirmed {
-			return true
-		}
-	}
-	var path string
-	_ = json.Unmarshal(record["path"], &path)
-	if path == "" || strings.ToLower(filepath.Ext(path)) != ".lmd" {
-		return false
-	}
-	cleanPath := filepath.Clean(path)
-	if !writerArtifactPathAllowed(cleanPath) {
-		return false
-	}
-	content, err := os.ReadFile(cleanPath)
-	return err == nil && writerArtifactEnvelopeProviderSynced(content)
+	return plugin.ArtifactValuesEqual(artifact.Value, artifact.Revision.ContentSnapshot)
 }
 
 func writerArtifactData(value json.RawMessage, requireLMD bool) (json.RawMessage, error) {

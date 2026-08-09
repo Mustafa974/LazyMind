@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -1102,11 +1103,53 @@ func OnArtifactEvent(
 		}
 	}
 
+	providerSynced := latestArtifactProviderSynced(ctx, db, taskID, slot)
+
+	// draft_document: only Feishu-confirmed writes create versions. Unsynced AI
+	// updates overwrite the current draft revision in place.
+	if slotID == "draft_document" && cardinality == "single" && !providerSynced {
+		var art orm.SubAgentArtifact
+		if db.WithContext(ctx).
+			Where("task_id = ? AND slot = ?", taskID, slot).
+			Order("seq DESC").
+			First(&art).Error == nil {
+			rev, err := OverwriteSelectedDraftDocumentAIRevision(
+				ctx, db, pctx.SessionID, slot, pctx.StepID, attempt, art.Seq,
+			)
+			if err == nil {
+				return rev
+			}
+			if !errors.Is(err, errDraftDocumentSynced) && !errors.Is(err, gorm.ErrRecordNotFound) {
+				fmt.Printf("[Plugin] overwrite draft_document failed: %v\n", err)
+				return nil
+			}
+			// Synced current version or no selected draft → fall through to create.
+		}
+	}
+
 	rev, err := WriteSlotRevision(ctx, db,
 		pctx.SessionID, slotID, slot, pctx.StepID, attempt, cardinality, listIndex)
 	if err != nil {
 		fmt.Printf("[Plugin] WriteSlotRevision failed: %v\n", err)
 		return nil
+	}
+	if providerSynced && rev != nil && slotID == "draft_document" {
+		baseline, baselineErr := loadSlotRevisionArtifactValue(ctx, db, rev)
+		if baselineErr != nil {
+			fmt.Printf("[Plugin] load provider-synced draft baseline failed: %v\n", baselineErr)
+			return nil
+		}
+		if err := db.WithContext(ctx).Model(&orm.PluginSlotRevision{}).
+			Where("id = ?", rev.ID).
+			Updates(map[string]any{
+				"change_source":    "provider_sync",
+				"content_snapshot": baseline,
+			}).Error; err != nil {
+			fmt.Printf("[Plugin] mark draft_document provider_sync failed: %v\n", err)
+		} else {
+			rev.ChangeSource = "provider_sync"
+			rev.ContentSnapshot = baseline
+		}
 	}
 
 	// Back-fill list_index into sub_agent_artifacts.value so that HideSlotItem
@@ -1247,6 +1290,17 @@ func extractCaption(ctx context.Context, db *gorm.DB, taskID, slot string) strin
 		return strings.TrimSpace(cap)
 	}
 	return ""
+}
+
+func latestArtifactProviderSynced(ctx context.Context, db *gorm.DB, taskID, slot string) bool {
+	var a orm.SubAgentArtifact
+	if err := db.WithContext(ctx).
+		Where("task_id = ? AND slot = ?", taskID, slot).
+		Order("seq DESC").
+		First(&a).Error; err != nil {
+		return false
+	}
+	return artifactEnvelopeProviderSynced(a.Value)
 }
 
 // resolveSlotBinding looks up (slotID, cardinality) for a slot from the Python plugin API.

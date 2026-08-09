@@ -60,7 +60,7 @@ func (PluginSessionStep) TableName() string { return "plugin_session_steps" }
 //   - AI revision:    ArtifactSeq != nil → value comes from sub_agent_artifacts at
 //     (task_id via plugin_session_steps, slot, seq=ArtifactSeq).
 //   - Human revision: HumanArtifactID != nil → value comes from plugin_human_artifacts.
-//   - Legacy fallback: both nil → value comes from ContentSnapshot (pre-migration rows).
+//   - Snapshot revision: both nil → value comes from ContentSnapshot.
 type PluginSlotRevision struct {
 	ID        string `gorm:"column:id;type:varchar(36);primaryKey"`
 	SessionID string `gorm:"column:session_id;type:varchar(36);not null"`
@@ -75,8 +75,9 @@ type PluginSlotRevision struct {
 	// HumanArtifactID points to plugin_human_artifacts.id for human revisions.
 	// NULL for AI revisions.
 	HumanArtifactID *string `gorm:"column:human_artifact_id;type:varchar(36)"`
-	// ContentSnapshot is kept for legacy fallback (pre-migration AI rows where
-	// artifact_seq was not yet populated, and pre-human_artifact_id human rows).
+	// ContentSnapshot is the immutable provider-confirmed baseline for synced
+	// draft_document revisions. It may also be the displayed value when neither
+	// ArtifactSeq nor HumanArtifactID is present.
 	ContentSnapshot json.RawMessage `gorm:"column:content_snapshot;type:jsonb"`
 	// ChangeSource distinguishes AI-generated ('ai'), human-edited ('human'), and
 	// provider-confirmed ('provider_sync') revisions.

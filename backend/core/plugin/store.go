@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"time"
 
@@ -521,11 +522,10 @@ func WriteSlotRevision(ctx context.Context, db *gorm.DB,
 	return &result, err
 }
 
-// WriteSlotRevisionWithSnapshot writes a new human revision and records content_snapshot
-// atomically. Used by PatchSlotItemByIndex (human edits).
-// ArtifactSeq is intentionally left nil — human revisions carry their value in
-// ContentSnapshot; the unified read path in enrichSlots falls back to ContentSnapshot
-// when ArtifactSeq is nil.
+// WriteSlotRevisionWithSnapshot writes a new revision whose displayed value and
+// immutable baseline are content_snapshot. ArtifactSeq and HumanArtifactID are
+// intentionally left nil. Provider-confirmed writer revisions use this path so
+// the synced value and its baseline are committed atomically.
 func WriteSlotRevisionWithSnapshot(ctx context.Context, db *gorm.DB,
 	sessionID, slotID, artifactKey, stepID string, attempt int,
 	cardinality string, listIndex *int,
@@ -1078,6 +1078,19 @@ func ResolveContentType(contentType string, snapshot []byte) string {
 	return resolveContentType(contentType, snapshot)
 }
 
+// ArtifactValuesEqual compares JSON artifact envelopes semantically so harmless
+// whitespace or object-key ordering changes do not make a synced draft dirty.
+func ArtifactValuesEqual(left, right json.RawMessage) bool {
+	if len(left) == 0 || len(right) == 0 {
+		return len(left) == 0 && len(right) == 0
+	}
+	var leftValue, rightValue any
+	if json.Unmarshal(left, &leftValue) != nil || json.Unmarshal(right, &rightValue) != nil {
+		return string(left) == string(right)
+	}
+	return reflect.DeepEqual(leftValue, rightValue)
+}
+
 // resolveContentType is the internal implementation of ResolveContentType.
 func resolveContentType(contentType string, snapshot []byte) string {
 	if contentType != "file" {
@@ -1097,9 +1110,15 @@ func resolveContentType(contentType string, snapshot []byte) string {
 	return "file"
 }
 
-// UpdateSelectedHumanArtifactValue overwrites the selected human revision's artifact
-// in place without creating a new revision. Returns (nil, false, nil) when the
-// selected revision is not an updatable human artifact (e.g. AI revision).
+// UpdateSelectedHumanArtifactValue overwrites the selected draft in place without
+// creating a new revision. Returns (nil, false, nil) when the selected revision
+// cannot be updated in place (caller should create a new revision).
+//
+// For draft_document:
+//   - human drafts are overwritten in place
+//   - unsynced AI drafts are converted to a human artifact on the same revision
+//   - Feishu-synced revisions keep the same revision number; local edits attach
+//     a human artifact overlay while preserving provider_sync metadata
 func UpdateSelectedHumanArtifactValue(
 	ctx context.Context, db *gorm.DB,
 	sessionID, slotID string, listIndex *int,
@@ -1127,22 +1146,85 @@ func UpdateSelectedHumanArtifactValue(
 		if expected != nil && selected.Revision != *expected {
 			return ErrConflict
 		}
-		if selected.ChangeSource != "human" || selected.HumanArtifactID == nil || *selected.HumanArtifactID == "" {
+
+		if selected.HumanArtifactID != nil && *selected.HumanArtifactID != "" {
+			updates := map[string]any{
+				"content_type": contentType,
+				"value":        value,
+			}
+			if caption != nil {
+				updates["caption"] = caption
+			}
+			if err := tx.Model(&orm.PluginHumanArtifact{}).
+				Where("id = ?", *selected.HumanArtifactID).
+				Updates(updates).Error; err != nil {
+				return err
+			}
+			updated = true
 			return nil
 		}
 
-		updates := map[string]any{
-			"content_type": contentType,
-			"value":        value,
+		// Only draft_document may absorb an unsynced AI revision into the same
+		// revision number, or overlay local edits on a synced Feishu snapshot.
+		if slotID != "draft_document" {
+			return nil
 		}
-		if caption != nil {
-			updates["caption"] = caption
+		synced, syncErr := slotRevisionIsProviderSynced(ctx, tx, &selected)
+		if syncErr != nil {
+			return syncErr
 		}
-		if err := tx.Model(&orm.PluginHumanArtifact{}).
-			Where("id = ?", *selected.HumanArtifactID).
-			Updates(updates).Error; err != nil {
+		if synced {
+			if len(selected.ContentSnapshot) == 0 {
+				return fmt.Errorf("provider-synced draft is missing its content snapshot")
+			}
+			artifactID := "pha_" + common.GenerateID()
+			humanArt := &orm.PluginHumanArtifact{
+				ID:          artifactID,
+				SessionID:   sessionID,
+				Slot:        selected.Slot,
+				ContentType: contentType,
+				Value:       value,
+				Caption:     caption,
+				CreatedAt:   time.Now().UTC(),
+			}
+			if err := tx.Create(humanArt).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&selected).Updates(map[string]any{
+				"human_artifact_id": artifactID,
+			}).Error; err != nil {
+				return err
+			}
+			selected.HumanArtifactID = &artifactID
+			updated = true
+			return nil
+		}
+
+		artifactID := "pha_" + common.GenerateID()
+		humanArt := &orm.PluginHumanArtifact{
+			ID:          artifactID,
+			SessionID:   sessionID,
+			Slot:        selected.Slot,
+			ContentType: contentType,
+			Value:       value,
+			Caption:     caption,
+			CreatedAt:   time.Now().UTC(),
+		}
+		if err := tx.Create(humanArt).Error; err != nil {
 			return err
 		}
+		if err := tx.Model(&selected).Updates(map[string]any{
+			"human_artifact_id": artifactID,
+			"artifact_seq":      nil,
+			"change_source":     "human",
+			"content_snapshot":  nil,
+		}).Error; err != nil {
+			return err
+		}
+		selected.HumanArtifactID = &artifactID
+		selected.ArtifactSeq = nil
+		selected.ChangeSource = "human"
+		selected.ContentSnapshot = nil
 		updated = true
 		return nil
 	})
@@ -1151,6 +1233,148 @@ func UpdateSelectedHumanArtifactValue(
 	}
 	return &selected, updated, nil
 }
+
+// slotRevisionIsProviderSynced reports whether a revision is a Feishu-confirmed
+// version (immutable). provider_sync is authoritative; AI revisions may still
+// carry lazymind_provider_sync.confirmed from the initial auto write-back.
+func slotRevisionIsProviderSynced(
+	ctx context.Context,
+	db *gorm.DB,
+	revision *orm.PluginSlotRevision,
+) (bool, error) {
+	if revision == nil {
+		return false, nil
+	}
+	if revision.ChangeSource == "provider_sync" {
+		return true, nil
+	}
+	if revision.ChangeSource != "ai" {
+		return false, nil
+	}
+	value, err := loadSlotRevisionArtifactValue(ctx, db, revision)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	return artifactEnvelopeProviderSynced(value), nil
+}
+
+func loadSlotRevisionArtifactValue(
+	ctx context.Context,
+	db *gorm.DB,
+	revision *orm.PluginSlotRevision,
+) (json.RawMessage, error) {
+	if revision.HumanArtifactID != nil && *revision.HumanArtifactID != "" {
+		var artifact orm.PluginHumanArtifact
+		if err := db.WithContext(ctx).Where("id = ?", *revision.HumanArtifactID).
+			First(&artifact).Error; err != nil {
+			return nil, err
+		}
+		return artifact.Value, nil
+	}
+	if revision.ArtifactSeq != nil {
+		var step orm.PluginSessionStep
+		if err := db.WithContext(ctx).
+			Where("session_id = ? AND step_id = ? AND attempt = ?",
+				revision.SessionID, revision.StepID, revision.Attempt).
+			First(&step).Error; err != nil {
+			return nil, err
+		}
+		var artifact orm.SubAgentArtifact
+		if err := db.WithContext(ctx).
+			Where("task_id = ? AND slot = ? AND seq = ?",
+				step.TaskID, revision.Slot, *revision.ArtifactSeq).
+			First(&artifact).Error; err != nil {
+			return nil, err
+		}
+		return artifact.Value, nil
+	}
+	if len(revision.ContentSnapshot) > 0 {
+		return revision.ContentSnapshot, nil
+	}
+	return nil, gorm.ErrRecordNotFound
+}
+
+func artifactEnvelopeProviderSynced(value json.RawMessage) bool {
+	if len(value) == 0 {
+		return false
+	}
+	var record map[string]json.RawMessage
+	if json.Unmarshal(value, &record) != nil {
+		return false
+	}
+	var metadata map[string]json.RawMessage
+	if json.Unmarshal(record["meta"], &metadata) != nil {
+		return false
+	}
+	var marker struct {
+		Confirmed bool `json:"confirmed"`
+	}
+	if json.Unmarshal(metadata["lazymind_provider_sync"], &marker) != nil {
+		return false
+	}
+	return marker.Confirmed
+}
+
+// OverwriteSelectedDraftDocumentAIRevision points the selected unsynced
+// draft_document revision at a newer AI artifact without bumping revision.
+// Returns nil when no selected draft exists or the selected revision is a
+// Feishu-synced version (caller should create a new revision).
+func OverwriteSelectedDraftDocumentAIRevision(
+	ctx context.Context,
+	db *gorm.DB,
+	sessionID, slot, stepID string,
+	attempt int,
+	artifactSeq int,
+) (*orm.PluginSlotRevision, error) {
+	var selected orm.PluginSlotRevision
+	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("session_id = ? AND slot_id = ? AND list_index IS NULL AND selected = ?",
+				sessionID, "draft_document", true).
+			First(&selected).Error; err != nil {
+			return err
+		}
+		synced, syncErr := slotRevisionIsProviderSynced(ctx, tx, &selected)
+		if syncErr != nil {
+			return syncErr
+		}
+		if synced {
+			return errDraftDocumentSynced
+		}
+		seq := artifactSeq
+		updates := map[string]any{
+			"artifact_seq":      seq,
+			"human_artifact_id": nil,
+			"change_source":     "ai",
+			"content_snapshot":  nil,
+			"slot":              slot,
+			"step_id":           stepID,
+			"attempt":           attempt,
+		}
+		if err := tx.Model(&selected).Updates(updates).Error; err != nil {
+			return err
+		}
+		selected.ArtifactSeq = &seq
+		selected.HumanArtifactID = nil
+		selected.ChangeSource = "ai"
+		selected.ContentSnapshot = nil
+		selected.Slot = slot
+		selected.StepID = stepID
+		selected.Attempt = attempt
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &selected, nil
+}
+
+// errDraftDocumentSynced tells OnArtifactEvent to create a new revision instead
+// of overwriting an immutable Feishu-synced draft_document version.
+var errDraftDocumentSynced = errors.New("draft_document revision is provider-synced")
 
 // WriteSlotRevisionWithHumanArtifact inserts a plugin_human_artifacts row and a new
 // 'human' slot revision that points to it.  This is the write path for PatchSlotItemByIndex.

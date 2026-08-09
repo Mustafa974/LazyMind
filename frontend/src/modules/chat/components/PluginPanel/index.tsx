@@ -1,8 +1,14 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { Popconfirm, Tooltip } from 'antd';
-import { FullscreenOutlined, FullscreenExitOutlined } from '@ant-design/icons';
+import {
+  CloudUploadOutlined,
+  DownloadOutlined,
+  ExportOutlined,
+  FullscreenOutlined,
+  FullscreenExitOutlined,
+} from '@ant-design/icons';
 import { usePluginSession } from '@/modules/chat/hooks/usePlugin';
 import { usePluginStore } from '@/modules/chat/store/pluginPanel';
 import { useTaskCenterStore, type SubAgentTask, type TaskArtifactStream } from '@/modules/chat/store/taskCenter';
@@ -29,8 +35,46 @@ import {
   SlotDownloadContext,
   SlotMarkdownStream,
 } from './SlotComponents';
-import { MarkdownWorkflowActionContext, SlotEditingContext } from './slotEditingContext';
+import { PluginPanelTabActiveContext, SlotEditingContext, type SlotFooterAction } from './slotEditingContext';
 import './PluginPanel.scss';
+
+const DOCUMENT_FOOTER_LINK_ORDER = 20;
+
+type DocumentFooterItem =
+  | { kind: 'button'; key: string; order: number; action: SlotFooterAction }
+  | { kind: 'link'; key: string; order: number; href: string; label: string };
+
+function buildDocumentFooterItems(footerActions: Map<string, SlotFooterAction>): {
+  statusMessages: Array<{ key: string; text: string; tone?: SlotFooterAction['statusTone'] }>;
+  actionItems: DocumentFooterItem[];
+} {
+  const statusMessages: Array<{ key: string; text: string; tone?: SlotFooterAction['statusTone'] }> = [];
+  const actionItems: DocumentFooterItem[] = [];
+
+  for (const [key, action] of footerActions.entries()) {
+    if (action.statusText) {
+      statusMessages.push({ key: `${key}:status`, text: action.statusText, tone: action.statusTone });
+    }
+    if (action.statusLink) {
+      actionItems.push({
+        kind: 'link',
+        key: `${key}:link`,
+        order: DOCUMENT_FOOTER_LINK_ORDER,
+        href: action.statusLink.href,
+        label: action.statusLink.label,
+      });
+    }
+    actionItems.push({
+      kind: 'button',
+      key,
+      order: action.order ?? 100,
+      action,
+    });
+  }
+
+  actionItems.sort((left, right) => left.order - right.order);
+  return { statusMessages, actionItems };
+}
 
 /** Parse a JSON intent context string and return the text field, or '' if empty/invalid. */
 function parseIntentText(raw?: string): string {
@@ -1192,6 +1236,7 @@ export function PluginPanel({
   const flushFns = useRef<Map<string, () => Promise<boolean>>>(new Map());
   const [anySlotEditing, setAnySlotEditing] = useState(false);
   const [actionPending, setActionPending] = useState(false);
+  const [footerActions, setFooterActions] = useState<Map<string, SlotFooterAction>>(new Map());
 
   const setExpandedMode = useCallback((nextExpanded: boolean) => {
     if (nextExpanded) setCollapsed(false);
@@ -1243,6 +1288,23 @@ export function PluginPanel({
     };
   }, []);
 
+  const registerFooterAction = useCallback((key: string, action: SlotFooterAction | null) => {
+    setFooterActions((previous) => {
+      const next = new Map(previous);
+      if (action) next.set(key, action);
+      else next.delete(key);
+      return next;
+    });
+    return () => {
+      setFooterActions((previous) => {
+        if (!previous.has(key)) return previous;
+        const next = new Map(previous);
+        next.delete(key);
+        return next;
+      });
+    };
+  }, []);
+
   const flushPendingEdits = useCallback(async (): Promise<boolean> => {
     const flushers = [...flushFns.current.values()];
     if (flushers.length === 0) return true;
@@ -1253,6 +1315,7 @@ export function PluginPanel({
   useEffect(() => {
     editingSlots.current.clear();
     flushFns.current.clear();
+    setFooterActions(new Map());
     setAnySlotEditing(false);
     setActionPending(false);
   }, [session?.session_id]);
@@ -1325,6 +1388,10 @@ export function PluginPanel({
     session.status === 'active' ||
     session.status === 'completed' ||
     session.status === 'failed';
+  const documentFooter = useMemo(
+    () => buildDocumentFooterItems(footerActions),
+    [footerActions],
+  );
   const displayStatus = autoRunning ? 'active' : session.status;
   // Only block footer actions while the plugin is actually running (or flush-in-progress).
   // Dirty editors no longer disable retry — click flushes saves first, then proceeds.
@@ -1377,24 +1444,16 @@ export function PluginPanel({
     void runFooterAction(() => onSendMessage?.(`${t('chat.pluginRollbackPrefix')}${stepId}`));
   }
 
-  const nextTab = tabs[activeTabIdx + 1];
-  const markdownWorkflowAction = !sessionReadOnly && onSendMessage
-    ? displayStatus === 'waiting'
-      ? {
-        label: t('chat.writerMarkdown.saveAndContinue'),
-        onProceed: handleContinue,
-      }
-      : session.status === 'completed' && nextTab
-        ? {
-          label: t('chat.writerMarkdown.saveAndReexecute', { step: nextTab.label }),
-          onProceed: () => handleRollback(getTabStepId(nextTab)),
-        }
-        : null
-    : null;
+  const continueLabel = displayStatus === 'waiting'
+    ? t('chat.pluginSaveAndContinue')
+    : t('chat.pluginContinue');
 
   const panel = (
-    <MarkdownWorkflowActionContext.Provider value={markdownWorkflowAction}>
-    <SlotEditingContext.Provider value={{ setEditing: handleSlotEditingChange, registerFlush }}>
+    <SlotEditingContext.Provider value={{
+      setEditing: handleSlotEditingChange,
+      registerFlush,
+      registerFooterAction,
+    }}>
     <div
       className={`plugin-panel plugin-panel--${displayStatus}${collapsed ? ' plugin-panel--collapsed' : ''}${expanded ? ' plugin-panel--expanded' : ''}`}
       data-session-id={session.session_id}
@@ -1575,6 +1634,7 @@ export function PluginPanel({
                 role='tabpanel'
                 hidden={idx !== activeTabIdx}
               >
+                <PluginPanelTabActiveContext.Provider value={idx === activeTabIdx}>
                 <SlotDownloadContext.Provider value={idx === tabs.length - 1}>
                   <TabSlotGrid
                     tab={tab}
@@ -1586,6 +1646,7 @@ export function PluginPanel({
                     readOnly={sessionReadOnly}
                   />
                 </SlotDownloadContext.Provider>
+                </PluginPanelTabActiveContext.Provider>
               </div>
             ))
           ) : (
@@ -1602,6 +1663,71 @@ export function PluginPanel({
       {/* Footer */}
       {!collapsed && showActions && (
         <div className='plugin-panel__footer' role='group' aria-label={t('chat.pluginSessionControls')}>
+          {documentFooter.actionItems.length > 0 || documentFooter.statusMessages.length > 0 ? (
+            <div className='plugin-panel__footer-document'>
+              {documentFooter.statusMessages.length > 0 ? (
+                <div className='plugin-panel__footer-meta'>
+                  {documentFooter.statusMessages.map((message) => (
+                    <span
+                      key={message.key}
+                      className={
+                        message.tone === 'error'
+                          ? 'plugin-panel__footer-action-status plugin-panel__footer-action-status--error'
+                          : message.tone === 'success'
+                            ? 'plugin-panel__footer-action-status plugin-panel__footer-action-status--success'
+                            : 'plugin-panel__footer-action-status'
+                      }
+                      role={message.tone === 'error' ? 'alert' : 'status'}
+                    >
+                      {message.text}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              {documentFooter.actionItems.length > 0 ? (
+                <div className='plugin-panel__footer-actions'>
+                  {documentFooter.actionItems.map((item) => {
+                    if (item.kind === 'link') {
+                      return (
+                        <a
+                          key={item.key}
+                          className='plugin-panel__action-btn plugin-panel__action-btn--secondary plugin-panel__action-btn--link'
+                          href={item.href}
+                          target='_blank'
+                          rel='noopener noreferrer'
+                        >
+                          <ExportOutlined aria-hidden />
+                          {item.label}
+                        </a>
+                      );
+                    }
+
+                    const { action } = item;
+                    return (
+                      <button
+                        key={item.key}
+                        type='button'
+                        className={`plugin-panel__action-btn plugin-panel__action-btn--${action.tone ?? 'secondary'}`}
+                        disabled={actionPending || action.disabled}
+                        aria-disabled={actionPending || action.disabled}
+                        onClick={() => {
+                          if (action.flushBeforeAction) {
+                            void runFooterAction(action.onClick);
+                            return;
+                          }
+                          action.onClick();
+                        }}
+                      >
+                        {action.icon === 'write-back' ? <CloudUploadOutlined aria-hidden /> : null}
+                        {action.icon === 'download' ? <DownloadOutlined aria-hidden /> : null}
+                        {action.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           {displayStatus === 'active' && onStop && (
             <button
               type='button'
@@ -1646,10 +1772,12 @@ export function PluginPanel({
                     ? t('chat.pluginSavingBeforeAction')
                     : buttonsDisabled
                       ? t('chat.pluginBtnDisabledHint')
-                      : t('chat.pluginContinue')
+                      : anySlotEditing
+                        ? t('chat.pluginContinueFlushHint')
+                        : continueLabel
               }
             >
-              {actionPending ? t('chat.pluginSavingBeforeAction') : t('chat.pluginContinue')}
+              {actionPending ? t('chat.pluginSavingBeforeAction') : continueLabel}
             </button>
           )}
           {showStepRollback && (
@@ -1697,7 +1825,6 @@ export function PluginPanel({
       />
     )}
     </SlotEditingContext.Provider>
-    </MarkdownWorkflowActionContext.Provider>
   );
 
   if (expanded) {
