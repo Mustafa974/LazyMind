@@ -167,6 +167,17 @@
     &--failed    { background: #fef2f2; color: #dc2626; }
   }
 
+  &__revision {
+    color: #64748b;
+    font-size: 11px;
+    line-height: 1.6;
+    white-space: nowrap;
+
+    &--updated {
+      color: #b45309;
+    }
+  }
+
   // Intent button + popover
   &__intent-btn-wrap {
     position: relative;
@@ -2434,6 +2445,34 @@
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.plugin-slot__writer-writeback-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-top: 8px;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.5;
+
+  a {
+    color: #2563eb;
+
+    &:hover {
+      color: #1d4ed8;
+      text-decoration: underline;
+    }
+  }
+
+  &--synced_dirty {
+    color: #b45309;
+  }
+
+  &--blocked {
+    color: #b91c1c;
+  }
 }
 
 .plugin-slot__artifact-actions {

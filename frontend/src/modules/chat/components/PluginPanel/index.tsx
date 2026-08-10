@@ -11,6 +11,7 @@ import {
 } from '@ant-design/icons';
 import { usePluginSession } from '@/modules/chat/hooks/usePlugin';
 import { usePluginStore } from '@/modules/chat/store/pluginPanel';
+import { useTaskCenterStore, type SubAgentTask, type TaskArtifactStream } from '@/modules/chat/store/taskCenter';
 import { uploadFileInChunks } from '@/modules/chat/utils/chunkUpload';
 import { PluginSessionApi } from '@/modules/chat/utils/request';
 import StateGraphModal from '@/components/StateGraphModal';
@@ -32,11 +33,14 @@ import {
   isWriterIrSource,
   SlotRenderer,
   SlotDownloadContext,
+  SlotMarkdownStream,
 } from './SlotComponents';
 import { PluginPanelTabActiveContext, SlotEditingContext, type SlotFooterAction } from './slotEditingContext';
+import { findWriterArtifactStream } from './writerArtifactStream';
 import './PluginPanel.scss';
 
 const DOCUMENT_FOOTER_LINK_ORDER = 20;
+const EMPTY_TASK_CENTER_TASKS: SubAgentTask[] = [];
 
 type DocumentFooterItem =
   | { kind: 'button'; key: string; order: number; action: SlotFooterAction }
@@ -927,6 +931,7 @@ function SortableImageList({
 function NamedTabSlot({
   slotDef,
   revisions,
+  artifactStream,
   session,
   onRefresh,
   onReference,
@@ -936,6 +941,7 @@ function NamedTabSlot({
 }: {
   slotDef: SlotDef;
   revisions: SlotRevision[];
+  artifactStream?: TaskArtifactStream;
   session: PluginSession;
   onRefresh?: () => void;
   onReference?: (slot: SlotRevision) => void;
@@ -947,6 +953,9 @@ function NamedTabSlot({
   const slotLabel = slotDef.label ?? slotDef.id;
   const isImageList = slotDef.type === 'image' && slotDef.cardinality === 'list';
   const isDraggable = Boolean(slotDef.ordered) && !readOnly;
+  const showStream = Boolean(artifactStream && (
+    revisions.length === 0 || artifactStream.state !== 'ready'
+  ));
 
   return (
     <div className='plugin-panel__named-slot'>
@@ -955,7 +964,9 @@ function NamedTabSlot({
           <span className='plugin-panel__slot-label'>{slotLabel}</span>
         )}
       </div>
-      {revisions.length === 0 ? (
+      {showStream && artifactStream ? (
+        <SlotMarkdownStream stream={artifactStream} />
+      ) : revisions.length === 0 ? (
         <div
           className='plugin-panel__slot-placeholder'
           aria-label={`${slotLabel} pending`}
@@ -1008,6 +1019,7 @@ function NamedTabSlot({
 function TabSlotGrid({
   tab,
   session,
+  tasks,
   onRefresh,
   onReference,
   onFocusSortOrder,
@@ -1015,6 +1027,7 @@ function TabSlotGrid({
 }: {
   tab: TabDef;
   session: PluginSession;
+  tasks: SubAgentTask[];
   onRefresh?: () => void;
   onReference?: (slot: SlotRevision) => void;
   onFocusSortOrder?: (sortOrder: number | undefined) => void;
@@ -1081,8 +1094,14 @@ function TabSlotGrid({
       {visibleSlots.map((slotDef) => {
         const artifactKey = slotDef.id;
         const revisions = getTabSlotRevisions(session, tab, artifactKey);
+        const artifactStream = findWriterArtifactStream(
+          session,
+          getTabStepId(tab),
+          slotDef.id,
+          tasks,
+        );
         const hideEmpty = Boolean(tab.composite_behavior?.hide_empty_columns);
-        if (hideEmpty && revisions.length === 0) {
+        if (hideEmpty && revisions.length === 0 && !artifactStream) {
           return null;
         }
         return (
@@ -1090,6 +1109,7 @@ function TabSlotGrid({
             key={slotDef.id}
             slotDef={slotDef}
             revisions={revisions}
+            artifactStream={artifactStream}
             session={session}
             onRefresh={onRefresh}
             onReference={onReference}
@@ -1139,6 +1159,11 @@ export function PluginPanel({
 }: PluginPanelProps) {
   const { t, i18n } = useTranslation();
   const { session, loading, refresh } = usePluginSession(conversationId);
+  const taskCenterTasks = useTaskCenterStore((state) =>
+    conversationId
+      ? state.tasksByConversation[conversationId] ?? EMPTY_TASK_CENTER_TASKS
+      : EMPTY_TASK_CENTER_TASKS,
+  );
   const bumpDismissedRefresh = usePluginStore((s) => s.bumpDismissedRefresh);
   const autoRunning = usePluginStore((s) =>
     conversationId ? (s.autoRunningByConversation[conversationId] ?? false) : false,
@@ -1380,6 +1405,18 @@ export function PluginPanel({
       <div className='plugin-panel__header'>
         <div className='plugin-panel__header-left'>
           <span className='plugin-panel__title'>{session.plugin_id}</span>
+          {typeof session.pinned_revision_no === 'number' && session.pinned_revision_no > 0 && (
+            <span className='plugin-panel__revision'>
+              {t('chat.pluginPinnedVersion', { version: session.pinned_revision_no })}
+            </span>
+          )}
+          {typeof session.head_revision_no === 'number'
+            && typeof session.pinned_revision_no === 'number'
+            && session.head_revision_no > session.pinned_revision_no && (
+              <span className='plugin-panel__revision plugin-panel__revision--updated'>
+                {t('chat.pluginUpdateAvailable', { version: session.head_revision_no })}
+              </span>
+            )}
           <span
             className={`plugin-panel__status plugin-panel__status--${displayStatus}`}
             aria-label={t('chat.pluginStatusAria', { status: t(STATUS_KEY[displayStatus] ?? displayStatus) })}
@@ -1556,6 +1593,7 @@ export function PluginPanel({
                   <TabSlotGrid
                     tab={tab}
                     session={session}
+                    tasks={taskCenterTasks}
                     onRefresh={refresh}
                     onReference={onReference}
                     onFocusSortOrder={handleFocusSortOrder}

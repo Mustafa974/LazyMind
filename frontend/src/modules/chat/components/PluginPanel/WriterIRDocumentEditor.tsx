@@ -623,6 +623,11 @@ function childElements(element: HTMLElement, selector: string): HTMLElement[] {
 
 function blockContentElement(element: HTMLElement): HTMLElement {
   if (element.matches('[data-writer-block-content]')) return element;
+  if (element.dataset.nodeType === 'image') {
+    return element.querySelector<HTMLElement>(
+      ':scope > figure > figcaption[data-writer-block-content]',
+    ) ?? element;
+  }
   return childElements(element, '[data-writer-block-content]')[0]
     ?? element.querySelector<HTMLElement>(
       ':scope > .writer-ir__code-shell > [data-writer-block-content]',

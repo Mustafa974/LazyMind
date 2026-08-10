@@ -339,7 +339,19 @@ export function WriterIRControl({
       ? sourceRevision === baseSourceRevision
       : document === baseDocument;
     if (sourceMatchesBase) {
-      if (draft !== baseDocument) {
+      const documentChanged = !sameWriterDocument(document, baseDocument)
+        && !sameWriterDocumentForSync(document, baseDocument);
+      if (documentChanged && draft === baseDocument) {
+        pendingExternalDocumentRef.current = null;
+        setBaseDocument(document);
+        baseDocumentRef.current = document;
+        lastCheckpointDocumentRef.current = document;
+        setDraft(document);
+        draftRef.current = document;
+        setHistory([]);
+        setFuture([]);
+        setExternalUpdate(false);
+      } else if (draft !== baseDocument) {
         pendingExternalDocumentRef.current = null;
         setExternalUpdate(false);
       }

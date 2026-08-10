@@ -96,6 +96,8 @@ const TERMINAL: TaskStatus[] = [
   "canceled",
 ];
 
+const WRITER_MARKDOWN_STREAM_SLOT_IDS = new Set(['outline_document', 'draft_document']);
+
 function artifactKey(a: TaskArtifact): string {
   return `${a.slot}#${a.seq}`;
 }
@@ -453,7 +455,7 @@ export const useTaskCenterStore = create<TaskCenterStore>()((set, get) => ({
   },
 
   loadArtifactStreamContent: async (conversationId, taskId, artifact) => {
-    if (artifact.slot !== "draft_document" || artifact.content_type !== "file") return;
+    if (!WRITER_MARKDOWN_STREAM_SLOT_IDS.has(artifact.slot) || artifact.content_type !== "file") return;
     if (isWriterIRArtifact(artifact)) return;
     const rawUrl = typeof artifact.value?.url === "string" ? artifact.value.url : "";
     const url = resolveCoreAssetUrl(rawUrl);
@@ -754,10 +756,19 @@ export const useTaskCenterStore = create<TaskCenterStore>()((set, get) => ({
             window.dispatchEvent(
               new CustomEvent(PLUGIN_GRAPH_REFRESH_EVENT, { detail: { conversationId } }),
             );
-            import('@/modules/chat/store/pluginPanel').then(({ usePluginStore }) => {
-              usePluginStore.getState().loadActiveSession(conversationId);
-              usePluginStore.getState().setAutoRunning(conversationId, false);
-            });
+            const refreshActivePluginSession = () => {
+              import('@/modules/chat/store/pluginPanel').then(({ usePluginStore }) => {
+                usePluginStore.getState().loadActiveSession(conversationId);
+                usePluginStore.getState().setAutoRunning(conversationId, false);
+              });
+            };
+            refreshActivePluginSession();
+            // Artifact files and their slot projection can commit just after the
+            // completion event. Reconcile once more so the completed Writer panel
+            // gets its generated image without requiring a route change.
+            if (type === 'plugin_completed') {
+              window.setTimeout(refreshActivePluginSession, 800);
+            }
           } else if (type === 'step_partial_done') {
             window.dispatchEvent(
               new CustomEvent(PLUGIN_GRAPH_REFRESH_EVENT, { detail: { conversationId } }),
