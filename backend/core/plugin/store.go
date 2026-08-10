@@ -1104,34 +1104,52 @@ func UpdateSelectedHumanArtifactValue(
 	ctx context.Context, db *gorm.DB,
 	sessionID, slotID string, listIndex *int,
 	contentType string, value json.RawMessage, caption *string,
+	expectedRevision ...*int,
 ) (*orm.PluginSlotRevision, bool, error) {
 	var selected orm.PluginSlotRevision
-	q := db.WithContext(ctx).Where("session_id = ? AND slot_id = ? AND selected = ?", sessionID, slotID, true)
-	if listIndex == nil {
-		q = q.Where("list_index IS NULL")
-	} else {
-		q = q.Where("list_index = ?", *listIndex)
+	var expected *int
+	if len(expectedRevision) > 0 {
+		expected = expectedRevision[0]
 	}
-	if err := q.First(&selected).Error; err != nil {
-		return nil, false, err
-	}
-	if selected.ChangeSource != "human" || selected.HumanArtifactID == nil || *selected.HumanArtifactID == "" {
-		return nil, false, nil
-	}
+	updated := false
 
-	updates := map[string]any{
-		"content_type": contentType,
-		"value":        value,
-	}
-	if caption != nil {
-		updates["caption"] = caption
-	}
-	if err := db.WithContext(ctx).Model(&orm.PluginHumanArtifact{}).
-		Where("id = ?", *selected.HumanArtifactID).
-		Updates(updates).Error; err != nil {
+	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		q := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("session_id = ? AND slot_id = ? AND selected = ?", sessionID, slotID, true)
+		if listIndex == nil {
+			q = q.Where("list_index IS NULL")
+		} else {
+			q = q.Where("list_index = ?", *listIndex)
+		}
+		if err := q.First(&selected).Error; err != nil {
+			return err
+		}
+		if expected != nil && selected.Revision != *expected {
+			return ErrConflict
+		}
+		if selected.ChangeSource != "human" || selected.HumanArtifactID == nil || *selected.HumanArtifactID == "" {
+			return nil
+		}
+
+		updates := map[string]any{
+			"content_type": contentType,
+			"value":        value,
+		}
+		if caption != nil {
+			updates["caption"] = caption
+		}
+		if err := tx.Model(&orm.PluginHumanArtifact{}).
+			Where("id = ?", *selected.HumanArtifactID).
+			Updates(updates).Error; err != nil {
+			return err
+		}
+		updated = true
+		return nil
+	})
+	if err != nil {
 		return nil, false, err
 	}
-	return &selected, true, nil
+	return &selected, updated, nil
 }
 
 // WriteSlotRevisionWithHumanArtifact inserts a plugin_human_artifacts row and a new
@@ -1145,6 +1163,7 @@ func WriteSlotRevisionWithHumanArtifact(
 	sessionID, slotID, artifactKey, stepID string, attempt int,
 	cardinality string, listIndex *int,
 	contentType string, value json.RawMessage, caption *string,
+	expectedRevision ...*int,
 ) (*orm.PluginSlotRevision, error) {
 
 	now := time.Now().UTC()
@@ -1161,8 +1180,28 @@ func WriteSlotRevisionWithHumanArtifact(
 
 	var revision int
 	var finalListIndex *int
+	var expected *int
+	if len(expectedRevision) > 0 {
+		expected = expectedRevision[0]
+	}
 
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if expected != nil {
+			var current orm.PluginSlotRevision
+			q := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("session_id = ? AND slot_id = ? AND selected = ?", sessionID, slotID, true)
+			if listIndex == nil {
+				q = q.Where("list_index IS NULL")
+			} else {
+				q = q.Where("list_index = ?", *listIndex)
+			}
+			if err := q.First(&current).Error; err != nil {
+				return err
+			}
+			if current.Revision != *expected {
+				return ErrConflict
+			}
+		}
 		if err := tx.Create(humanArt).Error; err != nil {
 			return err
 		}

@@ -5,6 +5,7 @@ import { Popconfirm, Tooltip } from 'antd';
 import { FullscreenOutlined, FullscreenExitOutlined } from '@ant-design/icons';
 import { usePluginSession } from '@/modules/chat/hooks/usePlugin';
 import { usePluginStore } from '@/modules/chat/store/pluginPanel';
+import { useTaskCenterStore, type SubAgentTask, type TaskArtifactStream } from '@/modules/chat/store/taskCenter';
 import { uploadFileInChunks } from '@/modules/chat/utils/chunkUpload';
 import { PluginSessionApi } from '@/modules/chat/utils/request';
 import StateGraphModal from '@/components/StateGraphModal';
@@ -26,8 +27,9 @@ import {
   isWriterIrSource,
   SlotRenderer,
   SlotDownloadContext,
-  SlotEditingContext,
+  SlotMarkdownStream,
 } from './SlotComponents';
+import { MarkdownWorkflowActionContext, SlotEditingContext } from './slotEditingContext';
 import './PluginPanel.scss';
 
 /** Parse a JSON intent context string and return the text field, or '' if empty/invalid. */
@@ -57,6 +59,55 @@ function parseSelectedSlotText(session: PluginSession, slotKey: string, includeU
     if (obj.value !== undefined) return String(obj.value);
   }
   return String(raw);
+}
+
+function findTaskDraftStream(
+  session: PluginSession,
+  stepId: string | undefined,
+  slotId: string,
+  tasks: SubAgentTask[],
+): TaskArtifactStream | undefined {
+  if (slotId !== 'draft_document' || !stepId) return undefined;
+  const findStream = (task: SubAgentTask | undefined) => task?.artifact_streams
+    ?.slice()
+    .reverse()
+    .find((candidate) => candidate.slot === slotId && candidate.content_type === 'text/markdown');
+  const steps = (session.steps ?? [])
+    .filter((step) => step.step_id === stepId)
+    .slice()
+    .reverse();
+  for (const step of steps) {
+    const task = tasks.find((candidate) => candidate.task_id === step.task_id);
+    const stream = findStream(task);
+    if (stream) return stream;
+  }
+
+  // The session snapshot can briefly lag the task-created event, leaving the
+  // current step without its task_id. A single running draft stream is still
+  // unambiguous and should render instead of showing the empty-slot dash.
+  const liveStreams = tasks
+    .filter((task) => task.status === 'pending' || task.status === 'running')
+    .map(findStream)
+    .filter((stream): stream is TaskArtifactStream => Boolean(stream));
+  return liveStreams.length === 1 ? liveStreams[0] : undefined;
+}
+
+const WRITER_DRAFT_STEP_ID = 'write_document';
+
+/** Return the running task created for the writer's final-document step. */
+function findActiveWriterDraftTaskId(session: PluginSession | null): string | undefined {
+  if (session?.status !== 'active') {
+    return undefined;
+  }
+  return session.steps
+    ?.filter((step) => (
+      step.step_id === WRITER_DRAFT_STEP_ID
+      && step.validity !== 'stale'
+      && (step.status === 'pending' || step.status === 'running')
+      && Boolean(step.task_id)
+    ))
+    .sort((a, b) => b.attempt - a.attempt)[0]
+    ?.task_id;
 }
 
 /** IntentPopover shows global intent + per-step intent inside a floating popover. */
@@ -299,8 +350,8 @@ function getTabStepId(tab: TabDef): string | undefined {
 
 /**
  * Lock slot editing only while the plugin session is actively running.
- * When idle (waiting / failed / completed), ui_editable artifacts stay editable
- * so the user can revise and re-run a later step from the updated content.
+ * When idle (waiting / failed / completed), Writer documents stay editable so
+ * the user can revise and re-run a later step from the updated content.
  */
 function isPluginSessionReadOnly(
   session: PluginSession,
@@ -883,6 +934,7 @@ function SortableImageList({
 function NamedTabSlot({
   slotDef,
   revisions,
+  artifactStream,
   session,
   onRefresh,
   onReference,
@@ -892,6 +944,7 @@ function NamedTabSlot({
 }: {
   slotDef: SlotDef;
   revisions: SlotRevision[];
+  artifactStream?: TaskArtifactStream;
   session: PluginSession;
   onRefresh?: () => void;
   onReference?: (slot: SlotRevision) => void;
@@ -903,6 +956,11 @@ function NamedTabSlot({
   const slotLabel = slotDef.label ?? slotDef.id;
   const isImageList = slotDef.type === 'image' && slotDef.cardinality === 'list';
   const isDraggable = Boolean(slotDef.ordered) && !readOnly;
+  const showStream = Boolean(artifactStream && (
+    revisions.length === 0 || (
+      artifactStream.state !== 'ready' && !artifactStream.final_content_error
+    )
+  ));
 
   return (
     <div className='plugin-panel__named-slot'>
@@ -911,7 +969,9 @@ function NamedTabSlot({
           <span className='plugin-panel__slot-label'>{slotLabel}</span>
         )}
       </div>
-      {revisions.length === 0 ? (
+      {showStream && artifactStream ? (
+        <SlotMarkdownStream stream={artifactStream} />
+      ) : revisions.length === 0 ? (
         <div
           className='plugin-panel__slot-placeholder'
           aria-label={`${slotLabel} pending`}
@@ -964,6 +1024,7 @@ function NamedTabSlot({
 function TabSlotGrid({
   tab,
   session,
+  tasks,
   onRefresh,
   onReference,
   onFocusSortOrder,
@@ -971,6 +1032,7 @@ function TabSlotGrid({
 }: {
   tab: TabDef;
   session: PluginSession;
+  tasks: SubAgentTask[];
   onRefresh?: () => void;
   onReference?: (slot: SlotRevision) => void;
   onFocusSortOrder?: (sortOrder: number | undefined) => void;
@@ -1037,8 +1099,14 @@ function TabSlotGrid({
       {visibleSlots.map((slotDef) => {
         const artifactKey = slotDef.id;
         const revisions = getTabSlotRevisions(session, tab, artifactKey);
+        const artifactStream = findTaskDraftStream(
+          session,
+          getTabStepId(tab),
+          slotDef.id,
+          tasks,
+        );
         const hideEmpty = Boolean(tab.composite_behavior?.hide_empty_columns);
-        if (hideEmpty && revisions.length === 0) {
+        if (hideEmpty && revisions.length === 0 && !artifactStream) {
           return null;
         }
         return (
@@ -1046,6 +1114,7 @@ function TabSlotGrid({
             key={slotDef.id}
             slotDef={slotDef}
             revisions={revisions}
+            artifactStream={artifactStream}
             session={session}
             onRefresh={onRefresh}
             onReference={onReference}
@@ -1095,6 +1164,10 @@ export function PluginPanel({
 }: PluginPanelProps) {
   const { t, i18n } = useTranslation();
   const { session, loading, refresh } = usePluginSession(conversationId);
+  const taskCenterTasks = useTaskCenterStore((state) =>
+    conversationId ? state.tasksByConversation[conversationId] ?? [] : [],
+  );
+  const subscribeTask = useTaskCenterStore((state) => state.subscribeTask);
   const bumpDismissedRefresh = usePluginStore((s) => s.bumpDismissedRefresh);
   const autoRunning = usePluginStore((s) =>
     conversationId ? (s.autoRunningByConversation[conversationId] ?? false) : false,
@@ -1209,6 +1282,16 @@ export function PluginPanel({
     return () => clearInterval(id);
   }, [session, refresh, pollIntervalMs]);
 
+  const writerDraftTaskId = findActiveWriterDraftTaskId(session);
+
+  // The task-created notification and the plugin-session refresh can arrive in
+  // either order. Once the writer enters its final-document step, subscribe as
+  // soon as its task ID is present so draft Markdown deltas are not missed.
+  useEffect(() => {
+    if (!conversationId || !writerDraftTaskId) return;
+    subscribeTask(conversationId, writerDraftTaskId);
+  }, [conversationId, subscribeTask, writerDraftTaskId]);
+
   // Track focused tab changes.
   const handleTabChange = useCallback((idx: number, tabId: string) => {
     setActiveTabIdx(idx);
@@ -1294,7 +1377,23 @@ export function PluginPanel({
     void runFooterAction(() => onSendMessage?.(`${t('chat.pluginRollbackPrefix')}${stepId}`));
   }
 
+  const nextTab = tabs[activeTabIdx + 1];
+  const markdownWorkflowAction = !sessionReadOnly && onSendMessage
+    ? displayStatus === 'waiting'
+      ? {
+        label: t('chat.writerMarkdown.saveAndContinue'),
+        onProceed: handleContinue,
+      }
+      : session.status === 'completed' && nextTab
+        ? {
+          label: t('chat.writerMarkdown.saveAndReexecute', { step: nextTab.label }),
+          onProceed: () => handleRollback(getTabStepId(nextTab)),
+        }
+        : null
+    : null;
+
   const panel = (
+    <MarkdownWorkflowActionContext.Provider value={markdownWorkflowAction}>
     <SlotEditingContext.Provider value={{ setEditing: handleSlotEditingChange, registerFlush }}>
     <div
       className={`plugin-panel plugin-panel--${displayStatus}${collapsed ? ' plugin-panel--collapsed' : ''}${expanded ? ' plugin-panel--expanded' : ''}`}
@@ -1480,6 +1579,7 @@ export function PluginPanel({
                   <TabSlotGrid
                     tab={tab}
                     session={session}
+                    tasks={taskCenterTasks}
                     onRefresh={refresh}
                     onReference={onReference}
                     onFocusSortOrder={handleFocusSortOrder}
@@ -1597,6 +1697,7 @@ export function PluginPanel({
       />
     )}
     </SlotEditingContext.Provider>
+    </MarkdownWorkflowActionContext.Provider>
   );
 
   if (expanded) {
