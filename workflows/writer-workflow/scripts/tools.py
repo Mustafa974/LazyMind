@@ -42,6 +42,10 @@ from lazymind.chat.engine.tools.writer import (
     sync_writer_documents,
     writer_schema,
 )
+from lazymind.chat.engine.tools.writer_outline_stream import (
+    WriterArtifactStreamEventEmitter,
+    stream_writer_outline,
+)
 
 WRITER_IMAGE_ACQUISITION_PROMPT = '''Create one professional visual for a long-form document.
 
@@ -458,14 +462,25 @@ def writer_prepare_outline(source_document_path: str) -> str:
 
 
 def writer_generate_outline(writing_task_path: str, writing_context_path: str) -> str:
-    """Generate an editable outline-stage WriterDocument."""
-    generated = WriterCreateToolkit().generate_outline(
-        writing_task_json=_read_json_string(writing_task_path),
-        writing_context_json=_read_json_string(writing_context_path),
+    """Generate an outline-stage artifact with a Markdown preview stream."""
+    events = WriterArtifactStreamEventEmitter(
+        require_context().emit,
+        slot='outline_document',
     )
-    return _save_writer_document(
-        'outline_document', generated, expected_stage='outline', editable=True,
-    )
+    try:
+        generated = stream_writer_outline(
+            _read_json_string(writing_task_path),
+            _read_json_string(writing_context_path),
+            events.feed,
+        )
+        outline_path = _save_writer_document(
+            'outline_document', generated, expected_stage='outline', editable=True,
+        )
+    except Exception as exc:
+        events.abort(str(exc))
+        raise
+    events.end()
+    return outline_path
 
 
 def writer_generate_rewrite_outline(
@@ -1165,7 +1180,7 @@ def writer_apply_revision(
         document_key,
         payload.get('revised_document') or {},
         expected_stage=(None if is_markdown or is_body_step else 'outline'),
-        editable=is_body_step,
+        editable=True,
         directory=root,
     )
     if is_body_step:
