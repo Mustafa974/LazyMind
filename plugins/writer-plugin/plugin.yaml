@@ -91,6 +91,10 @@ slots:
     label: Resolved Media
     type: file
     cardinality: single
+  - id: source_media_resources
+    label: Source Media Resources
+    type: file
+    cardinality: single
   - id: visual_plan
     label: Visual Plan
     type: file
@@ -225,6 +229,7 @@ i18n:
       writing_task: {label: 写作任务}
       media_assets: {label: 可用图片素材}
       resolved_media_assets: {label: 已解析图片素材}
+      source_media_resources: {label: 来源文档图片资源}
       visual_plan: {label: 视觉规划}
       resource_profiles: {label: 资源画像}
       writing_context: {label: 写作上下文}

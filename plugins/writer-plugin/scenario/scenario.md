@@ -21,6 +21,12 @@ revision cards. The ChatAgent chooses the applicable mode inside the current pro
 Always begin a new workflow with `prepare`. It preserves the complete request, retrieves
 requested sources, and constructs writing context.
 
+When a Feishu/Lark source document is present, call `writer_load_document` before
+`writer_collect_available_media`. Pass the resulting `source_media_resources` and
+`source_document` into media collection, then use the media-bound `source_document`
+returned by collection for all later steps. A missing or inaccessible source image is a
+warning and must not discard the readable document text.
+
 Cloud document URLs are resource identity, not optional prose context. The trigger and
 normalized request must preserve every source/destination URL supplied in the original
 request or a clarification answer. Reading a document before triggering does not replace
