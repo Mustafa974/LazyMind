@@ -8,7 +8,7 @@ import { resolveCoreAssetUrl, resolveMarkdownImageUrlAsync, isExpiredSignedUrl }
 import { buildDiffLinesWithInline } from "@/modules/memory/shared";
 import { DiffLineContent } from "@/modules/memory/components/DiffLineContent";
 import { uploadFileInChunks } from "@/modules/chat/utils/chunkUpload";
-import { PluginSessionApi, type RewriteSelectionPreview } from "@/modules/chat/utils/request";
+import { PluginSessionApi } from "@/modules/chat/utils/request";
 import { FilePreviewDrawer } from "./FilePreviewDrawer";
 import {
   WriterArtifactContent,
@@ -26,7 +26,6 @@ import { selectedMarkdownParagraph, type MarkdownSelection } from './artifactRew
 import {
   isWriterDocument,
   normalizeWriterDocumentForSync,
-  updateWriterBlockContent,
   type WriterBlock,
   type WriterDocument,
 } from './writerIR';
@@ -35,7 +34,6 @@ import MarkdownViewer from '@/modules/chat/components/MarkdownViewer';
 import i18n from '@/i18n';
 import { useTranslation } from 'react-i18next';
 import { localizeErrorCode } from '@/components/request';
-import type { TaskArtifactStream } from '@/modules/chat/store/taskCenter';
 
 export { SlotEditingContext } from './slotEditingContext';
 export type { SlotEditingContextValue } from './slotEditingContext';
@@ -1924,13 +1922,6 @@ function hasProviderTarget(document?: WriterDocument | null): boolean {
   );
 }
 
-function hasFeishuProviderTarget(document?: WriterDocument | null): boolean {
-  const binding = document?.provider_binding;
-  return binding?.provider === 'feishu'
-    && typeof binding.document_id === 'string'
-    && binding.document_id.trim() !== '';
-}
-
 function ensureWriterIrFilename(name: string): string {
   const trimmed = name.trim() || 'writer-document.lmd';
   if (trimmed.toLowerCase().endsWith('.lmd')) return trimmed;
@@ -2170,10 +2161,6 @@ function SlotJsonFile({
   const [localRevisionCount, setLocalRevisionCount] = useState<number | undefined>(revisionCount);
   const [writerEditing, setWriterEditing] = useState(false);
   const [rewriteSelection, setRewriteSelection] = useState<ArtifactRewriteSelection | null>(null);
-  const [rewritePreview, setRewritePreview] = useState<{
-    selection: ArtifactRewriteSelection;
-    preview: RewriteSelectionPreview;
-  } | null>(null);
   const hasPayloadRef = useRef(false);
   hasPayloadRef.current = payload !== null;
 
@@ -2255,31 +2242,25 @@ function SlotJsonFile({
   const usesWriterSync = resolvedSlotId !== 'draft_document'
     && apiListIndex === -1
     && hasProviderTarget(writerDocument);
-  const displayRevision = loadedRevision ?? slot.revision;
-  const displayRevisionCount = localRevisionCount ?? revisionCount;
   const canWriteBack = resolvedSlotId === 'draft_document'
     && Boolean(sessionId)
     && apiListIndex === -1
-    && !readOnly
-    && hasFeishuProviderTarget(writerDocument)
-    && typeof displayRevision === 'number'
-    && displayRevision > 0;
+    && writerDocument !== null;
   const canEditWriterIR = Boolean(sessionId && slotId)
     && !readOnly
+    && writerDocument?.ui_editable === true
     && (loadedSourceKey === sourceKey || writerEditing);
   const editingKey = `${sessionId}:${slotId}:${apiListIndex}:writer-ir`;
+  const displayRevision = loadedRevision ?? slot.revision;
+  const displayRevisionCount = localRevisionCount ?? revisionCount;
   const showVersionBadge =
     displayRevisionCount !== undefined && displayRevisionCount > 0 && Boolean(sessionId && slotId);
-  const currentArtifactValue = displayRevision > slot.revision && writerDocument
-    ? replaceStructuredArtifactPayload(sourceJson, writerDocument)
-    : slot.artifact_value;
   const canRewriteIR = Boolean(sessionId && slotId)
     && !readOnly
     && writerDocument !== null
     && typeof displayRevision === 'number'
     && displayRevision > 0
-    && rewriteSelection === null
-    && rewritePreview === null;
+    && rewriteSelection === null;
 
   const handleSaveWriterDocument = useCallback(async (
     sourceDocument: WriterDocument,
@@ -2378,28 +2359,11 @@ function SlotJsonFile({
   }, [canRewriteIR]);
 
   const handleIRRewriteApplied = useCallback((revision?: number) => {
-    if (writerDocument && rewritePreview?.selection.type === 'ir') {
-      setPayload(updateWriterBlockContent(
-        writerDocument,
-        rewritePreview.selection.node_id,
-        rewritePreview.preview.preview.new_text,
-      ));
-    }
     applySavedRevision(revision);
     setRewriteSelection(null);
-    setRewritePreview(null);
     setReloadToken((value) => value + 1);
     onRefresh?.();
-  }, [applySavedRevision, onRefresh, rewritePreview, writerDocument]);
-
-  const handleIRRewritePreview = useCallback((preview: RewriteSelectionPreview) => {
-    if (rewriteSelection?.type !== 'ir') return;
-    setRewritePreview({ selection: rewriteSelection, preview });
-  }, [rewriteSelection]);
-
-  const rejectIRRewrite = useCallback(() => {
-    setRewritePreview(null);
-  }, []);
+  }, [applySavedRevision, onRefresh]);
 
   const [writerMarkdownDownload, setWriterMarkdownDownload] = useState<{
     url: string;
@@ -2477,20 +2441,11 @@ function SlotJsonFile({
           <WriterIRControl
             document={writerDocument}
             sourceRevision={displayRevision}
-            readOnly={!canEditWriterIR}
+            readOnly={!canEditWriterIR || rewriteSelection !== null}
             editingKey={editingKey}
             onSave={canEditWriterIR ? handleSaveWriterDocument : undefined}
             onEditingChange={handleWriterEditingChange}
             onRewriteSelection={canRewriteIR ? openIRRewrite : undefined}
-            rewritePreview={rewritePreview?.selection.type === 'ir' ? {
-              nodeId: rewritePreview.selection.node_id,
-              sessionId: sessionId ?? '',
-              slotId: slotId ?? '',
-              listIndex: apiListIndex,
-              preview: rewritePreview.preview,
-            } : null}
-            onRewritePreviewApplied={handleIRRewriteApplied}
-            onRewritePreviewRejected={rejectIRRewrite}
           />
         ) : (
           <WriterArtifactContent slotId={resolvedSlotId} data={payload} hideDownload={!allowDownload} />
@@ -2505,7 +2460,7 @@ function SlotJsonFile({
               listIndex={apiListIndex}
               revisionCount={displayRevisionCount!}
               currentRevision={displayRevision}
-              currentValue={currentArtifactValue}
+              currentValue={slot.artifact_value}
               currentChangeSource={slot.change_source}
               contentType='json'
               onRollbackDone={onRefresh}
@@ -2555,7 +2510,6 @@ function SlotJsonFile({
         selection={rewriteSelection}
         onClose={() => setRewriteSelection(null)}
         onApplied={handleIRRewriteApplied}
-        onPreviewReady={handleIRRewritePreview}
       />
     </div>
   );
@@ -2579,51 +2533,37 @@ function SlotInlineStructured({
   readOnly,
 }: SlotInlineStructuredProps) {
   const allowDownload = useContext(SlotDownloadContext);
-  const sourcePayload = useMemo(
-    () => getInlineStructuredArtifactPayload(slot),
-    [slot],
-  );
+  const payload = getInlineStructuredArtifactPayload(slot);
   const { patchSlotItemValue } = usePluginStore();
   const { setEditing: notifyEditing } = useContext(SlotEditingContext);
   const [writerEditing, setWriterEditing] = useState(false);
   const [rewriteSelection, setRewriteSelection] = useState<ArtifactRewriteSelection | null>(null);
-  const [rewritePreview, setRewritePreview] = useState<{
-    selection: ArtifactRewriteSelection;
-    preview: RewriteSelectionPreview;
-  } | null>(null);
   const [localRevision, setLocalRevision] = useState(slot.revision);
   const [localRevisionCount, setLocalRevisionCount] = useState<number | undefined>(revisionCount);
-  const [payload, setPayload] = useState(sourcePayload);
   const apiListIndex = slot.list_index ?? -1;
   const resolvedSlotId = slotId ?? slot.slot;
   const writerDocument = isWriterDocument(payload) ? payload : null;
   const usesWriterSync = resolvedSlotId !== 'draft_document'
     && apiListIndex === -1
     && hasProviderTarget(writerDocument);
-  const displayRevision = localRevision ?? slot.revision;
-  const displayRevisionCount = localRevisionCount ?? revisionCount;
   const canWriteBack = resolvedSlotId === 'draft_document'
     && Boolean(sessionId)
     && apiListIndex === -1
-    && !readOnly
-    && hasFeishuProviderTarget(writerDocument)
-    && typeof displayRevision === 'number'
-    && displayRevision > 0;
+    && writerDocument !== null;
   const canEditWriterIR = Boolean(sessionId && slotId)
-    && !readOnly;
+    && !readOnly
+    && writerDocument?.ui_editable === true;
   const editingKey = `${sessionId}:${slotId}:${apiListIndex}:writer-ir`;
+  const displayRevision = localRevision ?? slot.revision;
+  const displayRevisionCount = localRevisionCount ?? revisionCount;
   const showVersionBadge =
     displayRevisionCount !== undefined && displayRevisionCount > 0 && Boolean(sessionId && slotId);
-  const currentArtifactValue = displayRevision > slot.revision && writerDocument
-    ? replaceStructuredArtifactPayload(slot.artifact_value, writerDocument)
-    : slot.artifact_value;
   const canRewriteIR = Boolean(sessionId && slotId)
     && !readOnly
     && writerDocument !== null
     && typeof displayRevision === 'number'
     && displayRevision > 0
-    && rewriteSelection === null
-    && rewritePreview === null;
+    && rewriteSelection === null;
   const [writerMarkdownDownload, setWriterMarkdownDownload] = useState<{
     url: string;
     filename: string;
@@ -2640,11 +2580,6 @@ function SlotInlineStructured({
       setLocalRevision((prev) => (prev === undefined || slot.revision >= prev ? slot.revision : prev));
     }
   }, [slot.revision]);
-
-  useEffect(() => {
-    if (slot.revision < localRevision) return;
-    setPayload(sourcePayload);
-  }, [localRevision, slot.revision, sourcePayload]);
 
   useEffect(() => {
     if (typeof revisionCount === 'number' && revisionCount > 0) {
@@ -2734,27 +2669,10 @@ function SlotInlineStructured({
   }, [canRewriteIR]);
 
   const handleIRRewriteApplied = useCallback((revision?: number) => {
-    if (writerDocument && rewritePreview?.selection.type === 'ir') {
-      setPayload(updateWriterBlockContent(
-        writerDocument,
-        rewritePreview.selection.node_id,
-        rewritePreview.preview.preview.new_text,
-      ));
-    }
     applySavedRevision(revision);
     setRewriteSelection(null);
-    setRewritePreview(null);
     onRefresh?.();
-  }, [applySavedRevision, onRefresh, rewritePreview, writerDocument]);
-
-  const handleIRRewritePreview = useCallback((preview: RewriteSelectionPreview) => {
-    if (rewriteSelection?.type !== 'ir') return;
-    setRewritePreview({ selection: rewriteSelection, preview });
-  }, [rewriteSelection]);
-
-  const rejectIRRewrite = useCallback(() => {
-    setRewritePreview(null);
-  }, []);
+  }, [applySavedRevision, onRefresh]);
 
   if (payload === null) {
     return (
@@ -2771,20 +2689,11 @@ function SlotInlineStructured({
           <WriterIRControl
             document={writerDocument}
             sourceRevision={displayRevision}
-            readOnly={!canEditWriterIR}
+            readOnly={!canEditWriterIR || rewriteSelection !== null}
             editingKey={editingKey}
             onSave={canEditWriterIR ? handleSaveWriterDocument : undefined}
             onEditingChange={handleWriterEditingChange}
             onRewriteSelection={canRewriteIR ? openIRRewrite : undefined}
-            rewritePreview={rewritePreview?.selection.type === 'ir' ? {
-              nodeId: rewritePreview.selection.node_id,
-              sessionId: sessionId ?? '',
-              slotId: slotId ?? '',
-              listIndex: apiListIndex,
-              preview: rewritePreview.preview,
-            } : null}
-            onRewritePreviewApplied={handleIRRewriteApplied}
-            onRewritePreviewRejected={rejectIRRewrite}
           />
         ) : (
           <WriterArtifactContent slotId={resolvedSlotId} data={payload} hideDownload={!allowDownload} />
@@ -2799,7 +2708,7 @@ function SlotInlineStructured({
               listIndex={apiListIndex}
               revisionCount={displayRevisionCount!}
               currentRevision={displayRevision}
-              currentValue={currentArtifactValue}
+              currentValue={slot.artifact_value}
               currentChangeSource={slot.change_source}
               contentType='json'
               onRollbackDone={onRefresh}
@@ -2812,8 +2721,7 @@ function SlotInlineStructured({
               sessionId={sessionId!}
               revision={displayRevision}
               disabled={writerEditing}
-              onSuccess={(revision, document) => {
-                setPayload(document);
+              onSuccess={(revision) => {
                 applySavedRevision(revision);
                 onRefresh?.();
               }}
@@ -2840,7 +2748,6 @@ function SlotInlineStructured({
         selection={rewriteSelection}
         onClose={() => setRewriteSelection(null)}
         onApplied={handleIRRewriteApplied}
-        onPreviewReady={handleIRRewritePreview}
       />
     </div>
   );
@@ -2854,38 +2761,6 @@ interface SlotMarkdownFileProps {
   revisionCount?: number;
   onRefresh?: () => void;
   readOnly?: boolean;
-}
-
-/** Displays the temporary Markdown emitted by a Task SSE stream for a Writer draft. */
-export function SlotMarkdownStream({ stream }: { stream: TaskArtifactStream }) {
-  const content = stream.final_content ?? stream.content;
-  const isAborted = stream.state === 'aborted';
-  const showError = isAborted && !content;
-  const status = isAborted
-    ? stream.message || tr('chat.slots.contentLoadFailed')
-    : stream.final_content_error || (stream.state === 'streaming'
-      ? tr('chat.slots.inProgress')
-      : '');
-
-  return (
-    <div className={`plugin-slot plugin-slot--artifact plugin-slot--artifact-stream${showError ? ' plugin-slot--error' : ''}`}>
-      {status && (
-        <div className='plugin-slot__artifact-stream-status' role='status' aria-live='polite'>
-          {!isAborted && stream.state === 'streaming' && (
-            <span className='plugin-slot__artifact-stream-cursor' aria-hidden='true' />
-          )}
-          <span>{status}</span>
-        </div>
-      )}
-      {content ? (
-        <div className='plugin-slot__artifact-body'>
-          <div className='writer-artifact__markdown'>
-            <MarkdownViewer>{content}</MarkdownViewer>
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
 }
 
 function SlotMarkdownFile({
@@ -2913,10 +2788,6 @@ function SlotMarkdownFile({
   const [localRevision, setLocalRevision] = useState(slot.revision);
   const [localRevisionCount, setLocalRevisionCount] = useState<number | undefined>(revisionCount);
   const [rewriteSelection, setRewriteSelection] = useState<ArtifactRewriteSelection | null>(null);
-  const [rewritePreview, setRewritePreview] = useState<{
-    selection: ArtifactRewriteSelection;
-    preview: RewriteSelectionPreview;
-  } | null>(null);
   const [renderedSelection, setRenderedSelection] = useState<MarkdownSelection | null>(null);
   const markdownPreviewRef = useRef<HTMLDivElement>(null);
 
@@ -2980,15 +2851,16 @@ function SlotMarkdownFile({
   const canWriteBack = resolvedSlotId === 'draft_document'
     && Boolean(sessionId)
     && apiListIndex === -1;
+
   const canRewriteMarkdown = Boolean(sessionId && slotId)
     && !readOnly
     && typeof displayRevision === 'number'
     && displayRevision > 0
-    && rewriteSelection === null
-    && rewritePreview === null;
+    && rewriteSelection === null;
   const canEditMarkdown = Boolean(sessionId && slotId)
     && !readOnly
-    && WRITER_ARTIFACT_SLOT_IDS.has(resolvedSlotId);
+    && WRITER_ARTIFACT_SLOT_IDS.has(resolvedSlotId)
+    && rewriteSelection === null;
 
   const downloadMarkdown = useCallback(() => {
     const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
@@ -3035,15 +2907,12 @@ function SlotMarkdownFile({
     onRefresh?.();
   }, [onRefresh]);
 
-  const openMarkdownRewrite = useCallback((selection: MarkdownSelection) => {
-    if (!canRewriteMarkdown || !selection.text.trim()) return;
+  const openMarkdownRewrite = useCallback((selectedText: string) => {
+    if (!canRewriteMarkdown || !selectedText.trim()) return;
     setRewriteSelection({
       type: 'markdown',
-      selected_text: selection.text.trim(),
-      selectedText: selection.text.trim(),
-      anchor: selection.anchor,
-      paragraph: selection.paragraph,
-      startOffset: selection.startOffset,
+      selected_text: selectedText.trim(),
+      selectedText: selectedText.trim(),
     });
   }, [canRewriteMarkdown]);
 
@@ -3064,20 +2933,9 @@ function SlotMarkdownFile({
       setLocalRevisionCount((previous) => Math.max(previous ?? 0, revisionCount ?? 0, revision));
     }
     setRewriteSelection(null);
-    setRewritePreview(null);
     setRenderedSelection(null);
     refreshMarkdown();
   }, [refreshMarkdown, revisionCount]);
-
-  const handleMarkdownRewritePreview = useCallback((preview: RewriteSelectionPreview) => {
-    if (!rewriteSelection?.paragraph) return;
-    setRewritePreview({ selection: rewriteSelection, preview });
-    setRenderedSelection(null);
-  }, [rewriteSelection]);
-
-  const rejectMarkdownRewrite = useCallback(() => {
-    setRewritePreview(null);
-  }, []);
 
   if (!hasSource) {
     return (
@@ -3141,20 +2999,10 @@ function SlotMarkdownFile({
             onSave={saveMarkdown}
             onRefresh={refreshMarkdown}
             onDownload={downloadMarkdown}
-            onRewriteSelection={rewriteSelection || rewritePreview ? undefined : openMarkdownRewrite}
-            rewriteUnavailableReason={rewriteSelection || rewritePreview || canRewriteMarkdown
+            onRewriteSelection={openMarkdownRewrite}
+            rewriteUnavailableReason={canRewriteMarkdown
               ? undefined
               : tr('chat.artifactRewrite.revisionUnavailable')}
-            rewritePreview={rewritePreview?.selection.paragraph ? {
-              paragraph: rewritePreview.selection.paragraph,
-              startOffset: rewritePreview.selection.startOffset,
-              sessionId: sessionId ?? '',
-              slotId: slotId ?? '',
-              listIndex: apiListIndex,
-              preview: rewritePreview.preview,
-            } : null}
-            onRewritePreviewApplied={handleMarkdownRewriteApplied}
-            onRewritePreviewRejected={rejectMarkdownRewrite}
           />
         ) : (
           <div
@@ -3180,7 +3028,7 @@ function SlotMarkdownFile({
             ? tr('chat.artifactRewrite.action')
             : tr('chat.artifactRewrite.singleParagraphHint')}
           disabled={!renderedSelection.supported}
-          onActivate={() => openMarkdownRewrite(renderedSelection)}
+          onActivate={() => openMarkdownRewrite(renderedSelection.text)}
           onDismiss={() => setRenderedSelection(null)}
         />
       )}
@@ -3204,16 +3052,8 @@ function SlotMarkdownFile({
           {canWriteBack && (
             <WriterWriteBackButton
               sessionId={sessionId!}
-              revision={displayRevision}
-              onSuccess={(revision, document) => {
-                setContent(writerDocumentToMarkdown(document));
-                setCurrentValue(document);
-                setLocalRevision(revision);
-                setLocalRevisionCount((previous) => (
-                  Math.max(previous ?? 0, revisionCount ?? 0, revision)
-                ));
-                onRefresh?.();
-              }}
+              revision={slot.revision}
+              onSuccess={() => onRefresh?.()}
             />
           )}
         </div>
@@ -3227,7 +3067,6 @@ function SlotMarkdownFile({
         selection={rewriteSelection}
         onClose={() => setRewriteSelection(null)}
         onApplied={handleMarkdownRewriteApplied}
-        onPreviewReady={handleMarkdownRewritePreview}
       />
     </div>
   );

@@ -1,11 +1,16 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { Popconfirm, Tooltip } from 'antd';
-import { FullscreenOutlined, FullscreenExitOutlined } from '@ant-design/icons';
+import {
+  CloudUploadOutlined,
+  DownloadOutlined,
+  ExportOutlined,
+  FullscreenOutlined,
+  FullscreenExitOutlined,
+} from '@ant-design/icons';
 import { usePluginSession } from '@/modules/chat/hooks/usePlugin';
 import { usePluginStore } from '@/modules/chat/store/pluginPanel';
-import { useTaskCenterStore, type SubAgentTask, type TaskArtifactStream } from '@/modules/chat/store/taskCenter';
 import { uploadFileInChunks } from '@/modules/chat/utils/chunkUpload';
 import { PluginSessionApi } from '@/modules/chat/utils/request';
 import StateGraphModal from '@/components/StateGraphModal';
@@ -27,10 +32,47 @@ import {
   isWriterIrSource,
   SlotRenderer,
   SlotDownloadContext,
-  SlotMarkdownStream,
 } from './SlotComponents';
-import { MarkdownWorkflowActionContext, SlotEditingContext } from './slotEditingContext';
+import { PluginPanelTabActiveContext, SlotEditingContext, type SlotFooterAction } from './slotEditingContext';
 import './PluginPanel.scss';
+
+const DOCUMENT_FOOTER_LINK_ORDER = 20;
+
+type DocumentFooterItem =
+  | { kind: 'button'; key: string; order: number; action: SlotFooterAction }
+  | { kind: 'link'; key: string; order: number; href: string; label: string };
+
+function buildDocumentFooterItems(footerActions: Map<string, SlotFooterAction>): {
+  statusMessages: Array<{ key: string; text: string; tone?: SlotFooterAction['statusTone'] }>;
+  actionItems: DocumentFooterItem[];
+} {
+  const statusMessages: Array<{ key: string; text: string; tone?: SlotFooterAction['statusTone'] }> = [];
+  const actionItems: DocumentFooterItem[] = [];
+
+  for (const [key, action] of footerActions.entries()) {
+    if (action.statusText) {
+      statusMessages.push({ key: `${key}:status`, text: action.statusText, tone: action.statusTone });
+    }
+    if (action.statusLink) {
+      actionItems.push({
+        kind: 'link',
+        key: `${key}:link`,
+        order: DOCUMENT_FOOTER_LINK_ORDER,
+        href: action.statusLink.href,
+        label: action.statusLink.label,
+      });
+    }
+    actionItems.push({
+      kind: 'button',
+      key,
+      order: action.order ?? 100,
+      action,
+    });
+  }
+
+  actionItems.sort((left, right) => left.order - right.order);
+  return { statusMessages, actionItems };
+}
 
 /** Parse a JSON intent context string and return the text field, or '' if empty/invalid. */
 function parseIntentText(raw?: string): string {
@@ -59,55 +101,6 @@ function parseSelectedSlotText(session: PluginSession, slotKey: string, includeU
     if (obj.value !== undefined) return String(obj.value);
   }
   return String(raw);
-}
-
-function findTaskDraftStream(
-  session: PluginSession,
-  stepId: string | undefined,
-  slotId: string,
-  tasks: SubAgentTask[],
-): TaskArtifactStream | undefined {
-  if (slotId !== 'draft_document' || !stepId) return undefined;
-  const findStream = (task: SubAgentTask | undefined) => task?.artifact_streams
-    ?.slice()
-    .reverse()
-    .find((candidate) => candidate.slot === slotId && candidate.content_type === 'text/markdown');
-  const steps = (session.steps ?? [])
-    .filter((step) => step.step_id === stepId)
-    .slice()
-    .reverse();
-  for (const step of steps) {
-    const task = tasks.find((candidate) => candidate.task_id === step.task_id);
-    const stream = findStream(task);
-    if (stream) return stream;
-  }
-
-  // The session snapshot can briefly lag the task-created event, leaving the
-  // current step without its task_id. A single running draft stream is still
-  // unambiguous and should render instead of showing the empty-slot dash.
-  const liveStreams = tasks
-    .filter((task) => task.status === 'pending' || task.status === 'running')
-    .map(findStream)
-    .filter((stream): stream is TaskArtifactStream => Boolean(stream));
-  return liveStreams.length === 1 ? liveStreams[0] : undefined;
-}
-
-const WRITER_DRAFT_STEP_ID = 'write_document';
-
-/** Return the running task created for the writer's final-document step. */
-function findActiveWriterDraftTaskId(session: PluginSession | null): string | undefined {
-  if (session?.status !== 'active') {
-    return undefined;
-  }
-  return session.steps
-    ?.filter((step) => (
-      step.step_id === WRITER_DRAFT_STEP_ID
-      && step.validity !== 'stale'
-      && (step.status === 'pending' || step.status === 'running')
-      && Boolean(step.task_id)
-    ))
-    .sort((a, b) => b.attempt - a.attempt)[0]
-    ?.task_id;
 }
 
 /** IntentPopover shows global intent + per-step intent inside a floating popover. */
@@ -350,8 +343,8 @@ function getTabStepId(tab: TabDef): string | undefined {
 
 /**
  * Lock slot editing only while the plugin session is actively running.
- * When idle (waiting / failed / completed), Writer documents stay editable so
- * the user can revise and re-run a later step from the updated content.
+ * When idle (waiting / failed / completed), ui_editable artifacts stay editable
+ * so the user can revise and re-run a later step from the updated content.
  */
 function isPluginSessionReadOnly(
   session: PluginSession,
@@ -934,7 +927,6 @@ function SortableImageList({
 function NamedTabSlot({
   slotDef,
   revisions,
-  artifactStream,
   session,
   onRefresh,
   onReference,
@@ -944,7 +936,6 @@ function NamedTabSlot({
 }: {
   slotDef: SlotDef;
   revisions: SlotRevision[];
-  artifactStream?: TaskArtifactStream;
   session: PluginSession;
   onRefresh?: () => void;
   onReference?: (slot: SlotRevision) => void;
@@ -956,11 +947,6 @@ function NamedTabSlot({
   const slotLabel = slotDef.label ?? slotDef.id;
   const isImageList = slotDef.type === 'image' && slotDef.cardinality === 'list';
   const isDraggable = Boolean(slotDef.ordered) && !readOnly;
-  const showStream = Boolean(artifactStream && (
-    revisions.length === 0 || (
-      artifactStream.state !== 'ready' && !artifactStream.final_content_error
-    )
-  ));
 
   return (
     <div className='plugin-panel__named-slot'>
@@ -969,9 +955,7 @@ function NamedTabSlot({
           <span className='plugin-panel__slot-label'>{slotLabel}</span>
         )}
       </div>
-      {showStream && artifactStream ? (
-        <SlotMarkdownStream stream={artifactStream} />
-      ) : revisions.length === 0 ? (
+      {revisions.length === 0 ? (
         <div
           className='plugin-panel__slot-placeholder'
           aria-label={`${slotLabel} pending`}
@@ -1024,7 +1008,6 @@ function NamedTabSlot({
 function TabSlotGrid({
   tab,
   session,
-  tasks,
   onRefresh,
   onReference,
   onFocusSortOrder,
@@ -1032,7 +1015,6 @@ function TabSlotGrid({
 }: {
   tab: TabDef;
   session: PluginSession;
-  tasks: SubAgentTask[];
   onRefresh?: () => void;
   onReference?: (slot: SlotRevision) => void;
   onFocusSortOrder?: (sortOrder: number | undefined) => void;
@@ -1099,14 +1081,8 @@ function TabSlotGrid({
       {visibleSlots.map((slotDef) => {
         const artifactKey = slotDef.id;
         const revisions = getTabSlotRevisions(session, tab, artifactKey);
-        const artifactStream = findTaskDraftStream(
-          session,
-          getTabStepId(tab),
-          slotDef.id,
-          tasks,
-        );
         const hideEmpty = Boolean(tab.composite_behavior?.hide_empty_columns);
-        if (hideEmpty && revisions.length === 0 && !artifactStream) {
+        if (hideEmpty && revisions.length === 0) {
           return null;
         }
         return (
@@ -1114,7 +1090,6 @@ function TabSlotGrid({
             key={slotDef.id}
             slotDef={slotDef}
             revisions={revisions}
-            artifactStream={artifactStream}
             session={session}
             onRefresh={onRefresh}
             onReference={onReference}
@@ -1164,10 +1139,6 @@ export function PluginPanel({
 }: PluginPanelProps) {
   const { t, i18n } = useTranslation();
   const { session, loading, refresh } = usePluginSession(conversationId);
-  const taskCenterTasks = useTaskCenterStore((state) =>
-    conversationId ? state.tasksByConversation[conversationId] ?? [] : [],
-  );
-  const subscribeTask = useTaskCenterStore((state) => state.subscribeTask);
   const bumpDismissedRefresh = usePluginStore((s) => s.bumpDismissedRefresh);
   const autoRunning = usePluginStore((s) =>
     conversationId ? (s.autoRunningByConversation[conversationId] ?? false) : false,
@@ -1192,6 +1163,7 @@ export function PluginPanel({
   const flushFns = useRef<Map<string, () => Promise<boolean>>>(new Map());
   const [anySlotEditing, setAnySlotEditing] = useState(false);
   const [actionPending, setActionPending] = useState(false);
+  const [footerActions, setFooterActions] = useState<Map<string, SlotFooterAction>>(new Map());
 
   const setExpandedMode = useCallback((nextExpanded: boolean) => {
     if (nextExpanded) setCollapsed(false);
@@ -1243,6 +1215,23 @@ export function PluginPanel({
     };
   }, []);
 
+  const registerFooterAction = useCallback((key: string, action: SlotFooterAction | null) => {
+    setFooterActions((previous) => {
+      const next = new Map(previous);
+      if (action) next.set(key, action);
+      else next.delete(key);
+      return next;
+    });
+    return () => {
+      setFooterActions((previous) => {
+        if (!previous.has(key)) return previous;
+        const next = new Map(previous);
+        next.delete(key);
+        return next;
+      });
+    };
+  }, []);
+
   const flushPendingEdits = useCallback(async (): Promise<boolean> => {
     const flushers = [...flushFns.current.values()];
     if (flushers.length === 0) return true;
@@ -1253,6 +1242,7 @@ export function PluginPanel({
   useEffect(() => {
     editingSlots.current.clear();
     flushFns.current.clear();
+    setFooterActions(new Map());
     setAnySlotEditing(false);
     setActionPending(false);
   }, [session?.session_id]);
@@ -1281,16 +1271,6 @@ export function PluginPanel({
     const id = setInterval(refresh, pollIntervalMs);
     return () => clearInterval(id);
   }, [session, refresh, pollIntervalMs]);
-
-  const writerDraftTaskId = findActiveWriterDraftTaskId(session);
-
-  // The task-created notification and the plugin-session refresh can arrive in
-  // either order. Once the writer enters its final-document step, subscribe as
-  // soon as its task ID is present so draft Markdown deltas are not missed.
-  useEffect(() => {
-    if (!conversationId || !writerDraftTaskId) return;
-    subscribeTask(conversationId, writerDraftTaskId);
-  }, [conversationId, subscribeTask, writerDraftTaskId]);
 
   // Track focused tab changes.
   const handleTabChange = useCallback((idx: number, tabId: string) => {
@@ -1325,6 +1305,10 @@ export function PluginPanel({
     session.status === 'active' ||
     session.status === 'completed' ||
     session.status === 'failed';
+  const documentFooter = useMemo(
+    () => buildDocumentFooterItems(footerActions),
+    [footerActions],
+  );
   const displayStatus = autoRunning ? 'active' : session.status;
   // Only block footer actions while the plugin is actually running (or flush-in-progress).
   // Dirty editors no longer disable retry — click flushes saves first, then proceeds.
@@ -1377,24 +1361,16 @@ export function PluginPanel({
     void runFooterAction(() => onSendMessage?.(`${t('chat.pluginRollbackPrefix')}${stepId}`));
   }
 
-  const nextTab = tabs[activeTabIdx + 1];
-  const markdownWorkflowAction = !sessionReadOnly && onSendMessage
-    ? displayStatus === 'waiting'
-      ? {
-        label: t('chat.writerMarkdown.saveAndContinue'),
-        onProceed: handleContinue,
-      }
-      : session.status === 'completed' && nextTab
-        ? {
-          label: t('chat.writerMarkdown.saveAndReexecute', { step: nextTab.label }),
-          onProceed: () => handleRollback(getTabStepId(nextTab)),
-        }
-        : null
-    : null;
+  const continueLabel = displayStatus === 'waiting'
+    ? t('chat.pluginSaveAndContinue')
+    : t('chat.pluginContinue');
 
   const panel = (
-    <MarkdownWorkflowActionContext.Provider value={markdownWorkflowAction}>
-    <SlotEditingContext.Provider value={{ setEditing: handleSlotEditingChange, registerFlush }}>
+    <SlotEditingContext.Provider value={{
+      setEditing: handleSlotEditingChange,
+      registerFlush,
+      registerFooterAction,
+    }}>
     <div
       className={`plugin-panel plugin-panel--${displayStatus}${collapsed ? ' plugin-panel--collapsed' : ''}${expanded ? ' plugin-panel--expanded' : ''}`}
       data-session-id={session.session_id}
@@ -1575,17 +1551,18 @@ export function PluginPanel({
                 role='tabpanel'
                 hidden={idx !== activeTabIdx}
               >
+                <PluginPanelTabActiveContext.Provider value={idx === activeTabIdx}>
                 <SlotDownloadContext.Provider value={idx === tabs.length - 1}>
                   <TabSlotGrid
                     tab={tab}
                     session={session}
-                    tasks={taskCenterTasks}
                     onRefresh={refresh}
                     onReference={onReference}
                     onFocusSortOrder={handleFocusSortOrder}
                     readOnly={sessionReadOnly}
                   />
                 </SlotDownloadContext.Provider>
+                </PluginPanelTabActiveContext.Provider>
               </div>
             ))
           ) : (
@@ -1602,6 +1579,71 @@ export function PluginPanel({
       {/* Footer */}
       {!collapsed && showActions && (
         <div className='plugin-panel__footer' role='group' aria-label={t('chat.pluginSessionControls')}>
+          {documentFooter.actionItems.length > 0 || documentFooter.statusMessages.length > 0 ? (
+            <div className='plugin-panel__footer-document'>
+              {documentFooter.statusMessages.length > 0 ? (
+                <div className='plugin-panel__footer-meta'>
+                  {documentFooter.statusMessages.map((message) => (
+                    <span
+                      key={message.key}
+                      className={
+                        message.tone === 'error'
+                          ? 'plugin-panel__footer-action-status plugin-panel__footer-action-status--error'
+                          : message.tone === 'success'
+                            ? 'plugin-panel__footer-action-status plugin-panel__footer-action-status--success'
+                            : 'plugin-panel__footer-action-status'
+                      }
+                      role={message.tone === 'error' ? 'alert' : 'status'}
+                    >
+                      {message.text}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              {documentFooter.actionItems.length > 0 ? (
+                <div className='plugin-panel__footer-actions'>
+                  {documentFooter.actionItems.map((item) => {
+                    if (item.kind === 'link') {
+                      return (
+                        <a
+                          key={item.key}
+                          className='plugin-panel__action-btn plugin-panel__action-btn--secondary plugin-panel__action-btn--link'
+                          href={item.href}
+                          target='_blank'
+                          rel='noopener noreferrer'
+                        >
+                          <ExportOutlined aria-hidden />
+                          {item.label}
+                        </a>
+                      );
+                    }
+
+                    const { action } = item;
+                    return (
+                      <button
+                        key={item.key}
+                        type='button'
+                        className={`plugin-panel__action-btn plugin-panel__action-btn--${action.tone ?? 'secondary'}`}
+                        disabled={actionPending || action.disabled}
+                        aria-disabled={actionPending || action.disabled}
+                        onClick={() => {
+                          if (action.flushBeforeAction) {
+                            void runFooterAction(action.onClick);
+                            return;
+                          }
+                          action.onClick();
+                        }}
+                      >
+                        {action.icon === 'write-back' ? <CloudUploadOutlined aria-hidden /> : null}
+                        {action.icon === 'download' ? <DownloadOutlined aria-hidden /> : null}
+                        {action.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           {displayStatus === 'active' && onStop && (
             <button
               type='button'
@@ -1646,10 +1688,12 @@ export function PluginPanel({
                     ? t('chat.pluginSavingBeforeAction')
                     : buttonsDisabled
                       ? t('chat.pluginBtnDisabledHint')
-                      : t('chat.pluginContinue')
+                      : anySlotEditing
+                        ? t('chat.pluginContinueFlushHint')
+                        : continueLabel
               }
             >
-              {actionPending ? t('chat.pluginSavingBeforeAction') : t('chat.pluginContinue')}
+              {actionPending ? t('chat.pluginSavingBeforeAction') : continueLabel}
             </button>
           )}
           {showStepRollback && (
@@ -1697,7 +1741,6 @@ export function PluginPanel({
       />
     )}
     </SlotEditingContext.Provider>
-    </MarkdownWorkflowActionContext.Provider>
   );
 
   if (expanded) {
