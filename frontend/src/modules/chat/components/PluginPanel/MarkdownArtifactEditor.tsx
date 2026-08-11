@@ -30,7 +30,9 @@ import { useTranslation } from 'react-i18next';
 import { ArtifactRewriteInlineDiff } from './ArtifactRewriteDialog';
 import {
   floatingToolbarAnchor,
+  selectedMarkdownParagraph,
   type FloatingToolbarAnchor,
+  type MarkdownSelection,
 } from './artifactRewriteSelection';
 import { normalizeMarkdownForMdxEditor } from './mdxMarkdown';
 import { PluginPanelTabActiveContext, SlotEditingContext } from './slotEditingContext';
@@ -71,6 +73,8 @@ interface MarkdownArtifactEditorProps {
   onDownload?: () => void;
   /** Reports the current draft so the write-back action can compare it with its Feishu baseline. */
   onContentChange?: (markdown: string) => void;
+  onRewriteSelection?: (selection: MarkdownSelection) => void;
+  rewriteUnavailableReason?: string;
   rewritePreview?: MarkdownRewritePreview | null;
   onRewritePreviewApplied?: (revision?: number) => void;
   onRewritePreviewRejected?: () => void;
@@ -107,6 +111,8 @@ export function MarkdownArtifactEditor({
   onRefresh,
   onDownload,
   onContentChange,
+  onRewriteSelection,
+  rewriteUnavailableReason,
   rewritePreview,
   onRewritePreviewApplied,
   onRewritePreviewRejected,
@@ -121,6 +127,7 @@ export function MarkdownArtifactEditor({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string>();
   const [conflict, setConflict] = useState(false);
+  const [selection, setSelection] = useState<MarkdownSelection | null>(null);
   const [selectionToolbar, setSelectionToolbar] = useState<FloatingToolbarAnchor | null>(null);
   const [rewriteLayer, setRewriteLayer] = useState<HTMLDivElement | null>(null);
   const rootRef = useRef<HTMLElement>(null);
@@ -165,8 +172,8 @@ export function MarkdownArtifactEditor({
       && !browserSelection.isCollapsed
       && browserSelection.rangeCount > 0
       && browserSelection.toString().trim()
-      && editable.contains(browserSelection.anchorNode)
-      && editable.contains(browserSelection.focusNode),
+      && editable?.contains(browserSelection.anchorNode)
+      && editable?.contains(browserSelection.focusNode),
     );
     if (
       !surface
@@ -212,6 +219,8 @@ export function MarkdownArtifactEditor({
   }, [dismissSelectionToolbar, readOnly]);
 
   const recordSelection = useCallback((showToolbar = true) => {
+    const root = rootRef.current;
+    setSelection(root ? selectedMarkdownParagraph(root) : null);
     if (!showToolbar) return;
     selectionToolbarDismissedRef.current = false;
     updateSelectionToolbar();
@@ -344,6 +353,24 @@ export function MarkdownArtifactEditor({
     });
   }, [editingKey, onDownload, registerFooterAction, t, tabActive]);
 
+  const showPolishAction = Boolean(onRewriteSelection || rewriteUnavailableReason);
+  const polishDisabled = !onRewriteSelection
+    || !selection?.supported
+    || dirty
+    || saving
+    || conflict
+    || Boolean(rewriteUnavailableReason);
+  const polishTitle = !selection?.supported
+    ? t('chat.artifactRewrite.singleParagraphHint')
+    : dirty
+      ? t('chat.artifactRewrite.saveFirstHint')
+      : rewriteUnavailableReason ?? t('chat.artifactRewrite.action');
+  const requestPolish = useCallback(() => {
+    if (polishDisabled || !selection || !onRewriteSelection) return;
+    onRewriteSelection(selection);
+    dismissSelectionToolbar();
+  }, [dismissSelectionToolbar, onRewriteSelection, polishDisabled, selection]);
+
   const selectionToolbarStyle = selectionToolbar
     ? {
       '--writer-markdown-selection-toolbar-top': `${selectionToolbar.top}px`,
@@ -366,7 +393,7 @@ export function MarkdownArtifactEditor({
           event.preventDefault();
         }
       }}
-      onMouseUp={recordSelection}
+      onMouseUp={() => recordSelection()}
       onKeyUp={(event) => {
         if (event.key !== 'Escape') recordSelection();
       }}
@@ -427,6 +454,18 @@ export function MarkdownArtifactEditor({
               <>
                 <BoldItalicUnderlineToggles />
                 <BlockTypeSelect />
+                {showPolishAction && (
+                  <button
+                    type='button'
+                    className='writer-markdown-editor__polish-action'
+                    disabled={polishDisabled}
+                    title={polishTitle}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={requestPolish}
+                  >
+                    {t('chat.artifactRewrite.action')}
+                  </button>
+                )}
                 <ListsToggle />
               </>
             ),

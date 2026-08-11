@@ -8,7 +8,7 @@ import { resolveCoreAssetUrl, resolveMarkdownImageUrlAsync, isExpiredSignedUrl }
 import { buildDiffLinesWithInline } from "@/modules/memory/shared";
 import { DiffLineContent } from "@/modules/memory/components/DiffLineContent";
 import { uploadFileInChunks } from "@/modules/chat/utils/chunkUpload";
-import { PluginSessionApi } from "@/modules/chat/utils/request";
+import { PluginSessionApi, type RewriteSelectionPreview } from "@/modules/chat/utils/request";
 import { FilePreviewDrawer } from "./FilePreviewDrawer";
 import {
   WriterArtifactContent,
@@ -27,6 +27,7 @@ import {
   isWriterDocument,
   normalizeWriterDocumentForSync,
   restoreLegacyWriterImageReference,
+  updateWriterBlockContent,
   type WriterBlock,
   type WriterDocument,
 } from './writerIR';
@@ -2385,6 +2386,10 @@ function SlotJsonFile({
   const [localRevisionCount, setLocalRevisionCount] = useState<number | undefined>(revisionCount);
   const [writerEditing, setWriterEditing] = useState(false);
   const [rewriteSelection, setRewriteSelection] = useState<ArtifactRewriteSelection | null>(null);
+  const [rewritePreview, setRewritePreview] = useState<{
+    selection: ArtifactRewriteSelection;
+    preview: RewriteSelectionPreview;
+  } | null>(null);
   const hasPayloadRef = useRef(false);
   const latestRevisionRef = useRef(slot.revision);
   hasPayloadRef.current = payload !== null;
@@ -2502,7 +2507,8 @@ function SlotJsonFile({
     && writerDocument !== null
     && typeof displayRevision === 'number'
     && displayRevision > 0
-    && rewriteSelection === null;
+    && rewriteSelection === null
+    && rewritePreview === null;
 
   const handleSaveWriterDocument = useCallback(async (
     sourceDocument: WriterDocument,
@@ -2608,11 +2614,28 @@ function SlotJsonFile({
   }, [canRewriteIR]);
 
   const handleIRRewriteApplied = useCallback((revision?: number) => {
+    if (writerDocument && rewritePreview?.selection.type === 'ir') {
+      setPayload(updateWriterBlockContent(
+        writerDocument,
+        rewritePreview.selection.node_id,
+        rewritePreview.preview.preview.new_text,
+      ));
+    }
     applySavedRevision(revision);
     setRewriteSelection(null);
+    setRewritePreview(null);
     setReloadToken((value) => value + 1);
     onRefresh?.();
-  }, [applySavedRevision, onRefresh]);
+  }, [applySavedRevision, onRefresh, rewritePreview, writerDocument]);
+
+  const handleIRRewritePreview = useCallback((preview: RewriteSelectionPreview) => {
+    if (rewriteSelection?.type !== 'ir') return;
+    setRewritePreview({ selection: rewriteSelection, preview });
+  }, [rewriteSelection]);
+
+  const rejectIRRewrite = useCallback(() => {
+    setRewritePreview(null);
+  }, []);
 
   const handleWriteBackSuccess = useCallback((revision: number) => {
     setPayload(document);
@@ -2727,6 +2750,15 @@ function SlotJsonFile({
             onEditingChange={handleWriterEditingChange}
             onRewriteSelection={canRewriteIR ? openIRRewrite : undefined}
             rewriteDialogOpen={rewriteSelection !== null}
+            rewritePreview={rewritePreview?.selection.type === 'ir' ? {
+              nodeId: rewritePreview.selection.node_id,
+              sessionId: sessionId ?? '',
+              slotId: slotId ?? '',
+              listIndex: apiListIndex,
+              preview: rewritePreview.preview,
+            } : null}
+            onRewritePreviewApplied={handleIRRewriteApplied}
+            onRewritePreviewRejected={rejectIRRewrite}
           />
         ) : (
           <WriterArtifactContent slotId={resolvedSlotId} data={payload} hideDownload={!allowDownload} />
@@ -2759,6 +2791,7 @@ function SlotJsonFile({
         selection={rewriteSelection}
         onClose={() => setRewriteSelection(null)}
         onApplied={handleIRRewriteApplied}
+        onPreviewReady={handleIRRewritePreview}
       />
     </div>
   );
@@ -2788,6 +2821,10 @@ function SlotInlineStructured({
   const { setEditing: notifyEditing } = useContext(SlotEditingContext);
   const [writerEditing, setWriterEditing] = useState(false);
   const [rewriteSelection, setRewriteSelection] = useState<ArtifactRewriteSelection | null>(null);
+  const [rewritePreview, setRewritePreview] = useState<{
+    selection: ArtifactRewriteSelection;
+    preview: RewriteSelectionPreview;
+  } | null>(null);
   const [localRevision, setLocalRevision] = useState(slot.revision);
   const [localRevisionCount, setLocalRevisionCount] = useState<number | undefined>(revisionCount);
   const apiListIndex = slot.list_index ?? -1;
@@ -2828,7 +2865,8 @@ function SlotInlineStructured({
     && writerDocument !== null
     && typeof displayRevision === 'number'
     && displayRevision > 0
-    && rewriteSelection === null;
+    && rewriteSelection === null
+    && rewritePreview === null;
   const [writerMarkdownDownload, setWriterMarkdownDownload] = useState<{
     url: string;
     filename: string;
@@ -2943,8 +2981,18 @@ function SlotInlineStructured({
   const handleIRRewriteApplied = useCallback((revision?: number) => {
     applySavedRevision(revision);
     setRewriteSelection(null);
+    setRewritePreview(null);
     onRefresh?.();
   }, [applySavedRevision, onRefresh]);
+
+  const handleIRRewritePreview = useCallback((preview: RewriteSelectionPreview) => {
+    if (rewriteSelection?.type !== 'ir') return;
+    setRewritePreview({ selection: rewriteSelection, preview });
+  }, [rewriteSelection]);
+
+  const rejectIRRewrite = useCallback(() => {
+    setRewritePreview(null);
+  }, []);
 
   const handleWriteBackSuccess = useCallback((revision: number) => {
     applySavedRevision(revision);
@@ -2994,6 +3042,15 @@ function SlotInlineStructured({
             onEditingChange={handleWriterEditingChange}
             onRewriteSelection={canRewriteIR ? openIRRewrite : undefined}
             rewriteDialogOpen={rewriteSelection !== null}
+            rewritePreview={rewritePreview?.selection.type === 'ir' ? {
+              nodeId: rewritePreview.selection.node_id,
+              sessionId: sessionId ?? '',
+              slotId: slotId ?? '',
+              listIndex: apiListIndex,
+              preview: rewritePreview.preview,
+            } : null}
+            onRewritePreviewApplied={handleIRRewriteApplied}
+            onRewritePreviewRejected={rejectIRRewrite}
           />
         ) : (
           <WriterArtifactContent slotId={resolvedSlotId} data={payload} hideDownload={!allowDownload} />
@@ -3026,6 +3083,7 @@ function SlotInlineStructured({
         selection={rewriteSelection}
         onClose={() => setRewriteSelection(null)}
         onApplied={handleIRRewriteApplied}
+        onPreviewReady={handleIRRewritePreview}
       />
     </div>
   );
@@ -3122,6 +3180,10 @@ function SlotMarkdownFile({
   const [localRevision, setLocalRevision] = useState(slot.revision);
   const [localRevisionCount, setLocalRevisionCount] = useState<number | undefined>(revisionCount);
   const [rewriteSelection, setRewriteSelection] = useState<ArtifactRewriteSelection | null>(null);
+  const [rewritePreview, setRewritePreview] = useState<{
+    selection: ArtifactRewriteSelection;
+    preview: RewriteSelectionPreview;
+  } | null>(null);
   const [renderedSelection, setRenderedSelection] = useState<MarkdownSelection | null>(null);
   const markdownPreviewRef = useRef<HTMLDivElement>(null);
 
@@ -3197,11 +3259,11 @@ function SlotMarkdownFile({
     && !readOnly
     && typeof displayRevision === 'number'
     && displayRevision > 0
-    && rewriteSelection === null;
+    && rewriteSelection === null
+    && rewritePreview === null;
   const canEditMarkdown = Boolean(sessionId && slotId)
     && !readOnly
-    && WRITER_ARTIFACT_SLOT_IDS.has(resolvedSlotId)
-    && rewriteSelection === null;
+    && WRITER_ARTIFACT_SLOT_IDS.has(resolvedSlotId);
 
   const downloadMarkdown = useCallback(() => {
     const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
@@ -3254,12 +3316,15 @@ function SlotMarkdownFile({
     onRefresh?.();
   }, [onRefresh]);
 
-  const openMarkdownRewrite = useCallback((selectedText: string) => {
-    if (!canRewriteMarkdown || !selectedText.trim()) return;
+  const openMarkdownRewrite = useCallback((selection: MarkdownSelection) => {
+    if (!canRewriteMarkdown || !selection.text.trim()) return;
     setRewriteSelection({
       type: 'markdown',
-      selected_text: selectedText.trim(),
-      selectedText: selectedText.trim(),
+      selected_text: selection.text.trim(),
+      selectedText: selection.text.trim(),
+      anchor: selection.anchor,
+      paragraph: selection.paragraph,
+      startOffset: selection.startOffset,
     });
   }, [canRewriteMarkdown]);
 
@@ -3280,9 +3345,20 @@ function SlotMarkdownFile({
       setLocalRevisionCount((previous) => Math.max(previous ?? 0, revisionCount ?? 0, revision));
     }
     setRewriteSelection(null);
+    setRewritePreview(null);
     setRenderedSelection(null);
     refreshMarkdown();
   }, [refreshMarkdown, revisionCount]);
+
+  const handleMarkdownRewritePreview = useCallback((preview: RewriteSelectionPreview) => {
+    if (!rewriteSelection?.paragraph) return;
+    setRewritePreview({ selection: rewriteSelection, preview });
+    setRenderedSelection(null);
+  }, [rewriteSelection]);
+
+  const rejectMarkdownRewrite = useCallback(() => {
+    setRewritePreview(null);
+  }, []);
 
   const markdownEditingKey = sessionId && slotId
     ? `${sessionId}:${slotId}:${apiListIndex}:markdown`
@@ -3368,10 +3444,20 @@ function SlotMarkdownFile({
             onSave={saveMarkdown}
             onRefresh={refreshMarkdown}
             onDownload={downloadMarkdown}
-            onRewriteSelection={openMarkdownRewrite}
-            rewriteUnavailableReason={canRewriteMarkdown
+            onRewriteSelection={rewriteSelection || rewritePreview ? undefined : openMarkdownRewrite}
+            rewriteUnavailableReason={rewriteSelection || rewritePreview || canRewriteMarkdown
               ? undefined
               : tr('chat.artifactRewrite.revisionUnavailable')}
+            rewritePreview={rewritePreview?.selection.paragraph ? {
+              paragraph: rewritePreview.selection.paragraph,
+              startOffset: rewritePreview.selection.startOffset,
+              sessionId: sessionId ?? '',
+              slotId: slotId ?? '',
+              listIndex: apiListIndex,
+              preview: rewritePreview.preview,
+            } : null}
+            onRewritePreviewApplied={handleMarkdownRewriteApplied}
+            onRewritePreviewRejected={rejectMarkdownRewrite}
           />
         ) : (
           <div
@@ -3397,7 +3483,7 @@ function SlotMarkdownFile({
             ? tr('chat.artifactRewrite.action')
             : tr('chat.artifactRewrite.singleParagraphHint')}
           disabled={!renderedSelection.supported}
-          onActivate={() => openMarkdownRewrite(renderedSelection.text)}
+          onActivate={() => openMarkdownRewrite(renderedSelection)}
           onDismiss={() => setRenderedSelection(null)}
         />
       )}
@@ -3428,6 +3514,7 @@ function SlotMarkdownFile({
         selection={rewriteSelection}
         onClose={() => setRewriteSelection(null)}
         onApplied={handleMarkdownRewriteApplied}
+        onPreviewReady={handleMarkdownRewritePreview}
       />
     </div>
   );
