@@ -42,11 +42,6 @@ from lazymind.chat.engine.tools.writer import (
     sync_writer_documents,
     writer_schema,
 )
-from lazymind.chat.engine.tools.writer_outline_stream import (
-    WriterArtifactStreamEventEmitter,
-    stream_writer_outline,
-)
-
 WRITER_IMAGE_ACQUISITION_PROMPT = '''Create one professional visual for a long-form document.
 
 Visual type: {visual_type}
@@ -463,15 +458,15 @@ def writer_prepare_outline(source_document_path: str) -> str:
 
 def writer_generate_outline(writing_task_path: str, writing_context_path: str) -> str:
     """Generate an outline-stage artifact with a Markdown preview stream."""
-    events = WriterArtifactStreamEventEmitter(
+    events = DraftMarkdownStreamEventEmitter(
         require_context().emit,
         slot='outline_document',
     )
     try:
-        generated = stream_writer_outline(
-            _read_json_string(writing_task_path),
-            _read_json_string(writing_context_path),
-            events.feed,
+        generated = WriterCreateToolkit().stream_outline(
+            writing_task_json=_read_json_string(writing_task_path),
+            writing_context_json=_read_json_string(writing_context_path),
+            on_delta=events.feed,
         )
         outline_path = _save_writer_document(
             'outline_document', generated, expected_stage='outline', editable=True,
