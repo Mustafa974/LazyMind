@@ -90,6 +90,29 @@ def test_write_document_revision_emits_markdown_draft_stream(monkeypatch, tmp_pa
     )
 
 
+def test_markdown_media_fill_replaces_resolved_and_drops_unresolved():
+    tools = _load_tools_module()
+
+    filled = tools._fill_markdown_media_placeholders(
+        '\n'.join([
+            '# Draft',
+            '',
+            '![Resolved](media-placeholder://need-1)',
+            '![Unresolved](media-placeholder://need-2)',
+        ]),
+        {
+            'assets': {
+                'asset-1': {'uri': '/var/lib/lazymind/uploads/images/generated-1.png'},
+            },
+            'visual_need_asset_ids': {'need-1': ['asset-1']},
+        },
+    )
+
+    assert '![Resolved](media-asset://asset-1|/var/lib/lazymind/uploads/images/generated-1.png)' in filled
+    assert 'Unresolved' not in filled
+    assert 'media-placeholder://' not in filled
+
+
 def test_selection_rewrite_uses_slot_markdown_artifact_filename(monkeypatch, tmp_path):
     tools = _load_tools_module()
 

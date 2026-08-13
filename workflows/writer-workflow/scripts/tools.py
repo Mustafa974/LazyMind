@@ -7,6 +7,7 @@ tooling and the existing workflow artifact mechanism.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import tempfile
 import uuid
@@ -53,6 +54,9 @@ brand logos, decorative filler, and small unreadable text. Return exactly one im
 '''
 from lazymind.chat.engine.tools.multimodal import image_generator
 from lazymind.model_config import is_model_role_available
+
+
+LOG = logging.getLogger(__name__)
 
 
 def _workspace_root() -> Path:
@@ -785,6 +789,8 @@ def writer_generate_draft_blocks_markdown(
     writing_task_path: str,
     section_instructions_path: str,
     writing_context_path: str,
+    visual_plan_path: str = '',
+    media_assets_path: str = '',
 ) -> list[str]:
     """Generate and persist all planned draft sections as Markdown."""
     events = DraftMarkdownStreamEventEmitter(require_context().emit)
@@ -793,6 +799,12 @@ def writer_generate_draft_blocks_markdown(
             writing_task_json=_read_json_string(writing_task_path),
             section_instructions_json=_read_json_string(section_instructions_path),
             writing_context_json=_read_json_string(writing_context_path),
+            visual_plan_json=(
+                _read_json_string(visual_plan_path) if visual_plan_path else ''
+            ),
+            media_assets_json=(
+                _read_json_string(media_assets_path) if media_assets_path else ''
+            ),
             on_delta=events.feed,
             on_section_end=events.flush,
         ), [])
@@ -842,11 +854,41 @@ def writer_generate_draft_document(
     )
 
 
+def _fill_markdown_media_placeholders(markdown: str, resolved_media_assets: Any) -> str:
+    """Replace resolved Markdown media placeholders with stable asset references."""
+    placeholder_pattern = re.compile(
+        r'!\[([^\]]*)\]\(media-placeholder://([A-Za-z0-9_-]+)\)'
+    )
+    need_asset_ids = (resolved_media_assets or {}).get('visual_need_asset_ids') or {}
+    assets = (resolved_media_assets or {}).get('assets') or {}
+    dropped: list[str] = []
+
+    def replace_image(match: re.Match) -> str:
+        caption, need_id = match.group(1), match.group(2)
+        asset_ids = need_asset_ids.get(need_id) or []
+        if asset_ids:
+            asset = assets.get(asset_ids[0]) or {}
+            path = str(asset.get('uri') or asset.get('local_path') or '')
+            return f'![{caption}](media-asset://{asset_ids[0]}|{path})'
+        dropped.append(need_id)
+        return ''
+
+    filled = placeholder_pattern.sub(replace_image, markdown or '')
+    if dropped:
+        LOG.warning(
+            '[Writer] Markdown media fill dropped %d unresolved placeholder(s): %s',
+            len(dropped),
+            ', '.join(sorted(set(dropped))),
+        )
+    return filled
+
+
 def writer_generate_draft_document_markdown(
     draft_sections_anchor_path: str,
     writing_context_path: str,
     outline_path: str = '',
     document_title: str = '',
+    resolved_media_assets_path: str = '',
 ) -> str:
     """Assemble Markdown sections and preserve the Markdown document."""
     anchor = (
@@ -869,10 +911,16 @@ def writer_generate_draft_document_markdown(
         outline_json=_read_json_string(outline_path) if outline_path else '',
         title=document_title,
     ), {})
+    markdown = payload.get('draft_document') or ''
+    if resolved_media_assets_path:
+        markdown = _fill_markdown_media_placeholders(
+            markdown,
+            _read_json_file(resolved_media_assets_path),
+        )
     root = _run_root('draft-document-markdown')
     return _save_writer_document(
         'draft_document',
-        payload.get('draft_document') or {},
+        markdown,
         expected_stage='draft',
         editable=True,
         directory=root,

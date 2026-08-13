@@ -808,16 +808,26 @@ class WriterToolkitBase:
                 transient_outline.model_dump(exclude_defaults=True),
                 self.WRITER_IR_SCHEMA,
             )
-            try:
-                visual_result = planning.generate_visual_plan(
-                    task=task_path,
-                    outline=outline_path,
-                    context=context_path,
-                )
-                visual_plan = _primary_data(visual_result)
-                warnings.extend((visual_result.get('metadata') or {}).get('warnings') or [])
-            except Exception as exc:
-                warnings.append(f'Visual planning failed: {type(exc).__name__}: {exc}')
+        else:
+            transient_markdown = f'# {document_title}\n' + '\n'.join(
+                f'## {instruction.section_title}'
+                for instruction in instructions.instructions
+            )
+            outline_path = _write_document_input(
+                root,
+                'rewrite_visual_outline',
+                transient_markdown,
+            )
+        try:
+            visual_result = planning.generate_visual_plan(
+                task=task_path,
+                outline=outline_path,
+                context=context_path,
+            )
+            visual_plan = _primary_data(visual_result)
+            warnings.extend((visual_result.get('metadata') or {}).get('warnings') or [])
+        except Exception as exc:
+            warnings.append(f'Visual planning failed: {type(exc).__name__}: {exc}')
         return _json_dumps({
             'section_instructions': instructions.model_dump(exclude_defaults=True),
             'visual_plan': visual_plan,
@@ -1000,12 +1010,16 @@ class WriterToolkitBase:
         writing_task_json: str,
         section_instructions_json: str,
         writing_context_json: str,
+        visual_plan_json: str = '',
+        media_assets_json: str = '',
     ) -> str:
         """Generate every planned draft section in Markdown, in order."""
         return self.generate_draft_blocks(
             writing_task_json=writing_task_json,
             section_instructions_json=section_instructions_json,
             writing_context_json=writing_context_json,
+            visual_plan_json=visual_plan_json,
+            media_assets_json=media_assets_json,
         )
 
     def stream_draft_blocks_markdown(
@@ -1015,6 +1029,8 @@ class WriterToolkitBase:
         writing_context_json: str,
         on_delta: Callable[[str], None],
         on_section_end: Callable[[], None] | None = None,
+        visual_plan_json: str = '',
+        media_assets_json: str = '',
     ) -> str:
         """Generate Markdown sections through LazyLLM's non-tool streaming API."""
         return self._stream_draft_blocks(
@@ -1024,6 +1040,8 @@ class WriterToolkitBase:
             representation='markdown',
             on_delta=on_delta,
             on_section_end=on_section_end,
+            visual_plan_json=visual_plan_json,
+            media_assets_json=media_assets_json,
         )
 
     def stream_draft_blocks_ir(
@@ -1139,11 +1157,10 @@ class WriterToolkitBase:
                 'context': context_path,
                 'previous_blocks': sections,
             }
-            if representation == 'ir':
-                if visual_plan_path is not None:
-                    stream_kwargs['visual_plan'] = visual_plan_path
-                if media_assets_path is not None:
-                    stream_kwargs['media_assets'] = media_assets_path
+            if visual_plan_path is not None:
+                stream_kwargs['visual_plan'] = visual_plan_path
+            if media_assets_path is not None:
+                stream_kwargs['media_assets'] = media_assets_path
             with stream_factory(
                 **stream_kwargs,
             ) as stream:
