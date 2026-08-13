@@ -42,6 +42,7 @@ from lazymind.chat.engine.tools.writer import (
     sync_writer_documents,
     writer_schema,
 )
+
 WRITER_IMAGE_ACQUISITION_PROMPT = '''Create one professional visual for a long-form document.
 
 Visual type: {visual_type}
@@ -1175,7 +1176,7 @@ def writer_apply_revision(
         document_key,
         payload.get('revised_document') or {},
         expected_stage=(None if is_markdown or is_body_step else 'outline'),
-        editable=True,
+        editable=is_body_step,
         directory=root,
     )
     if is_body_step:

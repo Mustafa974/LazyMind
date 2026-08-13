@@ -39,7 +39,7 @@ writing flow; require the missing URL.
 - User edits in the frontend → the frontend saves a human revision of the same
   `outline_document` slot.
 
-IR results have stage="outline" and are UI-editable; Markdown results remain `.md`.
+IR results have stage="outline" and are not UI-editable; Markdown results remain `.md`.
 If the IR is bound to a cloud
 document, AI or frontend revision synchronizes that document and stores the
 provider-confirmed IR as the next artifact revision.
@@ -107,7 +107,7 @@ a hidden current-document pointer.
 
 - From-scratch and Markdown inputs remain Markdown. Feishu and `.lmd` inputs remain IR.
 - `outline_document` and `draft_document` preserve that representation across steps.
-- IR outline and draft documents have ui_editable=true.
+- IR draft documents have ui_editable=true; outline documents are not currently UI-editable.
 - During `write_document`, `writer_apply_revision` returns the authoritative next draft
   under `draft_document`, using the canonical `.md` or `.lmd` filename. Save that exact path immediately; do not
   query it as an artifact key or reconstruct the document with generic file tools.
