@@ -69,6 +69,23 @@ def _extract_length_constraints(query: str) -> dict[str, int]:
     }
 
 
+_MARKDOWN_NO_MEDIA_PATTERNS = (
+    re.compile(
+        r'(?:不要|不需要|无需|不用|禁止)\s*(?:使用|添加|插入|生成|展示|显示)?\s*'
+        r'(?:任何\s*)?(?:图片|图像|插图|配图|视觉(?:素材|内容)?)'
+        r'|不(?:使用|添加|插入|生成|展示|显示)\s*(?:任何\s*)?'
+        r'(?:图片|图像|插图|配图|视觉(?:素材|内容)?)'
+        r'|不插图|无图',
+    ),
+    re.compile(
+        r'\b(?:no|without)\s+(?:any\s+)?(?:images?|pictures?|illustrations?|visuals?)\b'
+        r'|\b(?:do\s+not|don\'t)\s+(?:use|include|add|generate|insert|show|display)\s+'
+        r'(?:any\s+)?(?:images?|pictures?|illustrations?|visuals?)\b',
+        re.IGNORECASE,
+    ),
+)
+
+
 class DraftMarkdownStreamEventEmitter:
     """Publish one attempt-scoped Markdown preview for a Writer artifact."""
 
@@ -201,6 +218,11 @@ def _document_value(value: str) -> Any:
         return _json_loads(value, {})
     except json.JSONDecodeError:
         return value
+
+
+def _markdown_media_is_explicitly_disabled(query: str) -> bool:
+    """Return whether the user forbids Markdown media, not text tables."""
+    return any(pattern.search(query or '') for pattern in _MARKDOWN_NO_MEDIA_PATTERNS)
 
 
 def _write_document_input(root: Path, name: str, value: str) -> str:
@@ -787,6 +809,18 @@ class WriterToolkitBase:
         document_title = str(instructions.meta.get('document_title') or '').strip()
         visual_plan: dict[str, Any] = VisualPlan().model_dump()
         warnings = []
+        if (
+            representation == 'markdown'
+            and _markdown_media_is_explicitly_disabled(
+                str(_json_loads(writing_task_json, {}).get('query') or ''),
+            )
+        ):
+            return _json_dumps({
+                'section_instructions': instructions.model_dump(exclude_defaults=True),
+                'visual_plan': visual_plan,
+                'document_title': document_title,
+                'warnings': warnings,
+            })
         if representation == 'ir':
             transient_outline = WriterDocument(
                 document_id=f'{instructions.instruction_set_id}-visual-outline',
@@ -884,17 +918,23 @@ class WriterToolkitBase:
             llm=AutoModel(model='llm'), artifact_store=str(root),
         )
         warnings = []
-        try:
-            visual_result = planning.generate_visual_plan(
-                task=task_path,
-                outline=outline_path,
-                context=context_path,
+        visual_plan = VisualPlan().model_dump()
+        if not (
+            isinstance(_document_value(outline_json), str)
+            and _markdown_media_is_explicitly_disabled(
+                str(_json_loads(writing_task_json, {}).get('query') or ''),
             )
-            visual_plan = _primary_data(visual_result)
-            warnings.extend((visual_result.get('metadata') or {}).get('warnings') or [])
-        except Exception as exc:
-            visual_plan = VisualPlan().model_dump()
-            warnings.append(f'Visual planning failed: {type(exc).__name__}: {exc}')
+        ):
+            try:
+                visual_result = planning.generate_visual_plan(
+                    task=task_path,
+                    outline=outline_path,
+                    context=context_path,
+                )
+                visual_plan = _primary_data(visual_result)
+                warnings.extend((visual_result.get('metadata') or {}).get('warnings') or [])
+            except Exception as exc:
+                warnings.append(f'Visual planning failed: {type(exc).__name__}: {exc}')
         visual_plan_path = _write_input_artifact(
             root,
             'visual_plan.json',

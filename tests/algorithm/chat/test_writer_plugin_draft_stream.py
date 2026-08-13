@@ -219,6 +219,92 @@ def test_visual_media_falls_through_to_next_strategy():
     assert resource == {'uri': '/tmp/generated.png'}
 
 
+def test_markdown_no_image_request_skips_visual_planning(monkeypatch, tmp_path):
+    from lazymind.chat.engine.tools import writer
+
+    calls = []
+
+    class FakePlanningTools:
+        def __init__(self, **_kwargs):
+            pass
+
+        def generate_visual_plan(self, **_kwargs):
+            calls.append('generate_visual_plan')
+            raise AssertionError('explicit no-image request must skip visual planning')
+
+        def generate_section_instructions(self, **_kwargs):
+            path = tmp_path / 'section_instructions.json'
+            path.write_text(json.dumps({
+                'data': {
+                    'instruction_set_id': 'instructions-1',
+                    'instructions': [],
+                    'meta': {'representation': 'markdown'},
+                },
+            }), encoding='utf-8')
+            return {'artifact_path': str(path)}
+
+    monkeypatch.setattr(writer, 'WriterPlanningTools', FakePlanningTools)
+    monkeypatch.setattr(writer, 'AutoModel', lambda **_kwargs: object())
+
+    result = json.loads(writer.WriterCreateToolkit().generate_section_instructions(
+        writing_task_json=json.dumps({
+            'task_id': 'task-1',
+            'query': '请扩写这个大纲，不要图片',
+            'task_type': 'write',
+        }),
+        outline_json='# 标题\n\n## 第一章\n',
+        writing_context_json=json.dumps({'context_id': 'context-1'}),
+    ))
+
+    assert calls == []
+    assert result['visual_plan']['instructions'] == []
+
+
+def test_markdown_rewrite_no_image_request_skips_visual_planning(monkeypatch, tmp_path):
+    from lazymind.chat.engine.tools import writer
+
+    calls = []
+
+    class FakePlanningTools:
+        def __init__(self, **_kwargs):
+            pass
+
+        def generate_rewrite_section_instructions(self, **_kwargs):
+            path = tmp_path / 'rewrite_section_instructions.json'
+            path.write_text(json.dumps({
+                'data': {
+                    'instruction_set_id': 'instructions-1',
+                    'instructions': [],
+                    'meta': {
+                        'representation': 'markdown',
+                        'document_title': 'Rewritten title',
+                    },
+                },
+            }), encoding='utf-8')
+            return {'artifact_path': str(path)}
+
+        def generate_visual_plan(self, **_kwargs):
+            calls.append('generate_visual_plan')
+            raise AssertionError('explicit no-image request must skip visual planning')
+
+    monkeypatch.setattr(writer, 'WriterPlanningTools', FakePlanningTools)
+    monkeypatch.setattr(writer, 'AutoModel', lambda **_kwargs: object())
+
+    result = json.loads(writer.WriterCreateToolkit().generate_rewrite_section_instructions(
+        writing_task_json=json.dumps({
+            'task_id': 'task-1',
+            'query': '请重写全文，不要图片',
+            'task_type': 'write',
+        }),
+        source_document_json='# 原文\n\n正文。\n',
+        writing_context_json=json.dumps({'context_id': 'context-1'}),
+    ))
+
+    assert calls == []
+    assert result['visual_plan']['instructions'] == []
+    assert result['document_title'] == 'Rewritten title'
+
+
 def test_selection_rewrite_uses_slot_markdown_artifact_filename(monkeypatch, tmp_path):
     tools = _load_tools_module()
 
