@@ -912,6 +912,9 @@ def writer_generate_draft_document(
 
 def _fill_markdown_media_placeholders(markdown: str, resolved_media_assets: Any) -> str:
     """Replace resolved Markdown media placeholders with stable asset references."""
+    wiki_placeholder_pattern = re.compile(
+        r'!\[\[([^\]]*)\]\]\(media-placeholder://([A-Za-z0-9_-]+)\)'
+    )
     placeholder_pattern = re.compile(
         r'!\[([^\]]*)\]\(media-placeholder://([A-Za-z0-9_-]+)\)'
     )
@@ -929,7 +932,16 @@ def _fill_markdown_media_placeholders(markdown: str, resolved_media_assets: Any)
         dropped.append(need_id)
         return ''
 
-    filled = placeholder_pattern.sub(replace_image, markdown or '')
+    normalized = wiki_placeholder_pattern.sub(
+        lambda match: f'![{match.group(1)}](media-placeholder://{match.group(2)})',
+        markdown or '',
+    )
+    filled = placeholder_pattern.sub(replace_image, normalized)
+    filled = re.sub(
+        r'\(media-placeholder://([A-Za-z0-9_-]+)\)',
+        lambda match: (dropped.append(match.group(1)), '')[1],
+        filled,
+    )
     if dropped:
         LOG.warning(
             '[Writer] Markdown media fill dropped %d unresolved placeholder(s): %s',

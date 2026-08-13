@@ -99,6 +99,8 @@ def test_markdown_media_fill_replaces_resolved_and_drops_unresolved():
             '',
             '![Resolved](media-placeholder://need-1)',
             '![Unresolved](media-placeholder://need-2)',
+            '![[Legacy]](media-placeholder://need-1)',
+            '(media-placeholder://need-3)',
         ]),
         {
             'assets': {
@@ -109,6 +111,7 @@ def test_markdown_media_fill_replaces_resolved_and_drops_unresolved():
     )
 
     assert '![Resolved](media-asset://asset-1|/var/lib/lazymind/uploads/images/generated-1.png)' in filled
+    assert '![Legacy](media-asset://asset-1|/var/lib/lazymind/uploads/images/generated-1.png)' in filled
     assert 'Unresolved' not in filled
     assert 'media-placeholder://' not in filled
 
