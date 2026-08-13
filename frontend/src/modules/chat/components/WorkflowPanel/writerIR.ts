@@ -41,6 +41,42 @@ export interface WriterDocument {
   [key: string]: unknown;
 }
 
+export type WriterHeadingLevel = 1 | 2 | 3 | 4 | 5 | 6;
+
+export interface WriterOutlineItem {
+  nodeId: string;
+  title: string;
+  level: WriterHeadingLevel;
+}
+
+export function writerHeadingLevel(block: WriterBlock): WriterHeadingLevel {
+  const raw = Number(block.numbering?.level ?? 2);
+  if (!Number.isFinite(raw)) return 2;
+  return Math.min(6, Math.max(1, Math.trunc(raw))) as WriterHeadingLevel;
+}
+
+/** Collects headings in document order for the client-side table of contents. */
+export function collectWriterOutline(blocks: WriterBlock[]): WriterOutlineItem[] {
+  const items: WriterOutlineItem[] = [];
+
+  const visit = (current: WriterBlock[]) => {
+    current.forEach((block) => {
+      const title = block.content?.trim() ?? '';
+      if (block.type === 'heading' && title) {
+        items.push({
+          nodeId: block.node_id,
+          title,
+          level: writerHeadingLevel(block),
+        });
+      }
+      if (block.children?.length) visit(block.children);
+    });
+  };
+
+  visit(blocks);
+  return items;
+}
+
 interface WriterMediaAsset {
   media_asset_id?: unknown;
   source_type?: unknown;

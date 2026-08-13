@@ -1465,6 +1465,17 @@ const enUS = {
     streamCloseFailedLog: "Failed to close message stream",
     writerIR: {
       documentRegion: "Structured document",
+      displaySettings: "Document display settings",
+      outline: "Table of contents",
+      expandOutline: "Expand table of contents",
+      collapseOutline: "Collapse table of contents",
+      noHeadings: "No headings in this document",
+      jumpToHeading: "Jump to heading: {{title}}",
+      pageWidth: "Page width",
+      pageWidths: {
+        default: "Default",
+        wide: "Wide",
+      },
       stage: "Stage: {{stage}}",
       stages: {
         outline: "Outline",
