@@ -351,10 +351,10 @@ steps:
 
          1. Call writer_build_revision_task with the current user instruction and
             base_document_path.
-         2. Call writer_locate_revision_target and writer_generate_modify_plan. For an IR
+         2. Call writer_locate_revision_target and writer_generate_modify_plan. For a
             ModifyPlan containing visual_instruction, call writer_resolve_revision_media
             with modify_plan and media_assets and save resolved_media_assets. This resolver
-            is strict: a required image failure stops the revision. Do not resolve media
+            is strict: a required visual failure stops the revision. Do not resolve media
             for delete-only or pure-text revisions.
          3. Call writer_generate_revision_set and writer_apply_revision using the same base
             document and latest context. Pass resolved_media_assets as media_assets_path

@@ -585,7 +585,7 @@ def _acquire_generated_image(
     generator: Callable[..., dict] | None = None,
 ) -> dict:
     visual_type = str(request.get('visual_type') or '')
-    if visual_type not in {'image', 'diagram'}:
+    if visual_type not in {'image', 'diagram', 'chart', 'table'}:
         raise ValueError(
             f'image generation does not support visual type {visual_type!r}',
         )
@@ -798,7 +798,6 @@ def writer_resolve_revision_media(
         visual_plan_path=visual_plan_path,
         media_assets_path=media_assets_path,
         strict_required=True,
-        allowed_strategies_json=json.dumps(['image_generation']),
     )
 
 

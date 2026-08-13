@@ -37,6 +37,7 @@ from lazyllm.tools.writer.tools import (
     WriterResourceTools,
     WriterRevisionTools,
 )
+from lazyllm.tools.writer.data_models.multimodal import _VISUAL_STRATEGY_ORDER
 from lazyllm.tools.writer.utils import render_document_markdown, save_artifact_json
 
 WRITER_DATA_MODEL_SCHEMA_PREFIX = 'lazyllm.tools.writer.data_models'
@@ -1369,8 +1370,8 @@ class WriterToolkitBase:
                 continue
             if instruction.modify_type != 'create':
                 raise ValueError('visual_instruction is only valid for create instructions.')
-            if visual.visual_type != 'image':
-                raise ValueError('revision visual_instruction.visual_type must be "image".')
+            if visual.visual_type not in _VISUAL_STRATEGY_ORDER:
+                raise ValueError('revision visual_instruction has an unsupported visual_type.')
             if visual.need_id != instruction.instruction_id:
                 raise ValueError('visual_instruction.need_id must equal instruction_id.')
             if visual.content_ref != instruction.content_ref:
@@ -1378,7 +1379,12 @@ class WriterToolkitBase:
                     'visual_instruction.content_ref must equal content_ref.'
                 )
             if not visual.purpose.strip() or not visual.required:
-                raise ValueError('revision image visual_instruction must be required and non-empty.')
+                raise ValueError('revision visual_instruction must be required and non-empty.')
+            if visual.preferred_strategy is not None \
+                    and visual.preferred_strategy not in _VISUAL_STRATEGY_ORDER[visual.visual_type]:
+                raise ValueError(
+                    'revision visual preferred_strategy is not supported by visual_type.',
+                )
             instructions.append(visual)
         return _json_dumps(VisualPlan(instructions=instructions).model_dump(exclude_defaults=True))
 
