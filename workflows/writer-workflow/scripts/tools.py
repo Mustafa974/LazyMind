@@ -1222,6 +1222,9 @@ def writer_generate_revision_set(
             markdown_document=document,
             modify_plan_json=_read_json_string(modify_plan_path),
             writing_context_json=_read_json_string(writing_context_path),
+            media_assets_json=(
+                _read_json_string(media_assets_path) if media_assets_path else ''
+            ),
         )
         schema_name = writer_schema('revision.StringReplaceSet')
     else:
@@ -1257,6 +1260,11 @@ def writer_apply_revision(
             string_replace_set_json=_read_json_string(revision_set_path),
             writing_context_json=_read_json_string(writing_context_path),
         ), {})
+        if media_assets_path:
+            payload['revised_document'] = _fill_markdown_media_placeholders(
+                payload.get('revised_document') or '',
+                _read_json_file(media_assets_path),
+            )
         result_schema = writer_schema('revision.StringReplaceResult')
     else:
         payload = _json_loads(toolkit.apply_revision(

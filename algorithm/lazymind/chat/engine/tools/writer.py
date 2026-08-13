@@ -1425,6 +1425,7 @@ class WriterToolkitBase:
         markdown_document: str,
         modify_plan_json: str,
         writing_context_json: str,
+        media_assets_json: str = '',
     ) -> str:
         """Generate Markdown string replacements from a modification plan."""
         root = _temp_root()
@@ -1437,12 +1438,21 @@ class WriterToolkitBase:
             root, 'writing_context.json', _json_loads(writing_context_json, {}),
             writer_schema('context.WritingContext'),
         )
+        media_assets_path = ''
+        if media_assets_json.strip():
+            media_assets_path = _write_input_artifact(
+                root,
+                'media_assets.json',
+                _json_loads(media_assets_json, {}),
+                writer_schema('multimodal.MediaAssetLibrary'),
+            )
         result = WriterRevisionTools(
             llm=AutoModel(model='llm'), artifact_store=str(root),
         ).generate_string_replace_set(
             document=document_path,
             modify_plan=plan_path,
             context=context_path,
+            media_assets=media_assets_path or None,
         )
         return _json_dumps(_primary_data(result))
 

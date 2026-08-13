@@ -113,6 +113,47 @@ def test_markdown_media_fill_replaces_resolved_and_drops_unresolved():
     assert 'media-placeholder://' not in filled
 
 
+def test_markdown_revision_fills_resolved_media_placeholder(monkeypatch, tmp_path):
+    tools = _load_tools_module()
+    context = SimpleNamespace(
+        workspace_path=str(tmp_path),
+        params={'step_id': 'write_document'},
+        emit=lambda _event: None,
+    )
+
+    class FakeWriterRevisionToolkit:
+        def apply_string_replace(self, **_kwargs) -> str:
+            return json.dumps({
+                'string_replace_result': {'replaced': 1},
+                'revised_document': '![Visual](media-placeholder://need-1)',
+            })
+
+    monkeypatch.setattr(tools, 'require_context', lambda: context)
+    monkeypatch.setattr(tools, 'WriterRevisionToolkit', FakeWriterRevisionToolkit)
+    base_document_path = tmp_path / 'draft.md'
+    base_document_path.write_text('# Original\n', encoding='utf-8')
+    writing_context_path = tmp_path / 'context.json'
+    writing_context_path.write_text('{}', encoding='utf-8')
+    revision_set_path = tmp_path / 'revisions.json'
+    revision_set_path.write_text('{}', encoding='utf-8')
+    media_assets_path = tmp_path / 'media_assets.json'
+    media_assets_path.write_text(json.dumps({
+        'assets': {'asset-1': {'uri': '/tmp/visual.png'}},
+        'visual_need_asset_ids': {'need-1': ['asset-1']},
+    }), encoding='utf-8')
+
+    result = tools.writer_apply_revision(
+        str(base_document_path),
+        str(writing_context_path),
+        str(revision_set_path),
+        str(media_assets_path),
+    )
+
+    assert Path(result['draft_document']).read_text(encoding='utf-8') == (
+        '![Visual](media-asset://asset-1|/tmp/visual.png)'
+    )
+
+
 def test_selection_rewrite_uses_slot_markdown_artifact_filename(monkeypatch, tmp_path):
     tools = _load_tools_module()
 
