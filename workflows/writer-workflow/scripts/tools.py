@@ -43,6 +43,13 @@ from lazymind.chat.engine.tools.writer import (
     sync_writer_documents,
     writer_schema,
 )
+from lazymind.chat.engine.tools.infra.image_generation_support import (
+    _download_remote_image_to_upload,
+)
+from lazymind.chat.engine.tools.infra.image_search_support import (
+    search_image_urls,
+    validate_image_ref,
+)
 
 WRITER_IMAGE_ACQUISITION_PROMPT = '''Create one professional visual for a long-form document.
 
@@ -613,6 +620,50 @@ def _acquire_generated_image(
     }
 
 
+def _acquire_web_search_image(request: Mapping[str, Any]) -> dict:
+    """Search, validate, and materialize the first usable public image candidate."""
+    query = str(request.get('purpose') or '').strip()
+    if not query:
+        raise ValueError('web_search requires a purpose to build the query')
+    for candidate in search_image_urls(query):
+        result = validate_image_ref(candidate)
+        fields = {
+            key.strip(): value.strip()
+            for line in result.splitlines()
+            if ':' in line
+            for key, value in [line.split(':', 1)]
+        }
+        if fields.get('status') != 'ok':
+            continue
+        image_url = fields.get('url') or candidate
+        try:
+            local_path = _download_remote_image_to_upload(
+                image_url,
+                source_type='web_search',
+            )
+        except Exception as exc:
+            LOG.warning(
+                'Writer web-search candidate download failed; trying next: %s (%s)',
+                image_url,
+                type(exc).__name__,
+            )
+            continue
+        return {
+            'resource_id': f"web-{request.get('instruction_id') or uuid.uuid4().hex}",
+            'resource_type': 'image',
+            'uri': local_path,
+            'title': image_url.rsplit('/', 1)[-1],
+            'summary': query,
+            'meta': {
+                'source_type': 'web_search',
+                'source_url': image_url,
+                'summary_source': 'web_search_purpose',
+                'semantic_status': 'unverified',
+            },
+        }
+    raise ValueError('web_search returned no usable image URL')
+
+
 def _acquire_visual_media(
     request: Mapping[str, Any],
     acquirers: Mapping[str, Callable[[Mapping[str, Any]], dict]],
@@ -621,13 +672,17 @@ def _acquire_visual_media(
     for strategy in strategies:
         acquirer = acquirers.get(strategy)
         if acquirer is None:
+            LOG.info('Writer visual strategy unavailable; falling back: %s', strategy)
             continue
-        resource = dict(acquirer(request))
-        resource['meta'] = {
-            **dict(resource.get('meta') or {}),
-            'requested_strategy': strategies[0],
-            'acquisition_strategy': strategy,
-        }
+        try:
+            resource = dict(acquirer(request))
+        except Exception as exc:
+            LOG.warning(
+                'Writer visual strategy failed; falling back: %s (%s)',
+                strategy,
+                type(exc).__name__,
+            )
+            continue
         return resource
     raise ValueError(
         f"no media acquirer is available for visual instruction {request.get('instruction_id')!r} "
@@ -647,6 +702,7 @@ def writer_resolve_visual_media(
     media_root.mkdir(parents=True, exist_ok=True)
     toolkit = WriterCreateToolkit()
     acquirers = {}
+    acquirers['web_search'] = _acquire_web_search_image
     if is_model_role_available('image_generator'):
         acquirers['image_generation'] = _acquire_generated_image
     visual_plan_json = _read_json_string(visual_plan_path)

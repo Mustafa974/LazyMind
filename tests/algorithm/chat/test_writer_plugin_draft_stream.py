@@ -154,6 +154,68 @@ def test_markdown_revision_fills_resolved_media_placeholder(monkeypatch, tmp_pat
     )
 
 
+def test_web_search_tries_next_downloadable_candidate(monkeypatch):
+    tools = _load_tools_module()
+    attempts: list[str] = []
+
+    monkeypatch.setattr(
+        tools,
+        'search_image_urls',
+        lambda _query: ['https://bad.example/a.png', 'https://good.example/b.png'],
+    )
+    monkeypatch.setattr(
+        tools,
+        'validate_image_ref',
+        lambda url: f'status: ok\nurl: {url}',
+    )
+
+    def download(url, *, source_type):
+        attempts.append(f'{source_type}:{url}')
+        if 'bad.example' in url:
+            raise OSError('download failed')
+        return '/var/lib/lazymind/uploads/images/web_search-good.png'
+
+    monkeypatch.setattr(tools, '_download_remote_image_to_upload', download)
+
+    resource = tools._acquire_web_search_image({
+        'instruction_id': 'need-1',
+        'purpose': 'observability trace illustration',
+    })
+
+    assert attempts == [
+        'web_search:https://bad.example/a.png',
+        'web_search:https://good.example/b.png',
+    ]
+    assert resource['uri'].endswith('web_search-good.png')
+    assert resource['meta']['source_type'] == 'web_search'
+    assert resource['meta']['source_url'] == 'https://good.example/b.png'
+
+
+def test_visual_media_falls_through_to_next_strategy():
+    tools = _load_tools_module()
+    attempted: list[str] = []
+
+    def unavailable(_request):
+        attempted.append('web_search')
+        raise RuntimeError('search unavailable')
+
+    def generated(_request):
+        attempted.append('image_generation')
+        return {'uri': '/tmp/generated.png'}
+
+    resource = tools._acquire_visual_media(
+        {
+            'instruction_id': 'need-1',
+            'visual_type': 'image',
+            'strategies': ['web_search', 'image_generation'],
+        },
+        {'web_search': unavailable, 'image_generation': generated},
+    )
+
+    assert attempted == ['web_search', 'image_generation']
+    assert resource == {'uri': '/tmp/generated.png'}
+
+
 def test_selection_rewrite_uses_slot_markdown_artifact_filename(monkeypatch, tmp_path):
     tools = _load_tools_module()
 
