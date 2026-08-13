@@ -20,8 +20,7 @@ from lazymind.chat.service.utils.static_file_url import (
 _DEFAULT_IMAGE_SIZE = '1024x1024'
 _DEFAULT_BATCH_SIZE = 1
 _IMAGE_SUFFIXES = ('.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp')
-_IMAGE_UPLOAD_SUBDIR = 'images'
-_REMOTE_IMAGE_SOURCE_TYPES = {'web_search', 'external'}
+_UPLOAD_SUBDIR = 'ai_generated'
 _REMOTE_IMAGE_UA = 'Mozilla/5.0 (compatible; LazyMind/1.0; image-download)'
 
 
@@ -58,11 +57,11 @@ def _parse_generated_files(result: Any) -> List[str]:
 
 
 def _relocate_generated_image_to_upload(source_path: str) -> str:
-    dest_dir = Path(_upload_root()).resolve() / _IMAGE_UPLOAD_SUBDIR
+    dest_dir = Path(_upload_root()).resolve() / _UPLOAD_SUBDIR
     dest_dir.mkdir(parents=True, exist_ok=True)
     src = Path(source_path)
     suffix = src.suffix if src.suffix.lower() in _IMAGE_SUFFIXES else '.png'
-    dest = dest_dir / f'image_generation-{uuid.uuid4().hex}{suffix}'
+    dest = dest_dir / f'{uuid.uuid4().hex}{suffix}'
     shutil.move(str(src), str(dest))
     return str(dest)
 
@@ -89,8 +88,8 @@ def _register_generated_image_paths(local_paths: List[str]) -> None:
         register_image_url(citation_state, path)
 
 
-def _download_remote_image_to_upload(url: str, *, source_type: str = 'external') -> str:
-    """Download an external image into uploads with a source-specific filename.
+def _download_remote_image_to_upload(url: str) -> str:
+    """Download an external image into uploads so image_editor can read it locally.
 
     Wikimedia and some CDNs return 403 to bare server requests without User-Agent.
     Browsers and validate_image_ref succeed; lazyllm URL fetch does not unless we
@@ -99,8 +98,6 @@ def _download_remote_image_to_upload(url: str, *, source_type: str = 'external')
     raw = str(url or '').strip()
     if not raw.startswith(('http://', 'https://')):
         raise ValueError(f'not a remote image url: {raw!r}')
-    if source_type not in _REMOTE_IMAGE_SOURCE_TYPES:
-        raise ValueError(f'unsupported remote image source type: {source_type!r}')
     headers = {'User-Agent': _REMOTE_IMAGE_UA}
     resp = requests.get(
         raw,
@@ -113,7 +110,7 @@ def _download_remote_image_to_upload(url: str, *, source_type: str = 'external')
     content_type = str(resp.headers.get('Content-Type') or '').lower()
     if content_type and not content_type.startswith('image/'):
         raise ValueError(f'remote url is not an image: content-type={content_type}')
-    dest_dir = Path(_upload_root()).resolve() / _IMAGE_UPLOAD_SUBDIR
+    dest_dir = Path(_upload_root()).resolve() / _UPLOAD_SUBDIR
     dest_dir.mkdir(parents=True, exist_ok=True)
     suffix = '.jpg'
     if 'png' in content_type:
@@ -122,7 +119,7 @@ def _download_remote_image_to_upload(url: str, *, source_type: str = 'external')
         suffix = '.webp'
     elif 'gif' in content_type:
         suffix = '.gif'
-    dest = dest_dir / f'{source_type}-{uuid.uuid4().hex}{suffix}'
+    dest = dest_dir / f'{uuid.uuid4().hex}{suffix}'
     with open(dest, 'wb') as fh:
         for chunk in resp.iter_content(1024 * 64):
             if chunk:
