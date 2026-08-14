@@ -35,6 +35,7 @@ import i18n from '@/i18n';
 import { useTranslation } from 'react-i18next';
 import { localizeErrorCode } from '@/components/request';
 import type { TaskArtifactStream } from '@/modules/chat/store/taskCenter';
+import { useArtifactStreamContent } from './useArtifactStreamContent';
 
 export { SlotEditingContext } from './slotEditingContext';
 export type { SlotEditingContextValue } from './slotEditingContext';
@@ -3063,7 +3064,12 @@ interface SlotMarkdownFileProps {
 
 /** Displays the temporary Markdown emitted by a Writer Task SSE stream. */
 export function SlotMarkdownStream({ stream }: { stream: TaskArtifactStream }) {
-  const content = stream.final_content ?? stream.content;
+  const streamedContent = useArtifactStreamContent(
+    stream.stream_id,
+    stream.deltas,
+    stream.content,
+  );
+  const content = stream.final_content ?? streamedContent;
   const isAborted = stream.state === 'aborted';
   const showError = isAborted && !content;
   const bodyRef = useRef<HTMLDivElement>(null);
