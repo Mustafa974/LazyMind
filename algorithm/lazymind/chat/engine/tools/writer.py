@@ -51,10 +51,33 @@ _FEISHU_URL_RE = re.compile(
     r"[^\s<>\"'，。；！？、（）【】《》「」『』]+",
     re.IGNORECASE,
 )
+_CHINESE_CHAR_LIMIT_RE = re.compile(
+    r'(?P<prefix>不超过|至多|最多|约|大约|大概)?\s*'
+    r'(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>万|千)?\s*字'
+    r'(?P<suffix>左右|上下|以内|以下)?'
+)
+
+
+def _extract_length_constraints(query: str) -> dict[str, int]:
+    match = _CHINESE_CHAR_LIMIT_RE.search(query)
+    if match is None:
+        return {}
+    multiplier = {'万': 10000, '千': 1000}.get(match.group('unit'), 1)
+    target_chars = int(float(match.group('value')) * multiplier)
+    approximate = (
+        match.group('prefix') in {'约', '大约', '大概'}
+        or match.group('suffix') in {'左右', '上下'}
+    )
+    return {
+        'target_chars': target_chars,
+        'max_chars': target_chars * 11 // 10 if approximate else target_chars,
+    }
 
 
 class DraftMarkdownStreamEventEmitter:
     """Publish one attempt-scoped Markdown preview for a Writer artifact."""
+
+    MAX_DELTA_CHARS: ClassVar[int] = 2
 
     EVENT_TYPES: ClassVar[dict[str, str]] = {
         'start': 'artifact_stream_start',
@@ -90,7 +113,15 @@ class DraftMarkdownStreamEventEmitter:
         with self._lock:
             if self._closed:
                 return
-            self._publish_locked('delta', delta=delta)
+            # Model providers and the IR/Markdown normalizers may deliver a
+            # whole sentence or paragraph in one callback. Keep the artifact
+            # stream's display contract stable by publishing small deltas while
+            # preserving the exact text and order.
+            for start in range(0, len(delta), self.MAX_DELTA_CHARS):
+                self._publish_locked(
+                    'delta',
+                    delta=delta[start:start + self.MAX_DELTA_CHARS],
+                )
 
     def end(self) -> None:
         self._finish('end')
@@ -364,7 +395,12 @@ class WriterToolkitBase:
 
     def build_writing_task(self, query: str, task_id: str = '') -> str:
         """Build a writing task from the user's original request."""
-        task = WritingTask(task_id=task_id.strip() or None, query=query, task_type='write')
+        task = WritingTask(
+            task_id=task_id.strip() or None,
+            query=query,
+            task_type='write',
+            constraints=_extract_length_constraints(query),
+        )
         return _json_dumps(task.model_dump(exclude_defaults=True))
 
     def build_resources(
@@ -421,6 +457,7 @@ class WriterToolkitBase:
         input_resources_json: str = '[]',
         media_store: str = '',
         use_vision_model: bool = False,
+        source_document_json: str = '',
     ) -> str:
         """Collect available images through LazyLLM's multimodal writer tools."""
         root = _temp_root()
@@ -436,12 +473,20 @@ class WriterToolkitBase:
             _json_loads(input_resources_json, []),
             writer_schema('task.InputResource'),
         )
+        source_document_path = (
+            _write_document_input(root, 'source_document', source_document_json)
+            if source_document_json else None
+        )
         artifact_store = Path(media_store.strip()) if media_store.strip() else root
         artifact_store.mkdir(parents=True, exist_ok=True)
         result = WriterMultimodalTools(
             llm=AutoModel(model='vlm') if use_vision_model else None,
             artifact_store=str(artifact_store),
-        ).collect_available_media(task=task_path, input_resources=resources_path)
+        ).collect_available_media(
+            task=task_path,
+            input_resources=resources_path,
+            source_document=source_document_path,
+        )
         return _json_dumps({
             'media_assets': _result_data(result, 'media_assets'),
             'profile_input_resources': _result_data(result, 'profile_input_resources'),
@@ -855,6 +900,7 @@ class WriterToolkitBase:
             outline=outline_path,
             context=context_path,
             visual_plan=visual_plan_path,
+            task=task_path,
         )
         return _json_dumps({
             'section_instructions': _primary_data(result),
@@ -1028,6 +1074,35 @@ class WriterToolkitBase:
         if not isinstance(instructions, list):
             raise TypeError('section_instructions_json must contain instructions.')
 
+        def forward_delta(delta: str) -> None:
+            try:
+                on_delta(delta)
+            except Exception as exc:  # noqa: BLE001 - preview forwarding is best effort.
+                LOG.warning(
+                    '[Writer] Draft %s delta callback failed: %s',
+                    representation, exc,
+                )
+
+        instruction_list_meta = instructions_data.get('meta')
+        if not isinstance(instruction_list_meta, dict):
+            instruction_list_meta = {}
+        first_instruction = instructions[0] if instructions and isinstance(instructions[0], dict) else {}
+        first_instruction_meta = first_instruction.get('meta')
+        if not isinstance(first_instruction_meta, dict):
+            first_instruction_meta = {}
+        document_title = ''
+        for candidate in (
+            instruction_list_meta.get('document_title'),
+            instruction_list_meta.get('outline_title'),
+            first_instruction_meta.get('document_title'),
+            first_instruction_meta.get('outline_title'),
+        ):
+            document_title = str(candidate or '').strip()
+            if document_title:
+                break
+        if document_title:
+            forward_delta(f'# {document_title}\n\n')
+
         root = _temp_root()
         task_path = _write_input_artifact(
             root, 'writing_task.json', _json_loads(writing_task_json, {}),
@@ -1079,13 +1154,7 @@ class WriterToolkitBase:
                 **stream_kwargs,
             ) as stream:
                 for delta in stream:
-                    try:
-                        on_delta(delta)
-                    except Exception as exc:  # noqa: BLE001 - preview forwarding is best effort.
-                        LOG.warning(
-                            '[Writer] Draft %s delta callback failed: %s',
-                            representation, exc,
-                        )
+                    forward_delta(delta)
                 result = stream.result()
             section = _primary_data(result)
             if representation == 'markdown' and not isinstance(section, str):
