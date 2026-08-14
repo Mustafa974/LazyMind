@@ -514,6 +514,7 @@ func init() {
 		"pin legacy workflow session revision", "resolve conversation plugin binding failed",
 		"decode conversation ext",
 		"decode sync_document action response", "artifact sync state save failed",
+		"invalid render response",
 		"task unavailable",
 	} {
 		registerAdditionalErrorAlias(source, "Internal server error", http.StatusInternalServerError, 2000000)
@@ -523,6 +524,7 @@ func init() {
 		"sensitive-word check failed",
 		"workflow artifact action failed",
 		"writer document write-back failed",
+		"render writer document failed",
 	} {
 		registerAdditionalErrorAlias(source, "Upstream service error", http.StatusBadGateway, 2000110)
 	}

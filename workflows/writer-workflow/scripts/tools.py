@@ -24,12 +24,20 @@ from lazyllm.tools.writer.data_models import (
     TargetDocument,
     WriterDocument,
 )
+from lazyllm.tools.writer.numbering import (
+    build_numbering_view_from_ir,
+    build_numbering_view_from_markdown,
+    compute_numbering,
+    dematerialize_markdown,
+    dematerialize_ir,
+    materialize_ir,
+    materialize_markdown,
+)
 from lazyllm.tools.writer.tools import WriterResourceTools, WriterRevisionTools
 from lazyllm.tools.writer.tools.revision_tools import apply_patch_to_ir
 from lazyllm.tools.writer.utils import (
     load_artifact_json,
     parse_document_markdown,
-    render_document_markdown,
     save_artifact_json,
 )
 from lazymind.chat.engine.subagent.context import require_context
@@ -217,11 +225,22 @@ def _emit_draft_markdown_preview(document_path: str) -> None:
     """Publish a saved writer document through the draft Markdown stream."""
     try:
         document = _read_json_file(document_path)
-        markdown = (
-            document
-            if isinstance(document, str)
-            else render_document_markdown(WriterDocument.model_validate(document))
-        )
+        rendered = writer_render_document(document)
+        representation = rendered.get('representation')
+        if representation == 'markdown':
+            markdown = str(rendered.get('document') or '')
+        elif representation == 'ir':
+            preview = _json_loads(
+                WriterCreateToolkit().render_markdown(
+                    writer_document_json=json.dumps(
+                        rendered.get('document') or {}, ensure_ascii=False,
+                    ),
+                ),
+                {},
+            )
+            markdown = str(preview.get('markdown') or '')
+        else:
+            markdown = ''
     except Exception:
         return
     if not markdown:
@@ -884,6 +903,61 @@ def writer_export_markdown(content_path: str) -> str:
     )
     output_path.write_text(str(payload.get('markdown') or ''), encoding='utf-8')
     return str(output_path)
+
+
+def writer_render_document(artifact: Any) -> dict:
+    """Render a Writer IR or Markdown artifact with automatic numbering."""
+    document = _action_artifact_data(artifact)
+    if isinstance(document, str):
+        title_match = re.search(r'^#\s+(.+)$', document, re.MULTILINE)
+        return {
+            'title': title_match.group(1).strip() if title_match else '',
+            'representation': 'markdown',
+            'document': materialize_markdown(document),
+        }
+    source = WriterDocument.model_validate(document)
+    numbering = compute_numbering(build_numbering_view_from_ir(source))
+    materialized = materialize_ir(source, numbering)
+    return {
+        'title': source.title,
+        'representation': 'ir',
+        'document': materialized.model_dump(exclude_defaults=True),
+    }
+
+
+def writer_save_document(artifact: Any, base_artifact: Any) -> dict:
+    """Normalize a submitted IR edit back to clean source and re-materialize it."""
+    current_value = _action_artifact_data(artifact)
+    if isinstance(current_value, str):
+        base_value = _action_artifact_data(base_artifact)
+        base_numbering = (
+            compute_numbering(build_numbering_view_from_markdown(base_value))
+            if isinstance(base_value, str)
+            else {}
+        )
+        clean = dematerialize_markdown(current_value, base_numbering)
+        rendered = _json_loads(
+            WriterCreateToolkit().render_markdown(writer_document_json=clean),
+            {},
+        )
+        return {
+            'source_document': clean,
+            'title': rendered.get('title') or '',
+            'representation': 'markdown',
+            'document': rendered.get('markdown') or '',
+        }
+    current = WriterDocument.model_validate(current_value)
+    base = WriterDocument.model_validate(_action_artifact_data(base_artifact))
+    base_numbering = compute_numbering(build_numbering_view_from_ir(base))
+    clean = dematerialize_ir(current, base_numbering)
+    numbering = compute_numbering(build_numbering_view_from_ir(clean))
+    materialized = materialize_ir(clean, numbering)
+    return {
+        'source_document': clean.model_dump(exclude_defaults=True),
+        'title': clean.title,
+        'representation': 'ir',
+        'document': materialized.model_dump(exclude_defaults=True),
+    }
 
 
 def writer_build_revision_task(query: str, base_document_path: str) -> str:
