@@ -233,7 +233,7 @@ def _emit_draft_markdown_preview(document_path: str) -> None:
             preview = _json_loads(
                 WriterCreateToolkit().render_markdown(
                     writer_document_json=json.dumps(
-                        rendered.get('document') or {}, ensure_ascii=False,
+                        document, ensure_ascii=False,
                     ),
                 ),
                 {},
