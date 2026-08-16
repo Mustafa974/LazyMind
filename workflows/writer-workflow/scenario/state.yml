@@ -273,7 +273,7 @@ steps:
             - Markdown outline: when visual_plan contains needs, call
               writer_resolve_visual_media using visual_plan and media_assets and save
               resolved_media_assets. Then call writer_generate_draft_blocks_markdown,
-              passing visual_plan and resolved_media_assets when they exist, followed by
+              passing visual_plan when it exists, followed by
               writer_generate_draft_document_markdown with resolved_media_assets when it exists.
             - IR outline: call writer_resolve_visual_media using visual_plan and
               media_assets, save resolved_media_assets, then call
@@ -314,8 +314,8 @@ steps:
          3. Route from rewrite_base_document's file format without changing representation:
             - Markdown: when visual_plan contains needs, call writer_resolve_visual_media
               using visual_plan and media_assets and save resolved_media_assets. Call
-              writer_generate_draft_blocks_markdown with visual_plan and resolved_media_assets
-              when they exist, then writer_generate_draft_document_markdown with document_title
+              writer_generate_draft_blocks_markdown with visual_plan when it exists, then
+              writer_generate_draft_document_markdown with document_title
               and resolved_media_assets when it exists.
             - IR: call writer_resolve_visual_media using visual_plan and media_assets, save
               resolved_media_assets, call writer_generate_draft_blocks with visual_plan and

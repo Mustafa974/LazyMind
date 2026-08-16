@@ -1051,7 +1051,6 @@ class WriterToolkitBase:
         section_instructions_json: str,
         writing_context_json: str,
         visual_plan_json: str = '',
-        media_assets_json: str = '',
     ) -> str:
         """Generate every planned draft section in Markdown, in order."""
         return self.generate_draft_blocks(
@@ -1059,7 +1058,6 @@ class WriterToolkitBase:
             section_instructions_json=section_instructions_json,
             writing_context_json=writing_context_json,
             visual_plan_json=visual_plan_json,
-            media_assets_json=media_assets_json,
         )
 
     def stream_draft_blocks_markdown(
@@ -1070,7 +1068,6 @@ class WriterToolkitBase:
         on_delta: Callable[[str], None],
         on_section_end: Callable[[], None] | None = None,
         visual_plan_json: str = '',
-        media_assets_json: str = '',
     ) -> str:
         """Generate Markdown sections through LazyLLM's non-tool streaming API."""
         return self._stream_draft_blocks(
@@ -1081,7 +1078,6 @@ class WriterToolkitBase:
             on_delta=on_delta,
             on_section_end=on_section_end,
             visual_plan_json=visual_plan_json,
-            media_assets_json=media_assets_json,
         )
 
     def stream_draft_blocks_ir(

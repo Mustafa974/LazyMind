@@ -790,7 +790,6 @@ def writer_generate_draft_blocks_markdown(
     section_instructions_path: str,
     writing_context_path: str,
     visual_plan_path: str = '',
-    media_assets_path: str = '',
 ) -> list[str]:
     """Generate and persist all planned draft sections as Markdown."""
     events = DraftMarkdownStreamEventEmitter(require_context().emit)
@@ -801,9 +800,6 @@ def writer_generate_draft_blocks_markdown(
             writing_context_json=_read_json_string(writing_context_path),
             visual_plan_json=(
                 _read_json_string(visual_plan_path) if visual_plan_path else ''
-            ),
-            media_assets_json=(
-                _read_json_string(media_assets_path) if media_assets_path else ''
             ),
             on_delta=events.feed,
             on_section_end=events.flush,

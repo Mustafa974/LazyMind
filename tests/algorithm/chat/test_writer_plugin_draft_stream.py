@@ -90,6 +90,43 @@ def test_write_document_revision_emits_markdown_draft_stream(monkeypatch, tmp_pa
     )
 
 
+def test_markdown_draft_blocks_do_not_pass_resolved_media(monkeypatch, tmp_path):
+    tools = _load_tools_module()
+    context = SimpleNamespace(
+        workspace_path=str(tmp_path),
+        params={'step_id': 'write_document'},
+        emit=lambda _event: None,
+    )
+    captured = {}
+
+    class FakeWriterCreateToolkit:
+        def stream_draft_blocks_markdown(self, **kwargs):
+            captured.update(kwargs)
+            return json.dumps(['## 第一章\n\n正文。\n'])
+
+    monkeypatch.setattr(tools, 'require_context', lambda: context)
+    monkeypatch.setattr(tools, 'WriterCreateToolkit', FakeWriterCreateToolkit)
+    writing_task_path = tmp_path / 'writing_task.json'
+    writing_task_path.write_text('{}', encoding='utf-8')
+    section_instructions_path = tmp_path / 'section_instructions.json'
+    section_instructions_path.write_text('{}', encoding='utf-8')
+    writing_context_path = tmp_path / 'writing_context.json'
+    writing_context_path.write_text('{}', encoding='utf-8')
+    visual_plan_path = tmp_path / 'visual_plan.json'
+    visual_plan_path.write_text('{"instructions": []}', encoding='utf-8')
+
+    paths = tools.writer_generate_draft_blocks_markdown(
+        str(writing_task_path),
+        str(section_instructions_path),
+        str(writing_context_path),
+        str(visual_plan_path),
+    )
+
+    assert 'media_assets_json' not in captured
+    assert captured['visual_plan_json'] == '{"instructions": []}'
+    assert Path(paths[0]).read_text(encoding='utf-8') == '## 第一章\n\n正文。\n'
+
+
 def test_markdown_media_fill_replaces_resolved_and_drops_unresolved():
     tools = _load_tools_module()
 
