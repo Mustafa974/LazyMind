@@ -104,16 +104,25 @@ def test_markdown_media_fill_replaces_resolved_and_drops_unresolved():
         ]),
         {
             'assets': {
-                'asset-1': {'uri': '/var/lib/lazymind/uploads/images/generated-1.png'},
+                'asset-1': {
+                    'uri': 'https://example.com/generated-1.png',
+                    'local_path': '/data/subagent/assets/generated-1.png',
+                },
+                'asset-2': {'uri': 'https://example.com/unmaterialized.png'},
             },
-            'visual_need_asset_ids': {'need-1': ['asset-1']},
+            'visual_need_asset_ids': {
+                'need-1': ['asset-1'],
+                'need-2': ['asset-2'],
+            },
         },
     )
 
-    assert '![Resolved](media-asset://asset-1|/var/lib/lazymind/uploads/images/generated-1.png)' in filled
-    assert '![Legacy](media-asset://asset-1|/var/lib/lazymind/uploads/images/generated-1.png)' in filled
+    assert '![Resolved](/data/subagent/assets/generated-1.png)' in filled
+    assert '![Legacy](/data/subagent/assets/generated-1.png)' in filled
     assert 'Unresolved' not in filled
+    assert 'unmaterialized.png' not in filled
     assert 'media-placeholder://' not in filled
+    assert 'media-asset://' not in filled
 
 
 def test_markdown_revision_fills_resolved_media_placeholder(monkeypatch, tmp_path):
@@ -141,7 +150,7 @@ def test_markdown_revision_fills_resolved_media_placeholder(monkeypatch, tmp_pat
     revision_set_path.write_text('{}', encoding='utf-8')
     media_assets_path = tmp_path / 'media_assets.json'
     media_assets_path.write_text(json.dumps({
-        'assets': {'asset-1': {'uri': '/tmp/visual.png'}},
+        'assets': {'asset-1': {'local_path': '/data/subagent/assets/visual.png'}},
         'visual_need_asset_ids': {'need-1': ['asset-1']},
     }), encoding='utf-8')
 
@@ -153,7 +162,7 @@ def test_markdown_revision_fills_resolved_media_placeholder(monkeypatch, tmp_pat
     )
 
     assert Path(result['draft_document']).read_text(encoding='utf-8') == (
-        '![Visual](media-asset://asset-1|/tmp/visual.png)'
+        '![Visual](/data/subagent/assets/visual.png)'
     )
 
 
