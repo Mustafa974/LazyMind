@@ -1235,9 +1235,6 @@ def writer_generate_revision_set(
             markdown_document=document,
             modify_plan_json=_read_json_string(modify_plan_path),
             writing_context_json=_read_json_string(writing_context_path),
-            media_assets_json=(
-                _read_json_string(media_assets_path) if media_assets_path else ''
-            ),
         )
         schema_name = writer_schema('revision.StringReplaceSet')
     else:
