@@ -593,10 +593,6 @@ def _acquire_generated_image(
     generator: Callable[..., dict] | None = None,
 ) -> dict:
     visual_type = str(request.get('visual_type') or '')
-    if visual_type not in {'image', 'diagram'}:
-        raise ValueError(
-            f'image generation does not support visual type {visual_type!r}',
-        )
     prompt = WRITER_IMAGE_ACQUISITION_PROMPT.format(
         visual_type=visual_type,
         purpose=str(request.get('purpose') or ''),
@@ -656,7 +652,11 @@ def writer_resolve_visual_media(
     strict_required: bool = False,
     allowed_strategies_json: str = '',
 ) -> dict:
-    """Resolve visual needs and materialize missing media through registered acquirers."""
+    """Resolve visual needs and materialize missing media through registered acquirers.
+
+    allowed_strategies_json: optional JSON list restricting acquisition strategies
+    (image_generation is the only strategy currently registered).
+    """
     root = _run_root('resolve-media')
     media_root = root / 'media'
     media_root.mkdir(parents=True, exist_ok=True)
@@ -686,6 +686,10 @@ def writer_resolve_visual_media(
     acquired_resources = {}
     acquired_by_purpose = {}
     for request in matched.get('acquisition_requests') or []:
+        strategies = list(request.get('strategies') or [])
+        if not any(strategy in acquirers for strategy in strategies) \
+                and 'image_generation' in acquirers:
+            request = {**request, 'strategies': ['image_generation']}
         instruction_id = str(request['instruction_id'])
         key = (
             str(request.get('visual_type') or ''),
@@ -701,7 +705,8 @@ def writer_resolve_visual_media(
             if strict_required and request.get('required'):
                 raise RuntimeError(
                     f'Failed to acquire required visual media for {instruction_id!r}: '
-                    f'{request.get("purpose") or "current visual requirement"}'
+                    f'{request.get("purpose") or "current visual requirement"}: '
+                    f'{type(exc).__name__}: {exc}'
                 ) from exc
             message = (
                 f'Failed to acquire visual instruction {instruction_id!r}: '
@@ -726,6 +731,24 @@ def writer_resolve_visual_media(
             ],
         }
     warnings.extend(outcome.get('warnings') or [])
+    plan_value = _json_loads(visual_plan_json, {})
+    plan_data = plan_value.get('data', plan_value) if isinstance(plan_value, dict) else plan_value
+    resolved_library = outcome.get('media_assets') or {}
+    resolved_assets = resolved_library.get('assets') or {}
+    resolved_bindings = resolved_library.get('visual_need_asset_ids') or {}
+    unresolved_required = [
+        str(instruction.get('need_id'))
+        for instruction in (plan_data.get('instructions') or [])
+        if instruction.get('required', True) and not any(
+            asset_id in resolved_assets
+            and Path(str(resolved_assets[asset_id].get('local_path') or '')).is_file()
+            for asset_id in resolved_bindings.get(str(instruction.get('need_id')), [])
+        )
+    ]
+    if unresolved_required:
+        raise RuntimeError(
+            'Failed to resolve required visual media for: ' + ', '.join(unresolved_required)
+        )
     resolved_path = save_artifact_json(
         outcome.get('media_assets') or {},
         str(root / 'resolved_media_assets.json'),
@@ -839,10 +862,18 @@ def writer_generate_draft_document(
         Path(draft_blocks_anchor_path)
         if draft_blocks_anchor_path else _workspace_root() / 'draft_blocks'
     )
+    if not anchor.exists():
+        candidates = sorted(
+            (_workspace_root() / 'writer-workflow').glob('draft-blocks-*'),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        if candidates:
+            anchor = candidates[0]
     draft_blocks_dir = anchor if anchor.is_dir() else anchor.parent
     draft_block_paths = sorted(
         (str(path) for path in draft_blocks_dir.glob('draft_block_*.lmd')),
-        key=lambda path: int(Path(path).stem.rsplit('_', 1)[-1]),
+        key=lambda path: int(re.match(r'draft_block_(\d+)', Path(path).stem).group(1)),
     )
     if not draft_block_paths:
         raise ValueError(
@@ -872,10 +903,18 @@ def writer_generate_draft_document_markdown(
         Path(draft_sections_anchor_path)
         if draft_sections_anchor_path else _workspace_root() / 'draft_sections'
     )
+    if not anchor.exists():
+        candidates = sorted(
+            (_workspace_root() / 'writer-workflow').glob('draft-sections-*'),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        if candidates:
+            anchor = candidates[0]
     sections_dir = anchor if anchor.is_dir() else anchor.parent
     section_paths = sorted(
         sections_dir.glob('draft_section_*.md'),
-        key=lambda path: int(path.stem.rsplit('_', 1)[-1]),
+        key=lambda path: int(re.match(r'draft_section_(\d+)', path.stem).group(1)),
     )
     if not section_paths:
         raise ValueError(
