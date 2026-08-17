@@ -37,13 +37,11 @@ from lazyllm.tools.writer.tools import (
     WriterResourceTools,
     WriterRevisionTools,
 )
-from lazyllm.tools.writer.numbering import (
-    build_numbering_view_from_ir,
-    compute_numbering,
-    materialize_markdown,
-    materialize_ir,
+from lazyllm.tools.writer.numbering import materialize_markdown
+from lazyllm.tools.writer.utils import (
+    save_artifact_json,
+    writer_document_to_markdown,
 )
-from lazyllm.tools.writer.utils import render_document_markdown, save_artifact_json
 
 WRITER_DATA_MODEL_SCHEMA_PREFIX = 'lazyllm.tools.writer.data_models'
 _FEISHU_URL_RE = re.compile(
@@ -1344,10 +1342,9 @@ class WriterToolkitBase:
                 'markdown': materialize_markdown(value),
             })
         document = WriterDocument.model_validate(value)
-        numbering = compute_numbering(build_numbering_view_from_ir(document))
         return _json_dumps({
             'title': document.title,
-            'markdown': render_document_markdown(materialize_ir(document, numbering)),
+            'markdown': writer_document_to_markdown(document),
         })
 
     def locate_revision_target(
