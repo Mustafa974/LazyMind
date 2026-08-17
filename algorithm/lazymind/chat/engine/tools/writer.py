@@ -191,6 +191,25 @@ def _json_loads(value: str, default: Any = None) -> Any:
     return parsed
 
 
+def _bind_document_cross_reference_targets(instructions: list[Any]) -> None:
+    targets = list(dict.fromkeys(
+        str(target)
+        for instruction in instructions if isinstance(instruction, dict)
+        for target in [
+            (instruction.get('meta') or {}).get('outline_node_id'),
+            *[
+                item.get('target')
+                for item in (instruction.get('meta') or {}).get('cross_references') or []
+                if isinstance(item, dict)
+            ],
+        ]
+        if target
+    ))
+    for instruction in instructions:
+        if isinstance(instruction, dict):
+            instruction.setdefault('meta', {})['cross_reference_targets'] = targets
+
+
 def _read_artifact_data(path: str) -> Any:
     if Path(path).suffix.lower() in {'.md', '.markdown'}:
         return Path(path).read_text(encoding='utf-8')
@@ -1035,6 +1054,7 @@ class WriterToolkitBase:
         )
         if not isinstance(instructions, list):
             raise TypeError('section_instructions_json must contain instructions.')
+        _bind_document_cross_reference_targets(instructions)
 
         blocks: list[Any] = []
         for instruction in instructions:
@@ -1125,6 +1145,7 @@ class WriterToolkitBase:
         )
         if not isinstance(instructions, list):
             raise TypeError('section_instructions_json must contain instructions.')
+        _bind_document_cross_reference_targets(instructions)
 
         def forward_delta(delta: str) -> None:
             try:
