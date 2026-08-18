@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { isWriterSystemAnchorBlock } from './writerIR';
 import {
   applyWriterMarkdownInternalReference,
+  collectWriterMarkdownOutline,
   collectWriterMarkdownReferenceTargets,
   restoreWriterMarkdownInternalReferenceLabels,
   writerMarkdownForEditor,
@@ -51,6 +52,31 @@ describe('Writer Markdown system anchors', () => {
       { anchorId: 'block-sec-1', label: '1 系统设计' },
       { anchorId: 'block-sec-2', label: '1.1 接口设计' },
     ]);
+  });
+
+  it('collects the Markdown title and anchored heading levels for the table of contents', () => {
+    const source = [
+      '# 产品架构说明',
+      '',
+      '<a id="block-sec-1"></a>',
+      '## 1 系统设计',
+      '',
+      '<a id="block-sec-2" />',
+      '### 1.1 接口设计',
+      '',
+      '```markdown',
+      '<a id="block-fake" />',
+      '## 代码块内标题',
+      '```',
+    ].join('\n');
+
+    expect(collectWriterMarkdownOutline(source)).toEqual({
+      title: '产品架构说明',
+      items: [
+        { anchorId: 'block-sec-1', label: '1 系统设计', level: 2 },
+        { anchorId: 'block-sec-2', label: '1.1 接口设计', level: 3 },
+      ],
+    });
   });
 
   it('constructs an internal Markdown link from selected text and an anchor', () => {

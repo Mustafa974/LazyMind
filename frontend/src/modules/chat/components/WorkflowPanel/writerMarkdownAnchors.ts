@@ -6,6 +6,15 @@ export interface WriterMarkdownReferenceTarget {
   label: string;
 }
 
+export interface WriterMarkdownOutlineItem extends WriterMarkdownReferenceTarget {
+  level: number;
+}
+
+export interface WriterMarkdownOutline {
+  title?: string;
+  items: WriterMarkdownOutlineItem[];
+}
+
 /** MDXEditor preserves empty anchors as JSX, whose canonical form is self-closing. */
 export function writerMarkdownForEditor(markdown: string): string {
   return markdown.replace(
@@ -22,24 +31,66 @@ export function writerMarkdownForSave(markdown: string): string {
   );
 }
 
+/** Collect the document title plus anchored headings used by the Writer table of contents. */
+export function collectWriterMarkdownOutline(markdown: string): WriterMarkdownOutline {
+  const items: WriterMarkdownOutlineItem[] = [];
+  let title: string | undefined;
+  let pendingAnchorId: string | undefined;
+  let fenceCharacter = '';
+  let fenceLength = 0;
+
+  for (const line of markdown.split(/\r?\n/)) {
+    const fence = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    if (fence) {
+      const marker = fence[1];
+      if (!fenceCharacter) {
+        fenceCharacter = marker[0];
+        fenceLength = marker.length;
+      } else if (marker[0] === fenceCharacter && marker.length >= fenceLength) {
+        fenceCharacter = '';
+        fenceLength = 0;
+      }
+      pendingAnchorId = undefined;
+      continue;
+    }
+    if (fenceCharacter) continue;
+
+    const trimmed = line.trim();
+    const anchor = trimmed.match(
+      /^<a\s+id=(["'])(block-[^"']+)\1\s*(?:\/>|>\s*<\/a>)$/i,
+    );
+    if (anchor) {
+      pendingAnchorId = anchor[2];
+      continue;
+    }
+    if (!trimmed) continue;
+
+    const heading = trimmed.match(/^(#{1,6})[ \t]+(.+?)(?:[ \t]+#+[ \t]*)?$/);
+    if (heading) {
+      const label = heading[2].trim();
+      title ??= label;
+      if (pendingAnchorId) {
+        items.push({
+          anchorId: pendingAnchorId,
+          label,
+          level: heading[1].length,
+        });
+      }
+    }
+    pendingAnchorId = undefined;
+  }
+
+  return { title, items };
+}
+
 /** Collect system anchors and the first heading immediately following each anchor. */
 export function collectWriterMarkdownReferenceTargets(
   markdown: string,
 ): WriterMarkdownReferenceTarget[] {
-  const anchorPattern = /<a\s+id=(["'])(block-[^"']+)\1\s*(?:\/>|>\s*<\/a>)/gi;
-  return Array.from(markdown.matchAll(anchorPattern)).map((match) => {
-    const anchorId = match[2];
-    const trailing = markdown.slice((match.index ?? 0) + match[0].length);
-    const firstContentLine = trailing
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .find(Boolean);
-    const heading = firstContentLine?.match(/^#{1,6}\s+(.+?)\s*$/);
-    return {
-      anchorId,
-      label: heading?.[1]?.trim() || anchorId,
-    };
-  });
+  return collectWriterMarkdownOutline(markdown).items.map(({ anchorId, label }) => ({
+    anchorId,
+    label,
+  }));
 }
 
 export function writerMarkdownInternalReference(text: string, anchorId: string): string {
