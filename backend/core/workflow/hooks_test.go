@@ -24,7 +24,10 @@ func TestWorkflowStepParamsExposePinnedScriptTools(t *testing.T) {
 	params := WorkflowStepParams{
 		WorkflowID: "test-workflow", RevisionID: "revision-1", TreeHash: "tree-1",
 		LegacyTools: []string{"create_list_fixtures"},
-		Runtime:     graphengine.RuntimePolicy{PublisherOwnedSlots: []string{"report"}},
+		WorkflowParameters: map[string]any{
+			"structure_mode": "flat",
+		},
+		Runtime: graphengine.RuntimePolicy{PublisherOwnedSlots: []string{"report"}},
 	}
 	got := params.asMap()
 	if got["revision_id"] != "revision-1" || got["tree_hash"] != "tree-1" {
@@ -37,6 +40,10 @@ func TestWorkflowStepParamsExposePinnedScriptTools(t *testing.T) {
 	runtime, ok := got["workflow_runtime"].(graphengine.RuntimePolicy)
 	if !ok || len(runtime.PublisherOwnedSlots) != 1 || runtime.PublisherOwnedSlots[0] != "report" {
 		t.Fatalf("compiled runtime policy missing: %#v", got)
+	}
+	workflowParameters, ok := got["workflow_parameters"].(map[string]any)
+	if !ok || workflowParameters["structure_mode"] != "flat" {
+		t.Fatalf("workflow parameters missing: %#v", got)
 	}
 }
 
