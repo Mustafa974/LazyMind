@@ -14,7 +14,9 @@ import {
 import { useTranslation } from 'react-i18next';
 import {
   collectWriterOutline,
+  getWriterInternalReference,
   getWriterSpanStyles,
+  isWriterSystemAnchorBlock,
   normalizeWriterCodeLanguage,
   repairWriterCodeToolbarPollution,
   sameWriterDocument,
@@ -98,6 +100,10 @@ function renderMarkedText(text: string, styles: string[], key: string) {
   return <Fragment key={key}>{content}</Fragment>;
 }
 
+function writerBlockDomId(nodeId: string): string {
+  return `writer-block-${nodeId}`;
+}
+
 function SpanContent({ block }: { block: WriterBlock }) {
   const content = block.content ?? '';
   const spans = block.spans ?? [];
@@ -105,9 +111,20 @@ function SpanContent({ block }: { block: WriterBlock }) {
   if (spans.length === 0 || joined !== content) return <>{content}</>;
   return (
     <>
-      {spans.map((span: WriterSpan, index) => (
-        renderMarkedText(span.text, getWriterSpanStyles(span), `${block.node_id}-${index}`)
-      ))}
+      {spans.map((span: WriterSpan, index) => {
+        const key = `${block.node_id}-${index}`;
+        const content = renderMarkedText(span.text, getWriterSpanStyles(span), `${key}-text`);
+        const reference = getWriterInternalReference(span);
+        return reference ? (
+          <a
+            className='writer-ir__internal-ref'
+            href={`#${writerBlockDomId(reference.targetNodeId)}`}
+            key={key}
+          >
+            {content}
+          </a>
+        ) : <Fragment key={key}>{content}</Fragment>;
+      })}
     </>
   );
 }
@@ -160,6 +177,7 @@ function BlockShell({
 }: { block: WriterBlock; children?: ReactNode }) {
   return (
     <div
+      id={writerBlockDomId(block.node_id)}
       className='writer-ir__block'
       data-node-id={block.node_id}
       data-node-type={block.type}
@@ -187,6 +205,10 @@ function BlockSequence({ blocks }: { blocks: WriterBlock[] }) {
 
   for (let index = 0; index < blocks.length;) {
     const block = blocks[index];
+    if (isWriterSystemAnchorBlock(block)) {
+      index += 1;
+      continue;
+    }
     if (block.type === 'list_item') {
       const ordered = Boolean(block.numbering?.ordered);
       const group: WriterBlock[] = [];
@@ -776,6 +798,11 @@ export function WriterIRControl({
     setSaveError(undefined);
   }, []);
 
+  const handleCrossReferenceApplied = useCallback((nextDocument: WriterDocument) => {
+    handleDocumentChange(nextDocument);
+    requestDraftSave();
+  }, [handleDocumentChange, requestDraftSave]);
+
   const discardChanges = () => {
     const pending = pendingExternalDocumentRef.current;
     const nextDocument = pending?.document ?? baseDocument;
@@ -1027,6 +1054,7 @@ export function WriterIRControl({
             document={draft}
             ariaLabel={t('chat.writerIR.documentRegion')}
             onChange={handleDocumentChange}
+            onCrossReferenceApplied={handleCrossReferenceApplied}
             onFocus={beginTextEdit}
             onBlur={handleTextBlur}
             rewriteDialogOpen={rewriteDialogOpen}

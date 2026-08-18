@@ -8,6 +8,7 @@ import {
   frontmatterPlugin,
   headingsPlugin,
   imagePlugin,
+  jsxPlugin,
   linkDialogPlugin,
   linkPlugin,
   listsPlugin,
@@ -16,12 +17,16 @@ import {
   tablePlugin,
   thematicBreakPlugin,
   toolbarPlugin,
+  GenericJsxEditor,
+  type MDXEditorMethods,
+  type JsxEditorProps,
 } from '@mdxeditor/editor';
 import '@mdxeditor/editor/style.css';
 import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -36,7 +41,23 @@ import {
 } from './artifactRewriteSelection';
 import { WorkflowPanelTabActiveContext, SlotEditingContext } from './slotEditingContext';
 import type { RewriteSelectionPreview } from '@/modules/chat/utils/request';
+import {
+  collectWriterMarkdownReferenceTargets,
+  writerMarkdownForEditor,
+  writerMarkdownForSave,
+  writerMarkdownInternalReference,
+} from './writerMarkdownAnchors';
 import './MarkdownArtifactEditor.scss';
+
+function WriterAnchorEditor(props: JsxEditorProps) {
+  const id = props.mdastNode.attributes.find(
+    (attribute) => attribute.type === 'mdxJsxAttribute' && attribute.name === 'id',
+  )?.value;
+  if (typeof id === 'string' && id.startsWith('block-')) {
+    return <span className='writer-markdown-editor__system-anchor' aria-hidden='true' />;
+  }
+  return <GenericJsxEditor {...props} />;
+}
 
 function backtickRunLength(value: string, start: number): number {
   let end = start;
@@ -81,7 +102,7 @@ function normalizeMarkdownForMdxEditor(markdown: string): string {
   let fenceCharacter = '';
   let fenceLength = 0;
 
-  return markdown.split('\n').map((line) => {
+  return writerMarkdownForEditor(markdown).split('\n').map((line) => {
     const fence = line.match(/^ {0,3}(`{3,}|~{3,})/);
     if (fence) {
       const marker = fence[1];
@@ -190,6 +211,8 @@ export function MarkdownArtifactEditor({
   const [selectionToolbar, setSelectionToolbar] = useState<FloatingToolbarAnchor | null>(null);
   const [rewriteLayer, setRewriteLayer] = useState<HTMLDivElement | null>(null);
   const rootRef = useRef<HTMLElement>(null);
+  const editorRef = useRef<MDXEditorMethods>(null);
+  const referenceSelectionRef = useRef<MarkdownSelection | null>(null);
   const selectionToolbarDismissedRef = useRef(false);
   const latestSourceRef = useRef({ markdown, revision: sourceRevision });
   const pendingSourceRef = useRef<{ markdown: string; revision: number }>();
@@ -199,12 +222,16 @@ export function MarkdownArtifactEditor({
   const saveChangesRef = useRef<() => Promise<boolean>>(async () => true);
 
   const dirty = draftMarkdown !== baseMarkdown;
+  const referenceTargets = useMemo(
+    () => collectWriterMarkdownReferenceTargets(draftMarkdown),
+    [draftMarkdown],
+  );
   dirtyRef.current = dirty;
   savingRef.current = saving;
   conflictRef.current = conflict;
 
   useEffect(() => {
-    onContentChange?.(draftMarkdown);
+    onContentChange?.(writerMarkdownForSave(draftMarkdown));
   }, [draftMarkdown, onContentChange]);
 
   const dismissSelectionToolbar = useCallback(() => {
@@ -279,7 +306,9 @@ export function MarkdownArtifactEditor({
 
   const recordSelection = useCallback((showToolbar = true) => {
     const root = rootRef.current;
-    setSelection(root ? selectedMarkdownParagraph(root) : null);
+    const nextSelection = root ? selectedMarkdownParagraph(root) : null;
+    if (nextSelection?.supported) referenceSelectionRef.current = nextSelection;
+    setSelection(nextSelection);
     if (!showToolbar) return;
     selectionToolbarDismissedRef.current = false;
     updateSelectionToolbar();
@@ -350,17 +379,23 @@ export function MarkdownArtifactEditor({
     setEditorKey((value) => value + 1);
   }, [dirty, markdown, sourceRevision]);
 
-  const saveChanges = useCallback(async (): Promise<boolean> => {
-    if (!dirty || saving || readOnly) return false;
+  const persistMarkdown = useCallback(async (
+    nextDraft: string,
+    revisionBeforeSave: number,
+  ): Promise<boolean> => {
+    if (savingRef.current || readOnly) return false;
+    savingRef.current = true;
     setSaving(true);
     setSaveError(undefined);
 
     try {
-      const revision = await onSave(draftMarkdown, baseRevision);
-      const savedRevision = revision ?? baseRevision;
-      setBaseMarkdown(draftMarkdown);
+      const savedMarkdown = writerMarkdownForSave(nextDraft);
+      const revision = await onSave(savedMarkdown, revisionBeforeSave);
+      const savedRevision = revision ?? revisionBeforeSave;
+      setBaseMarkdown(nextDraft);
+      setDraftMarkdown(nextDraft);
       setBaseRevision(savedRevision);
-      latestSourceRef.current = { markdown: draftMarkdown, revision: savedRevision };
+      latestSourceRef.current = { markdown: savedMarkdown, revision: savedRevision };
       pendingSourceRef.current = undefined;
       setConflict(false);
       setEditorKey((value) => value + 1);
@@ -374,9 +409,15 @@ export function MarkdownArtifactEditor({
       );
       return false;
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
-  }, [baseRevision, dirty, draftMarkdown, onSave, readOnly, saving, t]);
+  }, [onSave, readOnly, t]);
+
+  const saveChanges = useCallback(async (): Promise<boolean> => {
+    if (!dirty || savingRef.current || readOnly) return false;
+    return persistMarkdown(draftMarkdown, baseRevision);
+  }, [baseRevision, dirty, draftMarkdown, persistMarkdown, readOnly]);
 
   saveChangesRef.current = saveChanges;
 
@@ -429,6 +470,35 @@ export function MarkdownArtifactEditor({
     onRewriteSelection(selection);
     dismissSelectionToolbar();
   }, [dismissSelectionToolbar, onRewriteSelection, polishDisabled, selection]);
+  const referenceDisabled = readOnly
+    || !selection?.supported
+    || saving
+    || conflict
+    || referenceTargets.length === 0;
+  const applyCrossReference = useCallback((anchorId: string) => {
+    const editor = editorRef.current;
+    const referenceSelection = referenceSelectionRef.current;
+    if (
+      !editor
+      || !referenceSelection?.supported
+      || !anchorId
+      || savingRef.current
+      || conflictRef.current
+      || readOnly
+    ) return;
+    const reference = writerMarkdownInternalReference(referenceSelection.text, anchorId);
+    if (!reference) return;
+
+    editor.focus(() => {
+      editor.insertMarkdown(reference);
+      window.requestAnimationFrame(() => {
+        const nextDraft = normalizeMarkdownForMdxEditor(editor.getMarkdown());
+        setDraftMarkdown(nextDraft);
+        void persistMarkdown(nextDraft, baseRevision);
+      });
+    }, { preventScroll: true });
+    dismissSelectionToolbar();
+  }, [baseRevision, dismissSelectionToolbar, persistMarkdown, readOnly]);
 
   const selectionToolbarStyle = selectionToolbar
     ? {
@@ -490,6 +560,7 @@ export function MarkdownArtifactEditor({
       )}
 
       <MDXEditor
+        ref={editorRef}
         key={editorKey}
         className='writer-markdown-editor__surface'
         markdown={baseMarkdown}
@@ -504,6 +575,15 @@ export function MarkdownArtifactEditor({
           linkDialogPlugin(),
           tablePlugin(),
           frontmatterPlugin(),
+          jsxPlugin({
+            jsxComponentDescriptors: [{
+              name: 'a',
+              kind: 'flow',
+              props: [{ name: 'id', type: 'string' }],
+              hasChildren: true,
+              Editor: WriterAnchorEditor,
+            }],
+          }),
           imagePlugin(),
           codeBlockPlugin({ defaultCodeBlockLanguage: 'text' }),
           codeMirrorPlugin({ codeBlockLanguages: MARKDOWN_CODE_LANGUAGES }),
@@ -525,6 +605,27 @@ export function MarkdownArtifactEditor({
                     {t('chat.artifactRewrite.action')}
                   </button>
                 )}
+                <select
+                  className='writer-markdown-editor__reference-select'
+                  value=''
+                  disabled={referenceDisabled}
+                  aria-label={t('chat.writerIR.crossReference')}
+                  title={t('chat.writerIR.crossReference')}
+                  onMouseDown={(event) => {
+                    event.stopPropagation();
+                    if (selection?.supported) referenceSelectionRef.current = selection;
+                  }}
+                  onChange={(event) => applyCrossReference(event.target.value)}
+                >
+                  <option value='' disabled>
+                    {t('chat.writerIR.crossReference')}
+                  </option>
+                  {referenceTargets.map((target) => (
+                    <option value={target.anchorId} key={target.anchorId}>
+                      {target.label}
+                    </option>
+                  ))}
+                </select>
                 <ListsToggle />
               </>
             ),

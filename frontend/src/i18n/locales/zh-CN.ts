@@ -1462,6 +1462,7 @@ const zhCN = {
       orderedList: "有序列表",
       bold: "加粗",
       italic: "斜体",
+      crossReference: "交叉引用",
       collapseSection: "收起",
       expandSection: "展开",
       dragBlock: "拖动块",

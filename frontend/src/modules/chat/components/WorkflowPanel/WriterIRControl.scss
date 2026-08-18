@@ -379,6 +379,11 @@
   opacity: 0.55;
 }
 
+.writer-ir__format-select--reference {
+  min-width: 96px;
+  max-width: 180px;
+}
+
 .writer-ir__format-toolbar .writer-ir__format-button {
   display: inline-flex;
   align-items: center;
@@ -847,6 +852,46 @@
 .writer-ir__document--editable .writer-ir__drag-handle[contenteditable='false'] {
   background: transparent !important;
   color: #8f959e !important;
+}
+
+.writer-ir .writer-ir__internal-ref,
+.writer-ir__document--editable .writer-ir__internal-ref[contenteditable='false'] {
+  padding: 0 2px;
+  border-radius: 3px;
+  background: transparent;
+  color: #245bdb;
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: rgba(36, 91, 219, 0.45);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.writer-ir .writer-ir__internal-ref:hover,
+.writer-ir .writer-ir__internal-ref:focus-visible,
+.writer-ir__document--editable .writer-ir__internal-ref[contenteditable='false']:hover,
+.writer-ir__document--editable .writer-ir__internal-ref[contenteditable='false']:focus-visible {
+  background: rgba(36, 91, 219, 0.1);
+  color: #1d4ed8;
+  outline: none;
+  text-decoration-color: currentColor;
+}
+
+.writer-ir__block--reference-target {
+  border-radius: 6px;
+  animation: writer-ir-reference-target 1.6s ease-out;
+}
+
+@keyframes writer-ir-reference-target {
+  0%, 35% {
+    background: rgba(51, 112, 255, 0.14);
+    box-shadow: 0 0 0 3px rgba(51, 112, 255, 0.12);
+  }
+  100% {
+    background: transparent;
+    box-shadow: none;
+  }
 }
 
 .writer-ir__document--editable .writer-ir__block--paragraph,

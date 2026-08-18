@@ -1507,6 +1507,7 @@ const enUS = {
       orderedList: "Numbered list",
       bold: "Bold",
       italic: "Italic",
+      crossReference: "Cross-reference",
       collapseSection: "Collapse",
       expandSection: "Expand",
       dragBlock: "Drag block",
