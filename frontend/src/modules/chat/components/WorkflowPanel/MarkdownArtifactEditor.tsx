@@ -42,6 +42,7 @@ import {
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArtifactRewriteInlineDiff } from './ArtifactRewriteDialog';
+import { ArtifactRewriteSelectionHighlight } from './ArtifactRewriteSelectionHighlight';
 import {
   floatingToolbarAnchor,
   selectedMarkdownParagraph,
@@ -164,6 +165,7 @@ interface MarkdownArtifactEditorProps {
   onContentChange?: (markdown: string) => void;
   onRewriteSelection?: (selection: MarkdownSelection) => void;
   rewriteUnavailableReason?: string;
+  rewriteDialogOpen?: boolean;
   rewritePreview?: MarkdownRewritePreview | null;
   onRewritePreviewApplied?: (revision?: number) => void;
   onRewritePreviewRejected?: () => void;
@@ -206,6 +208,7 @@ export function MarkdownArtifactEditor({
   onContentChange,
   onRewriteSelection,
   rewriteUnavailableReason,
+  rewriteDialogOpen = false,
   rewritePreview,
   onRewritePreviewApplied,
   onRewritePreviewRejected,
@@ -224,9 +227,11 @@ export function MarkdownArtifactEditor({
   const [selection, setSelection] = useState<MarkdownSelection | null>(null);
   const [selectionToolbar, setSelectionToolbar] = useState<FloatingToolbarAnchor | null>(null);
   const [rewriteLayer, setRewriteLayer] = useState<HTMLDivElement | null>(null);
+  const [rewriteSelectionPinned, setRewriteSelectionPinned] = useState(false);
   const rootRef = useRef<HTMLElement>(null);
   const editorRef = useRef<MDXEditorMethods>(null);
   const referenceSelectionRef = useRef<MarkdownSelection | null>(null);
+  const pinnedRewriteRangeRef = useRef<Range | null>(null);
   const selectionToolbarDismissedRef = useRef(false);
   const latestSourceRef = useRef({ markdown, revision: sourceRevision });
   const pendingSourceRef = useRef<{ markdown: string; revision: number }>();
@@ -488,8 +493,28 @@ export function MarkdownArtifactEditor({
     : dirty
       ? t('chat.artifactRewrite.saveFirstHint')
       : rewriteUnavailableReason ?? t('chat.artifactRewrite.action');
+  useEffect(() => {
+    if (!rewriteDialogOpen) {
+      pinnedRewriteRangeRef.current = null;
+      setRewriteSelectionPinned(false);
+    }
+  }, [rewriteDialogOpen]);
+  const getPinnedRewriteRange = useCallback((): Range | null => {
+    const range = pinnedRewriteRangeRef.current;
+    if (!range) return null;
+    try {
+      return range.cloneRange();
+    } catch {
+      return null;
+    }
+  }, []);
   const requestPolish = useCallback(() => {
     if (polishDisabled || !selection || !onRewriteSelection) return;
+    const browserSelection = globalThis.getSelection();
+    if (browserSelection?.rangeCount && !browserSelection.isCollapsed) {
+      pinnedRewriteRangeRef.current = browserSelection.getRangeAt(0).cloneRange();
+      setRewriteSelectionPinned(true);
+    }
     onRewriteSelection(selection);
     dismissSelectionToolbar();
   }, [dismissSelectionToolbar, onRewriteSelection, polishDisabled, selection]);
@@ -829,6 +854,11 @@ export function MarkdownArtifactEditor({
         </div>
       </div>
       <div className='writer-markdown-editor__rewrite-layer' ref={setRewriteLayer} />
+      <ArtifactRewriteSelectionHighlight
+        layer={rewriteLayer}
+        getRange={getPinnedRewriteRange}
+        active={rewriteSelectionPinned}
+      />
       {rewritePreview && rewriteLayer && onRewritePreviewApplied && onRewritePreviewRejected && (
         <ArtifactRewriteInlineDiff
           target={rewritePreview.paragraph}

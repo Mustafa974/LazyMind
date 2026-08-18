@@ -2697,6 +2697,7 @@ function SlotWriterDocument({
             rewriteUnavailableReason={rewriteSelection || rewritePreview || canRewrite
               ? undefined
               : tr('chat.artifactRewrite.revisionUnavailable')}
+            rewriteDialogOpen={rewriteSelection !== null}
             rewritePreview={rewritePreview?.selection.paragraph ? {
               paragraph: rewritePreview.selection.paragraph,
               startOffset: rewritePreview.selection.startOffset,
@@ -3938,6 +3939,7 @@ function SlotMarkdownFile({
             rewriteUnavailableReason={rewriteSelection || rewritePreview || canRewriteMarkdown
               ? undefined
               : tr('chat.artifactRewrite.revisionUnavailable')}
+            rewriteDialogOpen={rewriteSelection !== null}
             rewritePreview={rewritePreview?.selection.paragraph ? {
               paragraph: rewritePreview.selection.paragraph,
               startOffset: rewritePreview.selection.startOffset,
