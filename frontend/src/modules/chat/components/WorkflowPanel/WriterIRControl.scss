@@ -692,7 +692,7 @@
 }
 
 .writer-ir__document--editable .writer-ir__block--foldable.writer-ir__block--draggable {
-  padding-left: 40px;
+  padding-left: 22px;
 }
 
 .writer-ir__fold-toggle {
@@ -738,8 +738,12 @@
   transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
 }
 
-.writer-ir__block--foldable > .writer-ir__drag-handle {
-  left: 18px;
+.writer-ir__document--editable .writer-ir__block--foldable > .writer-ir__fold-toggle {
+  left: -18px;
+}
+
+.writer-ir__document--editable .writer-ir__block--foldable > .writer-ir__drag-handle {
+  left: 0;
 }
 
 .writer-ir__block--list_item > .writer-ir__drag-handle {

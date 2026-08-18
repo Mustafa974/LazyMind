@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { isWriterSystemAnchorBlock } from './writerIR';
 import {
+  applyWriterMarkdownInternalReference,
   collectWriterMarkdownReferenceTargets,
+  restoreWriterMarkdownInternalReferenceLabels,
   writerMarkdownForEditor,
   writerMarkdownForSave,
   writerMarkdownInternalReference,
@@ -54,5 +56,28 @@ describe('Writer Markdown system anchors', () => {
   it('constructs an internal Markdown link from selected text and an anchor', () => {
     expect(writerMarkdownInternalReference('第 1 节', 'block-sec-1'))
       .toBe('[第 1 节](#block-sec-1)');
+  });
+
+  it('adds a reference around the original selected wording without moving it', () => {
+    const paragraph = '潮水退去后，他仍听见深渊的低语。';
+    const source = `# 标题\n\n${paragraph}`;
+
+    expect(applyWriterMarkdownInternalReference(source, paragraph, 6, '他仍听见', 'block-sec-1'))
+      .toBe('# 标题\n\n潮水退去后，[他仍听见](#block-sec-1)深渊的低语。');
+  });
+
+  it('locates a later selection when the paragraph already contains a reference', () => {
+    const source = '详见[前文](#block-sec-1)，他仍听见深渊的低语。';
+    const paragraph = '详见前文，他仍听见深渊的低语。';
+
+    expect(applyWriterMarkdownInternalReference(source, paragraph, 5, '他仍听见', 'block-sec-2'))
+      .toBe('详见[前文](#block-sec-1)，[他仍听见](#block-sec-2)深渊的低语。');
+  });
+
+  it('restores the user wording after server numbering materialization', () => {
+    const source = '详见[前文的约定](#block-sec-1)。';
+    const materialized = '详见[第1章](#block-sec-1)。';
+
+    expect(restoreWriterMarkdownInternalReferenceLabels(materialized, source)).toBe(source);
   });
 });

@@ -21,6 +21,8 @@ import {
   type MDXEditorMethods,
   type JsxEditorProps,
 } from '@mdxeditor/editor';
+import { DownOutlined, HighlightOutlined, LinkOutlined } from '@ant-design/icons';
+import { Dropdown } from 'antd';
 import '@mdxeditor/editor/style.css';
 import {
   useCallback,
@@ -42,10 +44,10 @@ import {
 import { WorkflowPanelTabActiveContext, SlotEditingContext } from './slotEditingContext';
 import type { RewriteSelectionPreview } from '@/modules/chat/utils/request';
 import {
+  applyWriterMarkdownInternalReference,
   collectWriterMarkdownReferenceTargets,
   writerMarkdownForEditor,
   writerMarkdownForSave,
-  writerMarkdownInternalReference,
 } from './writerMarkdownAnchors';
 import './MarkdownArtifactEditor.scss';
 
@@ -54,7 +56,7 @@ function WriterAnchorEditor(props: JsxEditorProps) {
     (attribute) => attribute.type === 'mdxJsxAttribute' && attribute.name === 'id',
   )?.value;
   if (typeof id === 'string' && id.startsWith('block-')) {
-    return <span className='writer-markdown-editor__system-anchor' aria-hidden='true' />;
+    return <span id={id} className='writer-markdown-editor__system-anchor' aria-hidden='true' />;
   }
   return <GenericJsxEditor {...props} />;
 }
@@ -171,14 +173,18 @@ function isMarkdownToolbarInteractionTarget(node: Node | null | undefined): bool
   return Boolean(
     node.closest('.mdxeditor-toolbar')
     || node.closest('.mdxeditor-popup-container')
-    || node.closest('.mdxeditor-select-content'),
+    || node.closest('.mdxeditor-select-content')
+    || node.closest('.writer-markdown-editor__reference-dropdown'),
   );
 }
 
 function isMarkdownToolbarDropdownOpen(): boolean {
   return Boolean(
     document.querySelector('.mdxeditor-select-content[data-state="open"]')
-    || document.querySelector('.mdxeditor-toolbar [data-state="open"]'),
+    || document.querySelector('.mdxeditor-toolbar [data-state="open"]')
+    || document.querySelector(
+      '.writer-markdown-editor__reference-dropdown:not(.ant-dropdown-hidden)',
+    ),
   );
 }
 
@@ -328,7 +334,11 @@ export function MarkdownArtifactEditor({
       if (
         root
         && target
-        && (root.contains(target) || targetElement?.closest('.mdxeditor-popup-container'))
+        && (
+          root.contains(target)
+          || targetElement?.closest('.mdxeditor-popup-container')
+          || targetElement?.closest('.writer-markdown-editor__reference-dropdown')
+        )
       ) return;
       dismissSelectionToolbar();
     };
@@ -398,7 +408,6 @@ export function MarkdownArtifactEditor({
       latestSourceRef.current = { markdown: savedMarkdown, revision: savedRevision };
       pendingSourceRef.current = undefined;
       setConflict(false);
-      setEditorKey((value) => value + 1);
       return true;
     } catch (error) {
       setConflict(isRevisionConflict(error));
@@ -486,17 +495,25 @@ export function MarkdownArtifactEditor({
       || conflictRef.current
       || readOnly
     ) return;
-    const reference = writerMarkdownInternalReference(referenceSelection.text, anchorId);
-    if (!reference) return;
+    const currentMarkdown = normalizeMarkdownForMdxEditor(editor.getMarkdown());
+    const paragraphText = referenceSelection.paragraph?.textContent ?? '';
+    const nextDraft = applyWriterMarkdownInternalReference(
+      currentMarkdown,
+      paragraphText,
+      referenceSelection.startOffset ?? -1,
+      referenceSelection.text,
+      anchorId,
+    );
+    if (nextDraft === currentMarkdown) return;
 
-    editor.focus(() => {
-      editor.insertMarkdown(reference);
-      window.requestAnimationFrame(() => {
-        const nextDraft = normalizeMarkdownForMdxEditor(editor.getMarkdown());
-        setDraftMarkdown(nextDraft);
-        void persistMarkdown(nextDraft, baseRevision);
-      });
-    }, { preventScroll: true });
+    const surface = rootRef.current?.querySelector<HTMLElement>('.writer-markdown-editor__surface');
+    const scrollTop = surface?.scrollTop;
+    editor.setMarkdown(nextDraft);
+    window.requestAnimationFrame(() => {
+      if (surface && scrollTop !== undefined) surface.scrollTop = scrollTop;
+      setDraftMarkdown(nextDraft);
+      void persistMarkdown(nextDraft, baseRevision);
+    });
     dismissSelectionToolbar();
   }, [baseRevision, dismissSelectionToolbar, persistMarkdown, readOnly]);
 
@@ -525,6 +542,25 @@ export function MarkdownArtifactEditor({
       onMouseUp={() => recordSelection()}
       onKeyUp={(event) => {
         if (event.key !== 'Escape') recordSelection();
+      }}
+      onClick={(event) => {
+        const link = event.target instanceof Element
+          ? event.target.closest<HTMLAnchorElement>('a[href^="#block-"]')
+          : null;
+        if (!link) return;
+        event.preventDefault();
+        const anchorId = decodeURIComponent(link.hash.slice(1));
+        const root = rootRef.current;
+        const surface = root?.querySelector<HTMLElement>('.writer-markdown-editor__surface');
+        const target = Array.from(root?.querySelectorAll<HTMLElement>('[id]') ?? [])
+          .find((element) => element.id === anchorId);
+        if (!surface || !target) return;
+        const surfaceRect = surface.getBoundingClientRect();
+        const targetRect = target.getBoundingClientRect();
+        surface.scrollTo({
+          top: Math.max(0, surface.scrollTop + targetRect.top - surfaceRect.top - 8),
+          behavior: 'smooth',
+        });
       }}
     >
       {conflict && (
@@ -591,42 +627,75 @@ export function MarkdownArtifactEditor({
           toolbarPlugin({
             toolbarContents: () => (
               <>
-                <BoldItalicUnderlineToggles />
-                <BlockTypeSelect />
-                {showPolishAction && (
-                  <button
-                    type='button'
-                    className='writer-markdown-editor__polish-action'
-                    disabled={polishDisabled}
-                    title={polishTitle}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={requestPolish}
-                  >
-                    {t('chat.artifactRewrite.action')}
-                  </button>
-                )}
-                <select
-                  className='writer-markdown-editor__reference-select'
-                  value=''
-                  disabled={referenceDisabled}
-                  aria-label={t('chat.writerIR.crossReference')}
-                  title={t('chat.writerIR.crossReference')}
-                  onMouseDown={(event) => {
-                    event.stopPropagation();
-                    if (selection?.supported) referenceSelectionRef.current = selection;
-                  }}
-                  onChange={(event) => applyCrossReference(event.target.value)}
+                <div className='writer-markdown-editor__toolbar-group writer-markdown-editor__toolbar-group--block'>
+                  <BlockTypeSelect />
+                </div>
+                <span className='writer-markdown-editor__toolbar-divider' aria-hidden='true' />
+                <div
+                  className='writer-markdown-editor__toolbar-group'
+                  role='group'
+                  aria-label={t('chat.writerIR.formatToolbar')}
                 >
-                  <option value='' disabled>
-                    {t('chat.writerIR.crossReference')}
-                  </option>
-                  {referenceTargets.map((target) => (
-                    <option value={target.anchorId} key={target.anchorId}>
-                      {target.label}
-                    </option>
-                  ))}
-                </select>
-                <ListsToggle />
+                  <BoldItalicUnderlineToggles />
+                  <ListsToggle />
+                </div>
+                <span className='writer-markdown-editor__toolbar-divider' aria-hidden='true' />
+                <div className='writer-markdown-editor__toolbar-group writer-markdown-editor__toolbar-group--actions'>
+                  {showPolishAction && (
+                    <button
+                      type='button'
+                      className='writer-markdown-editor__polish-action'
+                      disabled={polishDisabled}
+                      title={polishTitle}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={requestPolish}
+                    >
+                      <HighlightOutlined aria-hidden />
+                      <span>{t('chat.artifactRewrite.action')}</span>
+                    </button>
+                  )}
+                  <Dropdown
+                    trigger={['click']}
+                    placement='bottomLeft'
+                    overlayClassName='writer-markdown-editor__reference-dropdown'
+                    disabled={referenceDisabled}
+                    menu={{
+                      items: referenceTargets.map((target) => ({
+                        key: target.anchorId,
+                        label: (
+                          <span
+                            className='writer-markdown-editor__reference-option'
+                            title={target.label}
+                          >
+                            {target.label}
+                          </span>
+                        ),
+                      })),
+                      onClick: ({ key }) => applyCrossReference(String(key)),
+                    }}
+                  >
+                    <button
+                      type='button'
+                      className='writer-markdown-editor__reference-select'
+                      disabled={referenceDisabled}
+                      aria-label={t('chat.writerIR.crossReference')}
+                      aria-haspopup='menu'
+                      title={t('chat.writerIR.crossReference')}
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        if (selection?.supported) referenceSelectionRef.current = selection;
+                      }}
+                    >
+                      <LinkOutlined aria-hidden />
+                      <span>{t('chat.writerIR.crossReference')}</span>
+                      <DownOutlined
+                        className='writer-markdown-editor__reference-caret'
+                        aria-hidden
+                      />
+                    </button>
+                  </Dropdown>
+                </div>
               </>
             ),
           }),

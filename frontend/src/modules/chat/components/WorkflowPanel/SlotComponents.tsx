@@ -33,6 +33,7 @@ import {
 } from './ArtifactRewriteDialog';
 import { ArtifactRewriteSelectionAction } from './ArtifactRewriteSelectionAction';
 import { selectedMarkdownParagraph, type MarkdownSelection } from './artifactRewriteSelection';
+import { restoreWriterMarkdownInternalReferenceLabels } from './writerMarkdownAnchors';
 import {
   isWriterDocument,
   normalizeWriterDocumentForSync,
@@ -2400,6 +2401,7 @@ function SlotWriterDocument({
   }, [revisionCount]);
 
   useEffect(() => {
+    let active = true;
     const controller = new AbortController();
     if (!rendered) setLoading(true);
     setError(null);
@@ -2412,17 +2414,22 @@ function SlotWriterDocument({
       if (response?.data?.code !== 0 || !isRenderedWriterDocument(result)) {
         throw new Error('invalid writer document response');
       }
+      if (!active) return;
       setRendered(result);
       if (result.representation === 'markdown' && typeof result.document === 'string') {
         setDownloadMarkdownContent(result.document);
       }
+      setError(null);
       setLoading(false);
     }).catch((renderError: unknown) => {
-      if (renderError instanceof DOMException && renderError.name === 'AbortError') return;
+      if (!active || controller.signal.aborted) return;
       setError(localizeErrorCode('2000509'));
       setLoading(false);
     });
-    return () => controller.abort();
+    return () => {
+      active = false;
+      controller.abort();
+    };
   }, [reloadToken, sessionId, slot.revision, slotId]);
 
   const refreshDocument = useCallback(() => {
@@ -2525,8 +2532,9 @@ function SlotWriterDocument({
       ) {
         throw new Error(tr('chat.writerMarkdown.saveFailed'));
       }
-      setRendered(result);
-      setDownloadMarkdownContent(result.document);
+      const displayDocument = restoreWriterMarkdownInternalReferenceLabels(result.document, document);
+      setRendered({ ...result, document: displayDocument });
+      setDownloadMarkdownContent(displayDocument);
       applySavedRevision(result.revision);
       return result.revision;
     } catch (saveError) {

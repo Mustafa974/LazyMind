@@ -52,3 +52,69 @@ export function writerMarkdownInternalReference(text: string, anchorId: string):
     ? `[${label}](#${anchorId})`
     : '';
 }
+
+/** Replace the selected source text in-place so its visible wording stays unchanged. */
+export function applyWriterMarkdownInternalReference(
+  markdown: string,
+  paragraphText: string,
+  startOffset: number,
+  selectedText: string,
+  anchorId: string,
+): string {
+  const reference = writerMarkdownInternalReference(selectedText, anchorId);
+  if (!reference || !paragraphText || startOffset < 0) return markdown;
+
+  const matches: number[] = [];
+  const blockPattern = /(?:^|\n{2,})([^\n][\s\S]*?)(?=\n{2,}|$)/g;
+  for (const blockMatch of markdown.matchAll(blockPattern)) {
+    const block = blockMatch[1];
+    const blockStart = (blockMatch.index ?? 0) + blockMatch[0].length - block.length;
+    let visibleText = '';
+    const sourceOffsets: number[] = [];
+    for (let index = 0; index < block.length;) {
+      const link = block.slice(index).match(/^\[([^\]]*)\]\([^)]+\)/);
+      if (link) {
+        visibleText += link[1];
+        for (let labelIndex = 0; labelIndex < link[1].length; labelIndex += 1) {
+          sourceOffsets.push(index + 1 + labelIndex);
+        }
+        index += link[0].length;
+        continue;
+      }
+      visibleText += block[index];
+      sourceOffsets.push(index);
+      index += 1;
+    }
+    if (visibleText !== paragraphText) continue;
+    const sourceOffset = sourceOffsets[startOffset];
+    if (sourceOffset === undefined) continue;
+    const selectionStart = blockStart + sourceOffset;
+    if (markdown.slice(selectionStart, selectionStart + selectedText.length) === selectedText) {
+      matches.push(selectionStart);
+    }
+  }
+  if (matches.length !== 1) return markdown;
+
+  const selectionStart = matches[0];
+  return `${markdown.slice(0, selectionStart)}${reference}${markdown.slice(selectionStart + selectedText.length)}`;
+}
+
+/** Keep user-authored Markdown link labels after the server materializes numbering. */
+export function restoreWriterMarkdownInternalReferenceLabels(
+  materializedMarkdown: string,
+  sourceMarkdown: string,
+): string {
+  const referencePattern = /\[([^\]]*)\]\(#(block-[^)]+)\)/g;
+  const sourceLabels = new Map<string, string[]>();
+  for (const match of sourceMarkdown.matchAll(referencePattern)) {
+    const labels = sourceLabels.get(match[2]) ?? [];
+    labels.push(match[1]);
+    sourceLabels.set(match[2], labels);
+  }
+
+  return materializedMarkdown.replace(referencePattern, (reference, _label: string, anchorId: string) => {
+    const labels = sourceLabels.get(anchorId);
+    const sourceLabel = labels?.shift();
+    return sourceLabel ? `[${sourceLabel}](#${anchorId})` : reference;
+  });
+}
