@@ -68,10 +68,6 @@ vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));
 
-vi.mock('@/modules/knowledge/utils/imageUrl', () => ({
-  resolveMarkdownImageUrlAsync: async (source: string) => source,
-}));
-
 vi.mock('./ArtifactRewriteDialog', () => ({
   ArtifactRewriteInlineDiff: () => null,
 }));
