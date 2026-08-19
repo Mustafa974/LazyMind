@@ -977,10 +977,14 @@ def _workflow_trigger_tools(
                 }
             fixed_writer_structure = (
                 writer_structure_route
-                if task_mode and writer_structure_route in {'flat', 'sectioned'}
-                else 'sectioned'
+                if (
+                    bound_id == 'writer-workflow'
+                    and task_mode
+                    and writer_structure_route in {'flat', 'sectioned'}
+                )
+                else ''
             )
-            if bound_id == 'writer-workflow' and attachments_available:
+            if fixed_writer_structure and attachments_available:
                 def bound_trigger(
                     input_bindings: Optional[Dict[str, str]] = None,
                     request_context: Optional[str] = None,
@@ -991,7 +995,7 @@ def _workflow_trigger_tools(
                         request_context=request_context,
                         workflow_parameters={'structure_mode': fixed_writer_structure},
                     )
-            elif bound_id == 'writer-workflow':
+            elif fixed_writer_structure:
                 def bound_trigger(
                     request_context: Optional[str] = None,
                 ) -> Dict[str, Any]:
@@ -1037,7 +1041,11 @@ def _workflow_trigger_tools(
         )
         structure_guidance = (
             f' The Host has fixed structure_mode={writer_structure_route!r}; do not reclassify it.'
-            if workflow_id == 'writer-workflow' and task_mode else ''
+            if (
+                workflow_id == 'writer-workflow'
+                and task_mode
+                and writer_structure_route in {'flat', 'sectioned'}
+            ) else ''
         )
         clarification_guidance = (
             ' If this turn follows startup clarification, request_context must merge the '
