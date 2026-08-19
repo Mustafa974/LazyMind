@@ -150,6 +150,86 @@ export function applyWriterMarkdownInternalReference(
   return `${markdown.slice(0, selectionStart)}${reference}${markdown.slice(selectionStart + selectedText.length)}`;
 }
 
+interface WriterMarkdownReferenceRange {
+  sourceStart: number;
+  sourceEnd: number;
+  labelSource: string;
+  visibleStart: number;
+  visibleEnd: number;
+}
+
+function writerMarkdownLinkLabelText(labelSource: string): string {
+  return labelSource.replace(/\\([\\\]])/g, '$1');
+}
+
+function writerMarkdownVisibleBlock(block: string): {
+  text: string;
+  references: WriterMarkdownReferenceRange[];
+} {
+  let text = '';
+  const references: WriterMarkdownReferenceRange[] = [];
+  for (let index = 0; index < block.length;) {
+    const link = block.slice(index).match(/^\[((?:\\.|[^\\\]])*)\]\(([^)]*)\)/);
+    if (!link) {
+      text += block[index];
+      index += 1;
+      continue;
+    }
+
+    const labelSource = link[1];
+    const label = writerMarkdownLinkLabelText(labelSource);
+    const visibleStart = text.length;
+    text += label;
+    if (link[2].startsWith('#block-')) {
+      references.push({
+        sourceStart: index,
+        sourceEnd: index + link[0].length,
+        labelSource,
+        visibleStart,
+        visibleEnd: text.length,
+      });
+    }
+    index += link[0].length;
+  }
+  return { text, references };
+}
+
+/** Unwrap the internal Markdown link containing the selection while preserving its label. */
+export function removeWriterMarkdownInternalReference(
+  markdown: string,
+  paragraphText: string,
+  startOffset: number,
+  selectedText: string,
+): string {
+  if (!paragraphText || !selectedText || startOffset < 0) return markdown;
+  const selectionEnd = startOffset + selectedText.length;
+  if (paragraphText.slice(startOffset, selectionEnd) !== selectedText) return markdown;
+
+  const matches: Array<{
+    blockStart: number;
+    references: WriterMarkdownReferenceRange[];
+  }> = [];
+  const blockPattern = /(?:^|\n{2,})([^\n][\s\S]*?)(?=\n{2,}|$)/g;
+  for (const blockMatch of markdown.matchAll(blockPattern)) {
+    const block = blockMatch[1];
+    const blockStart = (blockMatch.index ?? 0) + blockMatch[0].length - block.length;
+    const parsed = writerMarkdownVisibleBlock(block);
+    if (parsed.text !== paragraphText) continue;
+    matches.push({ blockStart, references: parsed.references });
+  }
+  if (matches.length !== 1) return markdown;
+
+  const { blockStart, references } = matches[0];
+  const reference = references.find(
+    (candidate) => startOffset >= candidate.visibleStart
+      && selectionEnd <= candidate.visibleEnd,
+  );
+  if (!reference) return markdown;
+  const sourceStart = blockStart + reference.sourceStart;
+  const sourceEnd = blockStart + reference.sourceEnd;
+  return `${markdown.slice(0, sourceStart)}${reference.labelSource}${markdown.slice(sourceEnd)}`;
+}
+
 /** Keep user-authored Markdown link labels after the server materializes numbering. */
 export function restoreWriterMarkdownInternalReferenceLabels(
   materializedMarkdown: string,

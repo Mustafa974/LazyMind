@@ -4,6 +4,7 @@ import {
   applyWriterMarkdownInternalReference,
   collectWriterMarkdownOutline,
   collectWriterMarkdownReferenceTargets,
+  removeWriterMarkdownInternalReference,
   restoreWriterMarkdownInternalReferenceLabels,
   writerMarkdownForEditor,
   writerMarkdownForSave,
@@ -98,6 +99,70 @@ describe('Writer Markdown system anchors', () => {
 
     expect(applyWriterMarkdownInternalReference(source, paragraph, 5, '他仍听见', 'block-sec-2'))
       .toBe('详见[前文](#block-sec-1)，[他仍听见](#block-sec-2)深渊的低语。');
+  });
+
+  it('unwraps the internal link containing the selection and keeps its target anchor', () => {
+    const source = [
+      '详见[前文约定](#block-sec-1)。',
+      '',
+      '<a id="block-sec-1"></a>',
+      '## 1 前文',
+    ].join('\n');
+    const revised = removeWriterMarkdownInternalReference(
+      source,
+      '详见前文约定。',
+      3,
+      '文约',
+    );
+
+    expect(revised).toContain('详见前文约定。');
+    expect(revised).not.toContain('](#block-sec-1)');
+    expect(revised).toContain('<a id="block-sec-1"></a>');
+  });
+
+  it('keeps escaped link labels intact when removing the reference', () => {
+    const source = '详见[前文\\]约定](#block-sec-1)。';
+
+    expect(removeWriterMarkdownInternalReference(source, '详见前文]约定。', 4, ']约'))
+      .toBe('详见前文\\]约定。');
+  });
+
+  it('does not remove external links or ambiguous repeated references', () => {
+    const external = '详见[前文](https://example.com)。';
+    expect(removeWriterMarkdownInternalReference(external, '详见前文。', 2, '前文'))
+      .toBe(external);
+
+    const repeated = [
+      '详见[前文](#block-sec-1)。',
+      '',
+      '详见[前文](#block-sec-1)。',
+    ].join('\n');
+    expect(removeWriterMarkdownInternalReference(repeated, '详见前文。', 2, '前文'))
+      .toBe(repeated);
+
+    const repeatedWithPlainText = [
+      '详见[前文](#block-sec-1)。',
+      '',
+      '详见前文。',
+    ].join('\n');
+    expect(removeWriterMarkdownInternalReference(
+      repeatedWithPlainText,
+      '详见前文。',
+      2,
+      '前文',
+    )).toBe(repeatedWithPlainText);
+
+    const repeatedWithExternalLink = [
+      '详见[前文](#block-sec-1)。',
+      '',
+      '详见[前文](https://example.com)。',
+    ].join('\n');
+    expect(removeWriterMarkdownInternalReference(
+      repeatedWithExternalLink,
+      '详见前文。',
+      2,
+      '前文',
+    )).toBe(repeatedWithExternalLink);
   });
 
   it('restores the user wording after server numbering materialization', () => {

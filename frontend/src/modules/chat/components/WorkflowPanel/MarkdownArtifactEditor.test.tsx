@@ -1,25 +1,37 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@mdxeditor/editor', async () => {
   const React = await import('react');
+  const { flushSync } = await import('react-dom');
   const emptyPlugin = () => ({});
   const EmptyControl = () => null;
   const MDXEditor = React.forwardRef((props: Record<string, unknown>, ref) => {
+    const markdownRef = React.useRef(String(props.markdown ?? ''));
+    const surfaceRef = React.useRef<HTMLDivElement>(null);
+    const [renderedMarkdown, setRenderedMarkdown] = React.useState(markdownRef.current);
     React.useImperativeHandle(ref, () => ({
-      getMarkdown: () => 'Alpha beta gamma',
-      setMarkdown: () => undefined,
+      getMarkdown: () => markdownRef.current,
+      setMarkdown: (markdown: string) => {
+        markdownRef.current = markdown;
+        if (surfaceRef.current) surfaceRef.current.scrollTop = 0;
+        flushSync(() => setRenderedMarkdown(markdown));
+      },
     }));
     const plugins = props.plugins as Array<{ toolbarContents?: () => React.ReactNode }>;
     const toolbar = plugins.find((plugin) => plugin.toolbarContents)?.toolbarContents?.();
+    const hasInternalReference = renderedMarkdown.includes('[beta](#block-sec-1)');
     return (
-      <div className={String(props.className ?? '')}>
+      <div className={String(props.className ?? '')} ref={surfaceRef}>
         <div className='mdxeditor-toolbar'>{toolbar}</div>
         <div className='mdxeditor-root-contenteditable'>
           <div contentEditable suppressContentEditableWarning>
-            <p>Alpha beta gamma</p>
-            <a href='#block-sec-1'>Chapter 1</a>
+            <p>
+              {'Alpha '}
+              {hasInternalReference ? <a href='#block-sec-1'>beta</a> : 'beta'}
+              {' gamma'}
+            </p>
             <a href='https://example.com'>External link</a>
             <span id='block-sec-1'>Target</span>
           </div>
@@ -53,6 +65,7 @@ vi.mock('@mdxeditor/editor', async () => {
 });
 
 vi.mock('@ant-design/icons', () => ({
+  DisconnectOutlined: () => null,
   DownOutlined: () => null,
   HighlightOutlined: () => null,
   LinkOutlined: () => null,
@@ -61,7 +74,22 @@ vi.mock('@ant-design/icons', () => ({
 }));
 
 vi.mock('antd', () => ({
-  Dropdown: ({ children }: { children: React.ReactNode }) => children,
+  Dropdown: ({
+    children,
+    open,
+    onOpenChange,
+  }: {
+    children: React.ReactNode;
+    open?: boolean;
+    onOpenChange?: (open: boolean) => void;
+  }) => (
+    <div data-testid='reference-dropdown' onClick={() => onOpenChange?.(!open)}>
+      {children}
+      {open && (
+        <div className='writer-markdown-editor__reference-dropdown' role='menu' />
+      )}
+    </div>
+  ),
 }));
 
 vi.mock('react-i18next', () => ({
@@ -94,13 +122,33 @@ function rect(): DOMRect {
   } as DOMRect;
 }
 
+const rangeBoundingRectDescriptor = Object.getOwnPropertyDescriptor(
+  window.Range.prototype,
+  'getBoundingClientRect',
+);
+const rangeClientRectsDescriptor = Object.getOwnPropertyDescriptor(
+  window.Range.prototype,
+  'getClientRects',
+);
+
+beforeEach(() => {
+  Object.defineProperty(window.Range.prototype, 'getBoundingClientRect', {
+    configurable: true,
+    value: () => rect(),
+  });
+  Object.defineProperty(window.Range.prototype, 'getClientRects', {
+    configurable: true,
+    value: () => [rect()],
+  });
+});
+
 function Harness() {
   const [rewriteOpen, setRewriteOpen] = useState(false);
   return (
     <>
       <button type='button' onClick={() => setRewriteOpen(false)}>close rewrite</button>
       <MarkdownArtifactEditor
-        markdown='Alpha beta gamma'
+        markdown={'Alpha [beta](#block-sec-1) gamma\n\n<a id="block-sec-1"></a>\n## 1 Target'}
         sourceRevision={1}
         onSave={async () => 1}
         onRewriteSelection={() => setRewriteOpen(true)}
@@ -109,6 +157,43 @@ function Harness() {
     </>
   );
 }
+
+function ReferenceHarness({ onSave }: { onSave: (markdown: string, revision: number) => Promise<number> }) {
+  const [source, setSource] = useState({
+    markdown: 'Alpha [beta](#block-sec-1) gamma\n\n<a id="block-sec-1"></a>\n## 1 Target',
+    revision: 7,
+  });
+  return (
+    <MarkdownArtifactEditor
+      markdown={source.markdown}
+      sourceRevision={source.revision}
+      onSave={async (markdown, revision) => {
+        const savedRevision = await onSave(markdown, revision);
+        setSource({ markdown, revision: savedRevision });
+        return savedRevision;
+      }}
+    />
+  );
+}
+
+afterEach(() => {
+  window.getSelection()?.removeAllRanges();
+  vi.restoreAllMocks();
+  if (rangeBoundingRectDescriptor) {
+    Object.defineProperty(
+      window.Range.prototype,
+      'getBoundingClientRect',
+      rangeBoundingRectDescriptor,
+    );
+  } else {
+    Reflect.deleteProperty(window.Range.prototype, 'getBoundingClientRect');
+  }
+  if (rangeClientRectsDescriptor) {
+    Object.defineProperty(window.Range.prototype, 'getClientRects', rangeClientRectsDescriptor);
+  } else {
+    Reflect.deleteProperty(window.Range.prototype, 'getClientRects');
+  }
+});
 
 describe('MarkdownArtifactEditor rewrite selection highlight', () => {
   it('navigates internal references without opening the link editor', () => {
@@ -159,16 +244,97 @@ describe('MarkdownArtifactEditor rewrite selection highlight', () => {
     fireEvent.mouseUp(paragraph!);
 
     const polish = await screen.findByTitle('chat.artifactRewrite.action');
-    expect(polish).toBeEnabled();
+    expect((polish as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(polish);
 
     await waitFor(() => {
-      expect(screen.getByTestId('rewrite-selection-highlight')).toHaveAttribute('data-active', 'true');
+      expect(screen.getByTestId('rewrite-selection-highlight').getAttribute('data-active')).toBe('true');
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'close rewrite' }));
     await waitFor(() => {
-      expect(screen.getByTestId('rewrite-selection-highlight')).toHaveAttribute('data-active', 'false');
+      expect(screen.getByTestId('rewrite-selection-highlight').getAttribute('data-active')).toBe('false');
     });
+  });
+
+  it('reports the controlled reference dropdown expanded state', async () => {
+    const { container } = render(<Harness />);
+    const paragraph = container.querySelector('p');
+    const textNode = paragraph?.firstChild;
+    expect(paragraph).not.toBeNull();
+    expect(textNode).not.toBeNull();
+
+    const range = document.createRange();
+    range.setStart(textNode!, 0);
+    range.setEnd(textNode!, 5);
+    Object.defineProperty(range, 'getBoundingClientRect', { value: () => rect() });
+    Object.defineProperty(range, 'getClientRects', { value: () => [rect()] });
+    const browserSelection = window.getSelection();
+    browserSelection?.removeAllRanges();
+    browserSelection?.addRange(range);
+    fireEvent.mouseUp(paragraph!);
+
+    const referenceTrigger = await screen.findByTitle('chat.writerIR.crossReference');
+    expect((referenceTrigger as HTMLButtonElement).disabled).toBe(false);
+    expect(referenceTrigger.getAttribute('aria-expanded')).toBe('false');
+
+    fireEvent.mouseDown(referenceTrigger);
+    fireEvent.click(referenceTrigger);
+    expect(referenceTrigger.getAttribute('aria-expanded')).toBe('true');
+
+    fireEvent.click(referenceTrigger);
+    expect(referenceTrigger.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('removes an internal reference and saves the unchanged visible wording', async () => {
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      callback(0);
+      return 0;
+    });
+    const onSave = vi.fn(async () => 8);
+    const { container } = render(<ReferenceHarness onSave={onSave} />);
+    const surface = container.querySelector<HTMLElement>('.writer-markdown-editor__surface');
+    const reference = container.querySelector<HTMLAnchorElement>('p a[href="#block-sec-1"]');
+    const textNode = reference?.firstChild;
+    expect(surface).not.toBeNull();
+    expect(reference).not.toBeNull();
+    expect(textNode).not.toBeNull();
+    surface!.scrollTop = 64;
+
+    const range = document.createRange();
+    range.setStart(textNode!, 0);
+    range.setEnd(textNode!, 4);
+    Object.defineProperty(range, 'getBoundingClientRect', { value: () => rect() });
+    Object.defineProperty(range, 'getClientRects', { value: () => [rect()] });
+    const browserSelection = window.getSelection();
+    browserSelection?.removeAllRanges();
+    browserSelection?.addRange(range);
+    fireEvent.mouseUp(reference!);
+
+    const scrollTo = vi.fn();
+    Object.defineProperty(surface!, 'scrollTo', { value: scrollTo });
+    fireEvent.click(reference!);
+    expect(scrollTo).not.toHaveBeenCalled();
+
+    const remove = await screen.findByTitle('chat.writerIR.removeCrossReference');
+    expect((remove as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByTitle('chat.writerIR.crossReference') as HTMLButtonElement).disabled)
+      .toBe(true);
+    fireEvent.mouseDown(remove);
+    fireEvent.click(remove);
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave).toHaveBeenCalledWith(
+      'Alpha beta gamma\n\n<a id="block-sec-1"></a>\n## 1 Target',
+      7,
+    );
+    await waitFor(() => {
+      const restoredSelection = window.getSelection();
+      expect(restoredSelection?.toString()).toBe('beta');
+      expect(container.contains(restoredSelection?.anchorNode ?? null)).toBe(true);
+      expect(container.contains(restoredSelection?.focusNode ?? null)).toBe(true);
+    });
+    expect(container.querySelector('p a[href="#block-sec-1"]')).toBeNull();
+    expect(surface!.scrollTop).toBe(64);
   });
 });
