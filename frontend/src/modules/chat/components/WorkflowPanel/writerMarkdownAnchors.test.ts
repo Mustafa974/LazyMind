@@ -50,8 +50,44 @@ describe('Writer Markdown system anchors', () => {
     ].join('\n');
 
     expect(collectWriterMarkdownReferenceTargets(source)).toEqual([
-      { anchorId: 'block-sec-1', label: '1 系统设计' },
-      { anchorId: 'block-sec-2', label: '1.1 接口设计' },
+      { anchorId: 'block-sec-1', label: '1 系统设计', type: 'heading' },
+      { anchorId: 'block-sec-2', label: '1.1 接口设计', type: 'heading' },
+    ]);
+  });
+
+  it('collects anchored images as reference targets without adding them to the outline', () => {
+    const source = [
+      '<a id="block-sec-1"></a>',
+      '## 1 系统设计',
+      '',
+      '<a id="block-image-1"></a>',
+      '![图1 雨后山间溪流图](https://example.com/rain.png)',
+      '',
+      '<a id="block-image-2" />',
+      '![](https://example.com/forest.png)',
+      '',
+      '![未锚定图片](https://example.com/unanchored.png)',
+      '',
+      '```markdown',
+      '<a id="block-image-fake" />',
+      '![代码块内图片](https://example.com/fake.png)',
+      '```',
+      '',
+      '    ```markdown',
+      '    <a id="block-heading-indented-fake" />',
+      '    ## 缩进代码块内标题',
+      '    <a id="block-image-indented-fake" />',
+      '    ![缩进代码块内图片](https://example.com/indented-fake.png)',
+      '    ```',
+    ].join('\n');
+
+    expect(collectWriterMarkdownReferenceTargets(source)).toEqual([
+      { anchorId: 'block-sec-1', label: '1 系统设计', type: 'heading' },
+      { anchorId: 'block-image-1', label: '图1 雨后山间溪流图', type: 'image' },
+      { anchorId: 'block-image-2', label: 'block-image-2', type: 'image' },
+    ]);
+    expect(collectWriterMarkdownOutline(source).items).toEqual([
+      { anchorId: 'block-sec-1', label: '1 系统设计', level: 2 },
     ]);
   });
 

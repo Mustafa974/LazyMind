@@ -112,6 +112,19 @@ const document: WriterDocument = {
   ],
 };
 
+const imageTargetDocument: WriterDocument = {
+  ...document,
+  blocks: [
+    document.blocks[0],
+    {
+      node_id: 'image-1',
+      type: 'image',
+      content: '图1 雨后山间溪流图',
+    },
+    document.blocks[1],
+  ],
+};
+
 const headingDocument: WriterDocument = {
   document_id: 'writer-doc-heading',
   stage: 'draft',
@@ -354,6 +367,51 @@ describe('WriterIRDocumentEditor cross-reference menu', () => {
     await waitFor(() => {
       expect(screen.getByTestId('selection-highlight').getAttribute('data-active')).toBe('false');
     });
+  });
+
+  it('applies a cross-reference to an image target without changing the selected wording', async () => {
+    const onCrossReferenceApplied = vi.fn();
+    const { container } = render(
+      <WriterIRDocumentEditor
+        document={imageTargetDocument}
+        ariaLabel='Writer document'
+        onChange={vi.fn()}
+        onCrossReferenceApplied={onCrossReferenceApplied}
+        onFocus={vi.fn()}
+        onBlur={vi.fn()}
+      />,
+    );
+    const paragraph = container.querySelector<HTMLElement>(
+      '[data-node-id="p-1"] [data-writer-block-content]',
+    );
+    const textNode = paragraph?.firstChild;
+    expect(paragraph).not.toBeNull();
+    expect(textNode).not.toBeNull();
+
+    const range = window.document.createRange();
+    range.setStart(textNode!, 0);
+    range.setEnd(textNode!, 5);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    fireEvent.mouseUp(paragraph!);
+
+    const trigger = await screen.findByRole('button', {
+      name: 'chat.writerIR.crossReference',
+    });
+    fireEvent.mouseDown(trigger);
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByTitle('图1 雨后山间溪流图'));
+
+    expect(onCrossReferenceApplied).toHaveBeenCalledTimes(1);
+    const updated = onCrossReferenceApplied.mock.calls[0][0] as WriterDocument;
+    const paragraphBlock = updated.blocks.find((block) => block.node_id === 'p-1');
+    expect(paragraphBlock?.content).toBe('Alpha beta gamma');
+    expect(getWriterInternalReference(paragraphBlock?.spans?.[0] ?? { text: '' }))
+      .toMatchObject({
+        targetNodeId: 'image-1',
+        displayText: 'Alpha',
+      });
   });
 
   it('removes the selected cross-reference without changing its wording', async () => {

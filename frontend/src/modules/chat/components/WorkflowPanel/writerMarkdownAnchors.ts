@@ -4,9 +4,12 @@ const EDITOR_SYSTEM_ANCHOR_RE = /<a\s+id=(["'])(block-[^"']+)\1\s*\/>/gi;
 export interface WriterMarkdownReferenceTarget {
   anchorId: string;
   label: string;
+  type: 'heading' | 'image';
 }
 
-export interface WriterMarkdownOutlineItem extends WriterMarkdownReferenceTarget {
+export interface WriterMarkdownOutlineItem {
+  anchorId: string;
+  label: string;
   level: number;
 }
 
@@ -40,7 +43,7 @@ export function collectWriterMarkdownOutline(markdown: string): WriterMarkdownOu
   let fenceLength = 0;
 
   for (const line of markdown.split(/\r?\n/)) {
-    const fence = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    const fence = line.match(/^\s*(`{3,}|~{3,})/);
     if (fence) {
       const marker = fence[1];
       if (!fenceCharacter) {
@@ -83,14 +86,62 @@ export function collectWriterMarkdownOutline(markdown: string): WriterMarkdownOu
   return { title, items };
 }
 
-/** Collect system anchors and the first heading immediately following each anchor. */
+/** Collect anchored headings and images that can be used as cross-reference targets. */
 export function collectWriterMarkdownReferenceTargets(
   markdown: string,
 ): WriterMarkdownReferenceTarget[] {
-  return collectWriterMarkdownOutline(markdown).items.map(({ anchorId, label }) => ({
-    anchorId,
-    label,
-  }));
+  const targets: WriterMarkdownReferenceTarget[] = [];
+  let pendingAnchorId: string | undefined;
+  let fenceCharacter = '';
+  let fenceLength = 0;
+
+  for (const line of markdown.split(/\r?\n/)) {
+    const fence = line.match(/^\s*(`{3,}|~{3,})/);
+    if (fence) {
+      const marker = fence[1];
+      if (!fenceCharacter) {
+        fenceCharacter = marker[0];
+        fenceLength = marker.length;
+      } else if (marker[0] === fenceCharacter && marker.length >= fenceLength) {
+        fenceCharacter = '';
+        fenceLength = 0;
+      }
+      pendingAnchorId = undefined;
+      continue;
+    }
+    if (fenceCharacter) continue;
+
+    const trimmed = line.trim();
+    const anchor = trimmed.match(
+      /^<a\s+id=(["'])(block-[^"']+)\1\s*(?:\/>|>\s*<\/a>)$/i,
+    );
+    if (anchor) {
+      pendingAnchorId = anchor[2];
+      continue;
+    }
+    if (!trimmed) continue;
+
+    const heading = trimmed.match(/^(#{1,6})[ \t]+(.+?)(?:[ \t]+#+[ \t]*)?$/);
+    if (heading && pendingAnchorId) {
+      targets.push({
+        anchorId: pendingAnchorId,
+        label: heading[2].trim(),
+        type: 'heading',
+      });
+    } else if (pendingAnchorId) {
+      const image = trimmed.match(/!\[((?:\\.|[^\\\]])*)\]\((?:\\.|[^)])*\)/);
+      if (image) {
+        targets.push({
+          anchorId: pendingAnchorId,
+          label: image[1].replace(/\\([\\\]])/g, '$1').trim() || pendingAnchorId,
+          type: 'image',
+        });
+      }
+    }
+    pendingAnchorId = undefined;
+  }
+
+  return targets;
 }
 
 export function writerMarkdownInternalReference(text: string, anchorId: string): string {

@@ -32,8 +32,16 @@ const document: WriterDocument = {
 
 describe('Writer IR cross references', () => {
   it('collects numbered IR blocks as reference targets', () => {
-    expect(collectWriterReferenceTargets(document.blocks)).toEqual([
+    expect(collectWriterReferenceTargets([
+      ...document.blocks,
+      {
+        node_id: 'image-1',
+        type: 'image',
+        content: '图1 雨后山间溪流图',
+      },
+    ])).toEqual([
       { nodeId: 'sec-1', label: '1 系统设计', type: 'heading' },
+      { nodeId: 'image-1', label: '图1 雨后山间溪流图', type: 'image' },
     ]);
   });
 

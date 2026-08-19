@@ -24,10 +24,12 @@ import {
 import {
   DisconnectOutlined,
   DownOutlined,
+  FontSizeOutlined,
   HighlightOutlined,
   LinkOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
+  PictureOutlined,
 } from '@ant-design/icons';
 import { Dropdown } from 'antd';
 import '@mdxeditor/editor/style.css';
@@ -55,6 +57,7 @@ import type { RewriteSelectionPreview } from '@/modules/chat/utils/request';
 import {
   applyWriterMarkdownInternalReference,
   collectWriterMarkdownOutline,
+  collectWriterMarkdownReferenceTargets,
   removeWriterMarkdownInternalReference,
   writerMarkdownForEditor,
   writerMarkdownForSave,
@@ -195,7 +198,7 @@ function normalizeMarkdownForMdxEditor(markdown: string): string {
   let fenceLength = 0;
 
   return writerMarkdownForEditor(markdown).split('\n').map((line) => {
-    const fence = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    const fence = line.match(/^\s*(`{3,}|~{3,})/);
     if (fence) {
       const marker = fence[1];
       if (!fenceCharacter) {
@@ -329,7 +332,10 @@ export function MarkdownArtifactEditor({
     () => collectWriterMarkdownOutline(draftMarkdown),
     [draftMarkdown],
   );
-  const referenceTargets = markdownOutline.items;
+  const referenceTargets = useMemo(
+    () => collectWriterMarkdownReferenceTargets(draftMarkdown),
+    [draftMarkdown],
+  );
   const outlineBaseLevel = Math.min(
     ...markdownOutline.items.map((item) => item.level),
     6,
@@ -969,7 +975,17 @@ export function MarkdownArtifactEditor({
                                 className='writer-markdown-editor__reference-option'
                                 title={target.label}
                               >
-                                {target.label}
+                                <span
+                                  className='writer-markdown-editor__reference-option-icon'
+                                  aria-hidden='true'
+                                >
+                                  {target.type === 'image'
+                                    ? <PictureOutlined />
+                                    : <FontSizeOutlined />}
+                                </span>
+                                <span className='writer-markdown-editor__reference-option-label'>
+                                  {target.label}
+                                </span>
                               </span>
                             ),
                           })),
