@@ -10,7 +10,7 @@ import json
 import logging
 import re
 from dataclasses import asdict, dataclass
-from typing import Any, Callable, Dict, List, Literal, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import httpx
 import lazyllm
@@ -804,6 +804,7 @@ def _workflow_trigger_tools(
     activations: List[Dict[str, Any]], allowed_refs: set[str], current_query: str = '',
     conversation_id: str = '', session_holder: Optional[Dict[str, str]] = None,
     conversation_history: Optional[List[Dict[str, Any]]] = None,
+    task_mode: bool = False, writer_structure_route: str = '',
 ) -> List[Any]:
     """Bind backend-prepared activations to public package reads."""
     attachments_available = _conversation_has_attachments()
@@ -823,6 +824,8 @@ def _workflow_trigger_tools(
         if not name.startswith('trigger_') or not name.endswith('_workflow') or not name.isidentifier():
             continue
         if name in used_names:
+            continue
+        if workflow_id == 'writer-workflow' and task_mode and writer_structure_route == 'clarify':
             continue
         used_names.add(name)
 
@@ -972,27 +975,30 @@ def _workflow_trigger_tools(
                         ),
                     },
                 }
+            fixed_writer_structure = (
+                writer_structure_route
+                if task_mode and writer_structure_route in {'flat', 'sectioned'}
+                else 'sectioned'
+            )
             if bound_id == 'writer-workflow' and attachments_available:
                 def bound_trigger(
-                    structure_mode: Literal['flat', 'sectioned'] = 'sectioned',
                     input_bindings: Optional[Dict[str, str]] = None,
                     request_context: Optional[str] = None,
                 ) -> Dict[str, Any]:
-                    """Initialize AI Writer with an explicit presentation structure."""
+                    """Initialize AI Writer with the Host-resolved presentation structure."""
                     return run_trigger(
                         input_bindings=input_bindings,
                         request_context=request_context,
-                        workflow_parameters={'structure_mode': structure_mode},
+                        workflow_parameters={'structure_mode': fixed_writer_structure},
                     )
             elif bound_id == 'writer-workflow':
                 def bound_trigger(
-                    structure_mode: Literal['flat', 'sectioned'] = 'sectioned',
                     request_context: Optional[str] = None,
                 ) -> Dict[str, Any]:
-                    """Initialize AI Writer with an explicit presentation structure."""
+                    """Initialize AI Writer with the Host-resolved presentation structure."""
                     return run_trigger(
                         request_context=request_context,
-                        workflow_parameters={'structure_mode': structure_mode},
+                        workflow_parameters={'structure_mode': fixed_writer_structure},
                     )
             elif attachments_available:
                 def bound_trigger(
@@ -1030,11 +1036,8 @@ def _workflow_trigger_tools(
             'Workflow can generate from text or collect images itself.'
         )
         structure_guidance = (
-            ' Set structure_mode="flat" only for a new article explicitly requested as '
-            'continuous prose without subheadings. Set structure_mode="sectioned" for an '
-            'explicitly sectioned document, all non-creation operations, or the documented '
-            'fallback when clarification is unavailable.'
-            if workflow_id == 'writer-workflow' else ''
+            f' The Host has fixed structure_mode={writer_structure_route!r}; do not reclassify it.'
+            if workflow_id == 'writer-workflow' and task_mode else ''
         )
         clarification_guidance = (
             ' If this turn follows startup clarification, request_context must merge the '
@@ -1144,9 +1147,13 @@ def resolve_workflow_injection(
             ],
         ]
     session_holder: Dict[str, str] = {'session_id': session_id}
+    task_mode = bool(cfg.get('task_mode'))
+    writer_structure_route = str(cfg.get('writer_structure_route') or '')
     trigger_tools = _workflow_trigger_tools(
         activations, allowed_refs, current_query, conversation_id, session_holder,
         conversation_history,
+        task_mode=task_mode,
+        writer_structure_route=writer_structure_route,
     )
     toolkit = HostWorkflowToolkit(
         _client, allowed_workflow_ids=allowed_ids, origin_ref=conversation_id,
@@ -1349,6 +1356,27 @@ def resolve_workflow_injection(
         )
     elif discovery_context.prompt:
         selection_context = discovery_context.prompt
+    if task_mode and writer_structure_route:
+        if writer_structure_route == 'clarify':
+            writer_route_context = (
+                '## Writer Structure Routing [AUTHORITATIVE]\n'
+                'This new-task writing request does not state a clear length or presentation '
+                'structure. Do not trigger the Writer Workflow and do not choose a default. '
+                'Call ask_user now with exactly one single-choice question: '
+                '`您希望文章使用哪种结构？`; choices: `连续正文（不使用小标题）` and '
+                '`分章节展开`; set allow_other=false. End the turn after that tool call.'
+            )
+        else:
+            writer_route_context = (
+                '## Writer Structure Routing [AUTHORITATIVE]\n'
+                f'The task-mode structure router fixed this request to '
+                f'`{writer_structure_route}`. Trigger the Writer Workflow without a '
+                '`structure_mode` argument; the Host supplies it. Do not ask again and do not '
+                'reinterpret the structure from the topic.'
+            )
+        selection_context = '\n\n'.join(
+            value for value in (selection_context, writer_route_context) if value
+        )
     return WorkflowAgentContribution(
         tools, [], patch, selection_context, runtime_policy,
     )
