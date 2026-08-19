@@ -805,6 +805,7 @@ def _workflow_trigger_tools(
     conversation_id: str = '', session_holder: Optional[Dict[str, str]] = None,
     conversation_history: Optional[List[Dict[str, Any]]] = None,
     task_mode: bool = False, writer_structure_route: str = '',
+    writer_structure_resolver: Optional[Callable[[str], str]] = None,
 ) -> List[Any]:
     """Bind backend-prepared activations to public package reads."""
     attachments_available = _conversation_has_attachments()
@@ -875,6 +876,57 @@ def _workflow_trigger_tools(
                             'instruction': 'Read the current Ready frontier and continue execution.',
                         },
                     }
+                if bound_id == 'writer-workflow' and task_mode:
+                    structure_mode = str(
+                        (workflow_parameters or {}).get('structure_mode')
+                        or writer_structure_route
+                    ).strip()
+                    if not structure_mode:
+                        if writer_structure_resolver is None:
+                            raise WorkflowClientError(
+                                'WRITER_STRUCTURE_UNRESOLVED',
+                                'Task-mode Writer requires a presentation structure decision.',
+                            )
+                        structure_mode = str(
+                            writer_structure_resolver(effective_context) or ''
+                        ).strip()
+                    if structure_mode == 'clarify':
+                        question = {
+                            'text': '您希望文章使用哪种结构？',
+                            'type': 'single',
+                            'choices': ['连续正文（不使用小标题）', '分章节展开'],
+                            'allow_other': False,
+                        }
+                        return {
+                            'status': 'waiting',
+                            'outcome': 'writer_structure_clarification_required',
+                            'reason': (
+                                'Writer structure is unresolved. Call ask_user with the exact '
+                                'next_action arguments and end the turn; no Workflow Session exists.'
+                            ),
+                            'workflow_ref': bound_ref,
+                            'workflow_id': bound_id,
+                            'request_context': effective_context,
+                            'next_action': {
+                                'tool': 'ask_user',
+                                'arguments': {'questions': [question]},
+                            },
+                        }
+                    if structure_mode not in {'flat', 'sectioned'}:
+                        raise WorkflowClientError(
+                            'WRITER_STRUCTURE_INVALID',
+                            'Task-mode Writer structure must be flat or sectioned.',
+                            details={'structure_mode': structure_mode},
+                        )
+                    workflow_parameters = {
+                        **(workflow_parameters or {}),
+                        'task_mode': True,
+                        'structure_mode': structure_mode,
+                    }
+                    LOG.info(
+                        'task-mode Writer trigger resolved structure_mode=%s',
+                        structure_mode,
+                    )
                 resolved_bindings: Dict[str, Any] = {}
                 for material_id, attachment_ref in (input_bindings or {}).items():
                     from lazymind.chat.engine.subagent.tools import _resolve_attachment
@@ -993,7 +1045,10 @@ def _workflow_trigger_tools(
                     return run_trigger(
                         input_bindings=input_bindings,
                         request_context=request_context,
-                        workflow_parameters={'structure_mode': fixed_writer_structure},
+                        workflow_parameters={
+                            'task_mode': True,
+                            'structure_mode': fixed_writer_structure,
+                        },
                     )
             elif fixed_writer_structure:
                 def bound_trigger(
@@ -1002,7 +1057,10 @@ def _workflow_trigger_tools(
                     """Initialize AI Writer with the Host-resolved presentation structure."""
                     return run_trigger(
                         request_context=request_context,
-                        workflow_parameters={'structure_mode': fixed_writer_structure},
+                        workflow_parameters={
+                            'task_mode': True,
+                            'structure_mode': fixed_writer_structure,
+                        },
                     )
             elif attachments_available:
                 def bound_trigger(
@@ -1045,7 +1103,12 @@ def _workflow_trigger_tools(
                 workflow_id == 'writer-workflow'
                 and task_mode
                 and writer_structure_route in {'flat', 'sectioned'}
-            ) else ''
+            ) else (
+                ' In task mode, the Host resolves Writer structure when this tool is called. '
+                'If the result has outcome=writer_structure_clarification_required, call '
+                'ask_user with the exact next_action.arguments and end the turn.'
+                if workflow_id == 'writer-workflow' and task_mode else ''
+            )
         )
         clarification_guidance = (
             ' If this turn follows startup clarification, request_context must merge the '
@@ -1080,6 +1143,7 @@ def resolve_workflow_injection(
     allowed_workflow_refs: Optional[List[str]] = None,
     workflow_activations: Optional[List[Dict[str, Any]]] = None,
     conversation_history: Optional[List[Dict[str, Any]]] = None,
+    writer_structure_resolver: Optional[Callable[[str], str]] = None,
 ) -> WorkflowAgentContribution:
     """Map public Workflow APIs to LazyMind Chat tools; no Runtime decisions live here."""
     cfg = _agentic_config()
@@ -1162,6 +1226,7 @@ def resolve_workflow_injection(
         conversation_history,
         task_mode=task_mode,
         writer_structure_route=writer_structure_route,
+        writer_structure_resolver=writer_structure_resolver,
     )
     toolkit = HostWorkflowToolkit(
         _client, allowed_workflow_ids=allowed_ids, origin_ref=conversation_id,
