@@ -429,11 +429,11 @@ def _build_ask_user_tool() -> list:
 
 
 def _build_writer_structure_ask_tool() -> list:
-    """Return a fixed two-choice ask_user tool for task-mode writer routing."""
+    """Return a no-argument stop-tool for task-mode Writer structure routing."""
     from lazymind.chat.engine.tools.ask_user import ask_user as send_ask_user
 
-    def ask_user() -> str:
-        """Ask the required task-mode Writer structure question and end the turn."""
+    def ask_writer_structure() -> str:
+        """Ask the fixed Writer structure question after its trigger requests clarification."""
         return send_ask_user(
             questions=[{
                 'text': WRITER_STRUCTURE_QUESTION,
@@ -443,7 +443,7 @@ def _build_writer_structure_ask_tool() -> list:
             }],
         )
 
-    return [ask_user]
+    return [ask_writer_structure]
 
 
 def _should_register_ask_user(
@@ -1083,9 +1083,19 @@ async def _handle_chat_impl(
     if writer_structure_route == 'clarify' and 'ask_user' not in disabled:
         allow_ask_user = True
     ask_user_tools = (
+        _build_ask_user_tool()
+        if allow_ask_user and writer_structure_route != 'clarify'
+        else []
+    )
+    writer_structure_ask_tools = (
         _build_writer_structure_ask_tool()
-        if writer_structure_route == 'clarify' and allow_ask_user
-        else _build_ask_user_tool() if allow_ask_user else []
+        if (
+            runtime.task_mode
+            and writer_structure_route in {'', 'clarify'}
+            and not workflow_turn_is_bound
+            and 'ask_user' not in disabled
+        )
+        else []
     )
     ask_user_configs = [ASK_USER_TOOL_CONFIG] if ask_user_tools else []
     # Generic chat files are not Workflow artifacts. Keeping save_chat_artifact
@@ -1099,13 +1109,14 @@ async def _handle_chat_impl(
     )
     intent_tools = [] if workflow_turn_is_bound else [intentwriter]
     all_tools = (intent_tools + agent_tools + artifact_tools + subagent_tools + attachment_tools
-                 + skill_listing_tools + ask_user_tools + workflow_tools + mcp_tools)
+                 + skill_listing_tools + ask_user_tools + writer_structure_ask_tools
+                 + workflow_tools + mcp_tools)
     if writer_structure_route == 'clarify':
         # Task-mode writer clarification is a hard boundary before Workflow creation.
         # Keep only ChatAgent-owned clarification tools so execution cannot bypass it.
         active_configs = []
         attachment_configs = []
-        all_tools = [intentwriter, *ask_user_tools]
+        all_tools = [intentwriter, *writer_structure_ask_tools]
     active_workflow_tool_isolation = bool(
         isinstance(effective_workflow_context, dict)
         and effective_workflow_context.get('session_id')
@@ -1376,6 +1387,8 @@ async def _handle_chat_impl(
     stop_tools = list(workflow_contribution.stop_tools)
     if allow_ask_user and 'ask_user' not in stop_tools:
         stop_tools.append('ask_user')
+    if writer_structure_ask_tools and 'ask_writer_structure' not in stop_tools:
+        stop_tools.append('ask_writer_structure')
 
     plan = AgentRunPlan(
         role=AgentRole.CHAT,

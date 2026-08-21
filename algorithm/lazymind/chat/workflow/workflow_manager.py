@@ -895,25 +895,19 @@ def _workflow_trigger_tools(
                             writer_structure_resolver(effective_context) or ''
                         ).strip()
                     if structure_mode == 'clarify':
-                        question = {
-                            'text': WRITER_STRUCTURE_QUESTION,
-                            'type': 'single',
-                            'choices': list(WRITER_STRUCTURE_CHOICES),
-                            'allow_other': False,
-                        }
                         return {
                             'status': 'waiting',
                             'outcome': 'writer_structure_clarification_required',
                             'reason': (
-                                'Writer structure is unresolved. Call ask_user with the exact '
-                                'next_action arguments and end the turn; no Workflow Session exists.'
+                                'Writer structure is unresolved. Call the no-argument '
+                                'ask_writer_structure tool and end the turn; no Workflow Session exists.'
                             ),
                             'workflow_ref': bound_ref,
                             'workflow_id': bound_id,
                             'request_context': effective_context,
                             'next_action': {
-                                'tool': 'ask_user',
-                                'arguments': {'questions': [question]},
+                                'tool': 'ask_writer_structure',
+                                'arguments': {},
                             },
                         }
                     if structure_mode not in {'flat', 'sectioned'}:
@@ -1109,8 +1103,8 @@ def _workflow_trigger_tools(
                 and writer_structure_route in {'flat', 'sectioned'}
             ) else (
                 ' In task mode, the Host resolves Writer structure when this tool is called. '
-                'If the result has outcome=writer_structure_clarification_required, call '
-                'ask_user with the exact next_action.arguments and end the turn.'
+                'If the result has outcome=writer_structure_clarification_required, call the '
+                'no-argument ask_writer_structure tool and end the turn.'
                 if workflow_id == 'writer-workflow' and task_mode else ''
             )
         )
@@ -1439,9 +1433,9 @@ def resolve_workflow_injection(
                 '## Writer Structure Routing [AUTHORITATIVE]\n'
                 'This new-task writing request does not state a clear length or presentation '
                 'structure. Do not trigger the Writer Workflow and do not choose a default. '
-                'Call ask_user now with exactly one single-choice question: '
-                f'`{WRITER_STRUCTURE_QUESTION}`; choices: `{WRITER_STRUCTURE_CHOICES[0]}` and '
-                f'`{WRITER_STRUCTURE_CHOICES[1]}`; set allow_other=false. End the turn after that tool call.'
+                'Call the no-argument `ask_writer_structure` tool now. It owns the fixed question '
+                f'`{WRITER_STRUCTURE_QUESTION}` and the choices `{WRITER_STRUCTURE_CHOICES[0]}` and '
+                f'`{WRITER_STRUCTURE_CHOICES[1]}`. End the turn after that tool call.'
             )
         else:
             writer_route_context = (

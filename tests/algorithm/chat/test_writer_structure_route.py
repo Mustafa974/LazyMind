@@ -1,7 +1,13 @@
+import importlib
+import inspect
+
 from lazymind.chat.engine.prompts.writer_structure import (
+    WRITER_STRUCTURE_CHOICES,
+    WRITER_STRUCTURE_QUESTION,
     resolve_writer_structure_route,
     writer_structure_route_from_ask_answer,
 )
+from lazymind.chat.service import chat_service
 
 
 def test_writer_structure_route_accepts_model_decision():
@@ -104,3 +110,27 @@ def test_writer_structure_route_maps_fixed_ask_user_answer():
         '您希望文章使用哪种结构？：分章节展开',
     ) == 'sectioned'
     assert writer_structure_route_from_ask_answer('写一篇连续正文') is None
+
+
+def test_writer_structure_ask_tool_owns_fixed_parameters(monkeypatch):
+    captured = {}
+    ask_user_module = importlib.import_module('lazymind.chat.engine.tools.ask_user')
+
+    def fake_ask_user(**kwargs):
+        captured.update(kwargs)
+        return 'waiting'
+
+    monkeypatch.setattr(ask_user_module, 'ask_user', fake_ask_user)
+    tool = chat_service._build_writer_structure_ask_tool()[0]
+
+    assert tool.__name__ == 'ask_writer_structure'
+    assert not inspect.signature(tool).parameters
+    assert tool() == 'waiting'
+    assert captured == {
+        'questions': [{
+            'text': WRITER_STRUCTURE_QUESTION,
+            'type': 'single',
+            'choices': list(WRITER_STRUCTURE_CHOICES),
+            'allow_other': False,
+        }],
+    }

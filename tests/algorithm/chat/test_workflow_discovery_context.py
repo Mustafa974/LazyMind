@@ -184,7 +184,7 @@ def test_task_writer_clarification_hides_trigger_and_requires_ask_user():
 
     tool_names = {getattr(tool, '__name__', '') for tool in contribution.tools}
     assert 'trigger_writer_workflow' not in tool_names
-    assert 'Call ask_user now' in contribution.runtime_context
+    assert 'ask_writer_structure' in contribution.runtime_context
     assert '连续正文（不使用小标题）' in contribution.runtime_context
     assert '分章节展开' in contribution.runtime_context
 
@@ -279,15 +279,8 @@ def test_task_writer_trigger_requests_ask_user_before_session_creation(monkeypat
     assert result['outcome'] == 'writer_structure_clarification_required'
     assert 'session_id' not in result
     assert result['next_action'] == {
-        'tool': 'ask_user',
-        'arguments': {
-            'questions': [{
-                'text': '您希望文章使用哪种结构？',
-                'type': 'single',
-                'choices': ['连续正文（不使用小标题）', '分章节展开'],
-                'allow_other': False,
-            }],
-        },
+        'tool': 'ask_writer_structure',
+        'arguments': {},
     }
 
 
