@@ -1102,7 +1102,7 @@ class WriterToolkitBase:
         )
         warnings = []
         visual_plan = VisualPlan().model_dump()
-        if not _markdown_media_is_explicitly_disabled(str(writing_task.get('query') or '')):
+        if not _markdown_media_is_explicitly_disabled(writing_task):
             try:
                 visual_result = planning.generate_short_visual_plan(
                     task=task_path,
