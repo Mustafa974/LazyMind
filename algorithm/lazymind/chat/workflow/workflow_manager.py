@@ -15,6 +15,10 @@ from typing import Any, Callable, Dict, List, Optional, Union
 import httpx
 import lazyllm
 
+from lazymind.chat.engine.prompts.writer_structure import (
+    WRITER_STRUCTURE_CHOICES,
+    WRITER_STRUCTURE_QUESTION,
+)
 from lazymind.chat.engine.tools.intent_writer import enable_workflow_intent_scopes
 from lazymind.workflow_sdk import AdvanceRequest, StepCommand, WorkflowClient, WorkflowClientError
 from lazymind.workflow_toolkit import (
@@ -892,9 +896,9 @@ def _workflow_trigger_tools(
                         ).strip()
                     if structure_mode == 'clarify':
                         question = {
-                            'text': '您希望文章使用哪种结构？',
+                            'text': WRITER_STRUCTURE_QUESTION,
                             'type': 'single',
-                            'choices': ['连续正文（不使用小标题）', '分章节展开'],
+                            'choices': list(WRITER_STRUCTURE_CHOICES),
                             'allow_other': False,
                         }
                         return {
@@ -1436,8 +1440,8 @@ def resolve_workflow_injection(
                 'This new-task writing request does not state a clear length or presentation '
                 'structure. Do not trigger the Writer Workflow and do not choose a default. '
                 'Call ask_user now with exactly one single-choice question: '
-                '`您希望文章使用哪种结构？`; choices: `连续正文（不使用小标题）` and '
-                '`分章节展开`; set allow_other=false. End the turn after that tool call.'
+                f'`{WRITER_STRUCTURE_QUESTION}`; choices: `{WRITER_STRUCTURE_CHOICES[0]}` and '
+                f'`{WRITER_STRUCTURE_CHOICES[1]}`; set allow_other=false. End the turn after that tool call.'
             )
         else:
             writer_route_context = (

@@ -66,6 +66,8 @@ from lazymind.chat.engine.tools.intent_writer import (
 )
 from lazymind.chat.engine.tools.skill_listing import build_list_skills_tool
 from lazymind.chat.engine.prompts.writer_structure import (
+    WRITER_STRUCTURE_CHOICES,
+    WRITER_STRUCTURE_QUESTION,
     resolve_writer_structure_route,
     writer_structure_route_from_ask_answer,
 )
@@ -434,9 +436,9 @@ def _build_writer_structure_ask_tool() -> list:
         """Ask the required task-mode Writer structure question and end the turn."""
         return send_ask_user(
             questions=[{
-                'text': '您希望文章使用哪种结构？',
+                'text': WRITER_STRUCTURE_QUESTION,
                 'type': 'single',
-                'choices': ['连续正文（不使用小标题）', '分章节展开'],
+                'choices': list(WRITER_STRUCTURE_CHOICES),
                 'allow_other': False,
             }],
         )

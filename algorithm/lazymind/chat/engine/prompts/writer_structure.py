@@ -8,10 +8,14 @@ from typing import Any, Callable, Literal, Optional
 WriterStructureRoute = Literal['flat', 'sectioned', 'clarify']
 
 
-_STRUCTURE_QUESTION = '您希望文章使用哪种结构？'
+WRITER_STRUCTURE_QUESTION = '您希望文章使用哪种结构？'
+WRITER_STRUCTURE_CHOICES = (
+    '连续正文（不使用小标题）',
+    '分章节展开',
+)
 _STRUCTURE_ANSWERS: dict[str, WriterStructureRoute] = {
-    '连续正文（不使用小标题）': 'flat',
-    '分章节展开': 'sectioned',
+    WRITER_STRUCTURE_CHOICES[0]: 'flat',
+    WRITER_STRUCTURE_CHOICES[1]: 'sectioned',
 }
 
 _CLASSIFIER_PROMPT = '''Classify the Writer presentation structure after ChatAgent has selected
@@ -100,7 +104,7 @@ def writer_structure_route_from_ask_answer(query: str) -> Optional[WriterStructu
     """Map the fixed Ask User choice to its route without reclassifying the request."""
     normalized = re.sub(r'\s+', ' ', str(query or '')).strip()
     match = re.fullmatch(
-        rf'{re.escape(_STRUCTURE_QUESTION)}\s*[:：]\s*(.+)',
+        rf'{re.escape(WRITER_STRUCTURE_QUESTION)}\s*[:：]\s*(.+)',
         normalized,
     )
     if match is None:
