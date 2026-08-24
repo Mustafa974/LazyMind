@@ -892,7 +892,7 @@ export function SlotVersionPopover({
   const [flushing, setFlushing] = useState(false);
   const versionUploadRef = useRef<HTMLInputElement>(null);
   const { getSlotVersions, rollbackSlotItem, patchSlotItemValue } = useWorkflowStore();
-  const isWriterDraft = slotId === 'draft_document';
+  const isWriterDraft = slotId === 'draft_document' || slotId === 'flat_draft_document';
   const versionLabel = (revision: number) => isWriterDraft
     ? tr('chat.writerIR.localVersion', { version: revision })
     : `v${revision}`;
@@ -3117,7 +3117,9 @@ function SlotJsonFile({
     };
     delete nextValue.url;
 
-    const persistMode = resolvedSlotId === 'draft_document' ? 'draft' : mode;
+    const persistMode = ['draft_document', 'flat_draft_document'].includes(resolvedSlotId)
+      ? 'draft'
+      : mode;
     const revision = await patchSlotItemValue(
       sessionId, slotId, apiListIndex, nextValue, 'file', persistMode,
       typeof sourceRevision === 'number' ? sourceRevision : undefined,
@@ -3489,7 +3491,9 @@ function SlotInlineStructured({
       }
     }
     const serialized = replaceStructuredArtifactPayload(slot.artifact_value, document);
-    const persistMode = resolvedSlotId === 'draft_document' ? 'draft' : mode;
+    const persistMode = ['draft_document', 'flat_draft_document'].includes(resolvedSlotId)
+      ? 'draft'
+      : mode;
     const revision = await patchSlotItemValue(
       sessionId, slotId, apiListIndex, serialized, 'json', persistMode,
       typeof sourceRevision === 'number' ? sourceRevision : undefined,
@@ -3901,7 +3905,9 @@ function SlotMarkdownFile({
       apiListIndex,
       nextValue,
       'file',
-      resolvedSlotId === 'draft_document' ? 'draft' : 'checkpoint',
+      ['draft_document', 'flat_draft_document'].includes(resolvedSlotId)
+        ? 'draft'
+        : 'checkpoint',
       baseRevision,
     );
     setContent(markdown);
