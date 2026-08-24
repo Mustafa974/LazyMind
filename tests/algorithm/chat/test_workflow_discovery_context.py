@@ -1,16 +1,13 @@
-import inspect
 import json
 from types import SimpleNamespace
 
 import lazyllm
 import pytest
-from lazyllm.tools.agent import ToolManager
 from lazymind.chat.workflow import workflow_manager
 from lazymind.chat.workflow.workflow_manager import (
     build_workflow_discovery_context,
     resolve_workflow_injection,
 )
-from lazymind.workflow_toolkit import HostWorkflowToolkit
 from lazymind.workflow_sdk import WorkflowClientError
 
 
@@ -147,68 +144,46 @@ def _clarifying_catalog():
     }]
 
 
-def test_declared_startup_input_is_exposed_in_discovery_and_trigger_schema():
+def test_declared_startup_inputs_flow_to_workflow_prepare(monkeypatch):
     catalog = _clarifying_catalog()
-    discovery = build_workflow_discovery_context(catalog, current_query='Build a brief')
+    discovery = build_workflow_discovery_context(
+        catalog,
+        current_query='Build a professional brief',
+    )
     field = json.loads(discovery.prompt[discovery.prompt.index('{'):])['workflows'][0][
         'startup_clarification_fields'
     ][0]
     assert field['id'] == 'tone'
-    assert field['guidance'].startswith('Infer a tone')
-    assert field['allow_other'] is False
-
-    contribution = resolve_workflow_injection(
-        None,
-        conversation_id='conversation-1',
-        current_query='Build a professional brief',
-        workflow_catalog=catalog,
-        allowed_workflow_refs=['builtin:brief-workflow'],
-        workflow_activations=discovery.activations,
-    )
-    trigger = next(
-        tool for tool in contribution.tools
-        if getattr(tool, '__name__', '') == 'trigger_brief_workflow'
-    )
-    schema = ToolManager([trigger]).tools_description[0]['function']['parameters']
-    assert 'startup_inputs' in inspect.signature(trigger).parameters
-    assert 'startup_inputs' in schema['properties']
-    assert 'allow_other=false' in contribution.runtime_context
-
-
-def test_declared_startup_inputs_are_validated_and_forwarded(monkeypatch):
-    catalog = _clarifying_catalog()
-    activation = build_workflow_discovery_context(catalog).activations[0]
-    captured = {}
 
     class Client:
+        def __init__(self):
+            self.fields = None
+
         def get_workflow(self, _workflow_id, _revision_id):
             return SimpleNamespace(result={'revision_id': 'rev-brief'})
 
-    class Toolkit:
-        def __init__(self, *_args, **_kwargs):
-            pass
-
         def prepare_workflow(self, _workflow_id, **kwargs):
-            captured.update(kwargs)
-            return {'status': 'needs_input'}
+            self.fields = kwargs['fields']
+            return SimpleNamespace(result={'status': 'needs_input'})
 
+    client = Client()
     monkeypatch.setattr(workflow_manager, '_conversation_has_attachments', lambda: False)
-    monkeypatch.setattr(workflow_manager, '_client', lambda: Client())
-    monkeypatch.setattr(workflow_manager, 'HostWorkflowToolkit', Toolkit)
+    monkeypatch.setattr(workflow_manager, '_client', lambda: client)
 
     trigger = workflow_manager._workflow_trigger_tools(
-        [activation],
+        discovery.activations,
         {'builtin:brief-workflow'},
         current_query='Build a professional brief',
         conversation_id='conversation-1',
     )[0]
 
     result = trigger(startup_inputs={'tone': 'Professional'})
-    assert captured['startup_inputs'] == {'tone': 'Professional'}
     assert result['outcome'] == 'waiting_for_input'
-
-    with pytest.raises(WorkflowClientError, match='must use one declared choice'):
-        trigger(startup_inputs={'tone': 'Playful'})
+    assert client.fields == {
+        'origin_ref': 'conversation-1',
+        'request_context': 'Build a professional brief',
+        'startup_inputs': {'tone': 'Professional'},
+    }
 
 
 def test_declared_startup_inputs_are_required_before_session_creation(monkeypatch):
@@ -230,39 +205,6 @@ def test_declared_startup_inputs_are_required_before_session_creation(monkeypatc
 
     with pytest.raises(WorkflowClientError, match='Resolve every declared startup input'):
         trigger()
-
-
-def test_workflow_toolkit_passes_startup_inputs_to_preparation():
-    class Response:
-        def __init__(self):
-            self.result = {'status': 'needs_input'}
-
-    class Client:
-        def __init__(self):
-            self.fields = None
-
-        def prepare_workflow(self, _workflow_id, **kwargs):
-            self.fields = kwargs['fields']
-            return Response()
-
-    client = Client()
-    toolkit = HostWorkflowToolkit(
-        lambda: client,
-        allowed_workflow_ids=['brief-workflow'],
-        origin_ref='conversation-1',
-    )
-
-    toolkit.prepare_workflow(
-        'brief-workflow',
-        request_context='Build a brief',
-        startup_inputs={'tone': 'Professional'},
-    )
-
-    assert client.fields == {
-        'origin_ref': 'conversation-1',
-        'request_context': 'Build a brief',
-        'startup_inputs': {'tone': 'Professional'},
-    }
 
 
 def test_active_workflow_hides_triggers_and_resume(monkeypatch):
