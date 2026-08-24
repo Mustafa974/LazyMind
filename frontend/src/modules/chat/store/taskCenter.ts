@@ -118,10 +118,6 @@ export interface SubAgentTask {
   execution_log: TaskLogEntry[];
 }
 
-export function isTaskCenterVisibleTask(task: Pick<SubAgentTask, 'agent_type'>): boolean {
-  return task.agent_type !== 'workflow_step';
-}
-
 function artifactKey(a: TaskArtifact): string {
   return `${a.slot}#${a.seq}`;
 }
@@ -695,8 +691,8 @@ export const useTaskCenterStore = create<TaskCenterStore>()((set, get) => ({
             if (payload.agent_type === 'workflow_step') {
               scheduleWorkflowSessionRefresh(conversationId);
             }
-            // Workflow steps stay out of TaskCenter UI, but their live events
-            // still drive Writer outline and draft previews in WorkflowPanel.
+            // Keep workflow steps in the shared task store. Ordinary mode
+            // aggregates them, while developer mode renders every attempt.
             get().upsertTask(conversationId, {
               task_id: payload.task_id,
               trigger_history_id: payload.trigger_history_id,
