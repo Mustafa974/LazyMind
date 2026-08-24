@@ -45,7 +45,6 @@ class ChatRuntimeOptions(BaseModel):
     context_prompt_export: bool = False
     context_preview_allow_llm_routing: bool = False
     skip_sensitive_filter: bool = False
-    task_mode: bool = False
 
 
 class ChatPersonalizationOptions(BaseModel):

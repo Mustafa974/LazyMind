@@ -97,7 +97,9 @@ runtime:
       label: Style
       question: Which visual style should be used?
       type: single
-      choices: [Professional, Minimal]`, 1)
+      choices: [Professional, Minimal]
+      guidance: Infer a declared style only when the request is unambiguous.
+      allow_other: false`, 1)
 	result := Compile(workflowYAML, validState, "", ProfilePublish)
 	if !result.Valid {
 		t.Fatalf("expected valid runtime policy, diagnostics=%#v", result.Diagnostics)
@@ -106,7 +108,8 @@ runtime:
 	if !policy.CollectsKnowledge || policy.CompletedEditStep != "f" || len(policy.CompletedContinueSteps) != 1 || policy.CompletedContinueSteps[0] != "f" || len(policy.ExclusiveToolCapabilities) != 1 || policy.ExclusiveToolCapabilities[0] != "writer.create" || len(policy.PublisherOwnedSlots) != 1 || policy.PublisherOwnedSlots[0] != "final" {
 		t.Fatalf("runtime policy was not compiled: %#v", policy)
 	}
-	if len(policy.ClarificationFields) != 2 || policy.ClarificationFields[0].ID != "topic" || policy.ClarificationFields[1].Choices[1] != "Minimal" {
+	style := policy.ClarificationFields[1]
+	if len(policy.ClarificationFields) != 2 || policy.ClarificationFields[0].ID != "topic" || style.Choices[1] != "Minimal" || style.Guidance == "" || style.AllowOther == nil || *style.AllowOther {
 		t.Fatalf("runtime clarification fields were not compiled: %#v", policy.ClarificationFields)
 	}
 }

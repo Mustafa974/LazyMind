@@ -86,7 +86,7 @@ class WriterCommand(BaseModel):
     action: Literal['create', 'use_outline', 'rewrite', 'revise', 'read']
     source_role: Literal['none', 'outline', 'document']
     target_stage: Literal['prepared', 'outline', 'document']
-    next_step: Literal['outline', 'write_document', '__end__']
+    next_step: Literal['outline', 'write_flat_document', 'write_document', '__end__']
     structure_mode: Literal['flat', 'sectioned'] = 'sectioned'
     user_instruction: str
     source_ref: str | None = None
@@ -175,7 +175,7 @@ def _authoritative_writer_input_path(
         if str(remote_inputs.get(candidate) or '').strip()
     ), '')
     step_id = str((ctx.params or {}).get('step_id') or '').strip()
-    if step_id in {'outline', 'write_document'}:
+    if step_id in {'outline', 'write_flat_document', 'write_document'}:
         if require_workflow_binding and not authoritative:
             raise ValueError(
                 f'{keys[0]} is missing from authoritative workflow inputs.'
@@ -235,7 +235,7 @@ def writer_resolve_command(
     if action == 'read':
         next_step = '__end__'
     elif action == 'create' and structure_mode == 'flat':
-        next_step = 'write_document'
+        next_step = 'write_flat_document'
     elif action == 'rewrite' or (action == 'revise' and source_role == 'document'):
         next_step = 'write_document'
     else:
@@ -389,15 +389,21 @@ def _resolve_prepare_control(
 
 
 def _authoritative_writer_structure_mode() -> Literal['flat', 'sectioned']:
-    """Read the ChatAgent's routing decision without reinterpreting user text."""
+    """Read the validated Workflow startup decision without reinterpreting text."""
     ctx = require_context()
-    workflow_parameters = (ctx.params or {}).get('workflow_parameters') or {}
-    structure_mode = str(workflow_parameters.get('structure_mode') or '')
-    if workflow_parameters.get('task_mode') is True and not structure_mode:
-        raise ValueError('Task-mode Writer requires workflow_parameters.structure_mode.')
-    structure_mode = structure_mode or 'sectioned'
-    if structure_mode not in {'flat', 'sectioned'}:
-        raise ValueError('workflow_parameters.structure_mode must be flat or sectioned.')
+    startup_inputs = (ctx.params or {}).get('startup_inputs') or {}
+    selected = str(startup_inputs.get('structure_mode') or '').strip()
+    structure_mode = {
+        '连续正文（不使用小标题）': 'flat',
+        '分章节展开': 'sectioned',
+        # Accept machine values for non-Chat hosts that implement the same contract.
+        'flat': 'flat',
+        'sectioned': 'sectioned',
+    }.get(selected)
+    if structure_mode is None:
+        raise ValueError(
+            'Writer requires startup_inputs.structure_mode to be one declared choice.'
+        )
     return structure_mode
 
 
@@ -1407,7 +1413,10 @@ def writer_generate_short_document(
     resolved_media_assets_path: str = '',
 ) -> str:
     """Generate and persist one complete flat short document."""
-    events = DraftMarkdownStreamEventEmitter(require_context().emit)
+    events = DraftMarkdownStreamEventEmitter(
+        require_context().emit,
+        slot='flat_draft_document',
+    )
     try:
         document = WriterCreateToolkit().stream_short_document(
             writing_task_json=_read_json_string(writing_task_path),
@@ -2120,9 +2129,10 @@ def writer_preview_selection_rewrite(
         llm=AutoModel(model='llm'),
         artifact_store=str(_action_root(artifact_store, 'rewrite-preview')),
     )
-    if slot not in {'outline_document', 'draft_document'}:
+    if slot not in {'outline_document', 'flat_draft_document', 'draft_document'}:
         raise ValueError(
-            'selection rewrite requires an outline_document or draft_document slot.',
+            'selection rewrite requires an outline_document, flat_draft_document, '
+            'or draft_document slot.',
         )
     selection_type = str((selection or {}).get('type') or '')
     if isinstance(document, Mapping):
@@ -2145,7 +2155,7 @@ def writer_preview_selection_rewrite(
         candidate_path = Path(_save_writer_document(
             slot, revised,
             expected_stage='outline' if slot == 'outline_document' else None,
-            editable=slot == 'draft_document',
+            editable=slot in {'flat_draft_document', 'draft_document'},
             directory=Path(revision.artifact_store),
         ))
         result = {
@@ -2697,8 +2707,31 @@ def _draft_workspace_completion(
     }
 
 
-def writer_draft_workspace() -> dict:
-    """Run one existing draft workflow branch through deterministic top-level tools."""
+_FLAT_OUTPUT_SLOTS = {
+    'draft_document': 'flat_draft_document',
+    'writing_context_after_draft': 'flat_writing_context_after_draft',
+    'visual_plan': 'flat_visual_plan',
+    'resolved_media_assets': 'flat_resolved_media_assets',
+}
+
+
+def _published_draft_workspace_result(
+    result: Mapping[str, Any],
+    expected_structure: Literal['flat', 'sectioned'],
+) -> dict[str, Any]:
+    published = dict(result)
+    if expected_structure != 'flat':
+        return published
+    for source, target in _FLAT_OUTPUT_SLOTS.items():
+        if source in published:
+            published[target] = published.pop(source)
+    return published
+
+
+def _run_draft_workspace(
+    expected_structure: Literal['flat', 'sectioned'],
+) -> dict:
+    """Run one structure-specific draft branch through deterministic top-level tools."""
     _emit_writer_progress('正在读取成稿任务与已有 checkpoint')
     user_input = _authoritative_writer_user_input('')
     writer_command_path = _authoritative_writer_input_path(
@@ -2721,6 +2754,11 @@ def writer_draft_workspace() -> dict:
     draft_document_path = _authoritative_writer_input_path('draft_document')
     target_document_path = _authoritative_writer_input_path('target_document')
     command = _load_writer_command(writer_command_path)
+    if command.structure_mode != expected_structure:
+        raise ValueError(
+            f'This step requires structure_mode={expected_structure!r}; '
+            f'WriterCommand selected {command.structure_mode!r}.'
+        )
     continuing_completed_outline = (
         command.target_stage == 'outline'
         and command.action in {'create', 'use_outline'}
@@ -2779,14 +2817,18 @@ def writer_draft_workspace() -> dict:
         _emit_writer_progress('正在复用已完成的成稿 checkpoint')
         saved_keys = list(state.get('saved_artifact_keys') or [])
         if not state.get('artifacts_saved'):
-            saved_keys = _save_draft_workspace_artifacts(result)
+            saved_keys = _save_draft_workspace_artifacts(
+                _published_draft_workspace_result(result, expected_structure)
+            )
             state['artifacts_saved'] = True
             state['saved_artifact_keys'] = saved_keys
             _persist_draft_workspace_state(state, checkpoint_path, completed=True)
         return _draft_workspace_completion(result, saved_keys)
 
     resolved_media = str(result.get('resolved_media_assets') or '')
-    if operation == 'generate' and command.structure_mode == 'flat':
+    if expected_structure == 'flat':
+        if operation != 'generate' or command.action != 'create':
+            raise ValueError('write_flat_document only supports new flat document creation.')
         task = _read_json_file(writing_task_path)
         representation = str((task.get('output') or {}).get('representation') or '').strip()
         if representation not in {'markdown', 'ir'}:
@@ -3057,8 +3099,20 @@ def writer_draft_workspace() -> dict:
     state['result'] = result
     _persist_draft_workspace_state(state, checkpoint_path)
     _emit_writer_progress('成稿校验完成，正在保存工作区结果')
-    saved_keys = _save_draft_workspace_artifacts(result)
+    saved_keys = _save_draft_workspace_artifacts(
+        _published_draft_workspace_result(result, expected_structure)
+    )
     state['artifacts_saved'] = True
     state['saved_artifact_keys'] = saved_keys
     _persist_draft_workspace_state(state, checkpoint_path, completed=True)
     return _draft_workspace_completion(result, saved_keys)
+
+
+def writer_flat_draft_workspace() -> dict:
+    """Generate one new flat document on the dedicated flat Workflow path."""
+    return _run_draft_workspace('flat')
+
+
+def writer_draft_workspace() -> dict:
+    """Run the existing outline/rewrite/revision document path unchanged."""
+    return _run_draft_workspace('sectioned')

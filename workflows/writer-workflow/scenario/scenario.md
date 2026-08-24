@@ -19,7 +19,9 @@ revision cards. The ChatAgent chooses the applicable mode inside the current pro
 ### prepare
 
 Always begin a new workflow with `prepare`. It preserves the complete request, retrieves
-requested sources, and constructs writing context.
+requested sources, consumes the validated `structure_mode` startup input, and constructs
+writing context. The startup input is resolved before the Workflow Session exists; prepare
+must never ask the user or reinterpret the structure from request text.
 
 Cloud document URLs are resource identity, not optional prose context. The trigger and
 normalized request must preserve every source/destination URL supplied in the original
@@ -44,18 +46,24 @@ If the IR is bound to a cloud
 document, AI or frontend revision synchronizes that document and stores the
 provider-confirmed IR as the next artifact revision.
 
-### write_document
+### write_flat_document
 
-`write_document` owns the single user-visible `draft_document` slot and has three modes.
-
-Flat short-document generation mode:
+`write_flat_document` is the isolated flat-creation path and owns the user-visible
+`flat_draft_document` slot.
 
 1. skip `outline`;
 2. generate one whole-document `short_writing_plan` and derive its document-root `visual_plan`;
 3. resolve any planned visuals with the shared media pipeline;
 4. generate the complete Markdown article in one pass, using controlled media placeholders;
 5. replace resolved placeholders and save an H1 title followed by continuous body text as
-   `draft_document`.
+   `flat_draft_document`.
+
+It must not produce an outline, section instructions, or draft blocks.
+
+### write_document
+
+`write_document` keeps the existing sectioned generation, rewrite, and revision path and owns
+the user-visible `draft_document` slot.
 
 Sectioned generation/rewrite mode:
 
@@ -103,20 +111,21 @@ contains Image WriterBlocks.
 ## Supported paths
 
 - From scratch: `prepare → outline → write_document`
-- Flat short article: `prepare → write_document`
+- Flat short article: `prepare → write_flat_document`
 - Supplied Feishu outline: `prepare → outline → write_document`
 - Existing Feishu document revision: `prepare → write_document`
 - Existing Feishu document full rewrite: `prepare → write_document`
 - Outline only: `prepare → outline`
 
-Repeated AI changes rerun/rewind `outline` or `write_document`. Repeated frontend changes
+Repeated AI changes rerun/rewind the applicable document step. Repeated frontend changes
 create human revisions in the same slot. Do not create a second document-version store or
 a hidden current-document pointer.
 
 ## Artifact contract
 
 - From-scratch and Markdown inputs remain Markdown. Feishu and `.lmd` inputs remain IR.
-- `outline_document` and `draft_document` preserve that representation across steps.
+- `outline_document`, `flat_draft_document`, and `draft_document` preserve that representation
+  across steps.
 - IR draft documents have ui_editable=true; outline documents are not currently UI-editable.
 - During `write_document`, `writer_apply_revision` returns the authoritative next draft
   under `draft_document`, using the canonical `.md` or `.lmd` filename. Save that exact path immediately; do not
@@ -137,6 +146,7 @@ a hidden current-document pointer.
 | Read new sources or restart from changed requirements | `prepare` |
 | Generate/use/regenerate an outline | `outline`, prepare/generate mode |
 | Modify the current outline with AI | rerun `outline`, revision mode |
+| Generate a new flat article | `write_flat_document` |
 | Write/rewrite the body from the current outline | `write_document`, generation mode |
 | Modify an existing/generated body with AI | rerun `write_document`, revision mode |
 | Insert/replace/move/delete an image in the current body | rerun `write_document`, targeted revision mode |

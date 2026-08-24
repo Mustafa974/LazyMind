@@ -24,11 +24,11 @@ func TestSessionIntentTextReadsPersistedTriggerContext(t *testing.T) {
 	}
 }
 
-func TestSessionIntentWorkflowParametersReadsPersistedTriggerParameters(t *testing.T) {
-	got := sessionIntentWorkflowParameters(
-		`{"text":"write an article","workflow_parameters":{"structure_mode":"flat"}}`,
+func TestSessionIntentStartupInputsReadsPersistedTriggerInputs(t *testing.T) {
+	got := sessionIntentStartupInputs(
+		`{"text":"write an article","startup_inputs":{"structure_mode":"flat"}}`,
 	)
 	if got["structure_mode"] != "flat" {
-		t.Fatalf("unexpected workflow parameters: %#v", got)
+		t.Fatalf("unexpected startup inputs: %#v", got)
 	}
 }

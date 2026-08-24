@@ -27,9 +27,9 @@ when_to_use: >
   likewise preserve every user-supplied source and destination URL verbatim,
   including URLs supplied through ask_user; a content summary never replaces
   its locator.
-  In task mode only, when the Host supplies an immutable `structure_mode`, consume that
-  value and do not classify the request text again. Outside task mode, keep the existing
-  Workflow trigger and execution behavior unchanged.
+  Before triggering a new Writer session, resolve every declared startup input using the
+  Writer-owned guidance below. If a startup input is not explicit or unambiguously inferable,
+  ask the declared question once and trigger only after the answer is available.
 
 runtime:
   exclusive_tool_capabilities:
@@ -37,6 +37,29 @@ runtime:
     - writer.revise
   completed_continue_steps:
     - write_document
+  clarification_fields:
+    - id: structure_mode
+      label: 文章结构
+      question: 您希望文章使用哪种结构？
+      type: single
+      choices:
+        - 连续正文（不使用小标题）
+        - 分章节展开
+      allow_other: false
+      guidance: >
+        Resolve this field semantically after AI Writer has been selected. For a supplied
+        outline, an existing document rewrite or revision, or continuation of an existing
+        Writer artifact, resolve to 分章节展开 without asking. For a newly created article,
+        explicit presentation requirements override length: requests for chapters, sections,
+        or subheadings resolve to 分章节展开; requests for continuous prose or no chapters,
+        sections, or subheadings resolve to 连续正文（不使用小标题）. Requesting an outline as
+        a planning step does not by itself require sectioned final presentation. With no
+        explicit presentation requirement, requested output length at or below 1200 Chinese
+        characters/words, or an unquantified short article, resolves to 连续正文（不使用小标题）;
+        above 1200, or an unquantified long article, resolves to 分章节展开. Do not infer length
+        from topic complexity or from a merely quoted length. If neither presentation nor
+        length is clear, or explicit requirements conflict, leave the field missing so the
+        declared question is asked.
 
 tool_scripts:
   - path: scripts/tools.py
@@ -59,6 +82,7 @@ tool_scripts:
       - writer_resolve_visual_media
       - writer_resolve_revision_media
       - writer_generate_draft_document
+      - writer_flat_draft_workspace
       - writer_draft_workspace
       - writer_update_writing_context
       - writer_export_markdown
@@ -81,22 +105,23 @@ tool_scripts:
 
 artifact_actions:
   rewrite_selection:
-    slots: [outline_document, draft_document]
+    slots: [outline_document, flat_draft_document, draft_document]
     preview_tool: writer_preview_selection_rewrite
   sync_document:
     slots: [draft_document]
     execute_tool: writer_sync_document
   render_document:
-    slots: [source_document, outline_document, draft_document]
+    slots: [source_document, outline_document, flat_draft_document, draft_document]
     preview_tool: writer_render_document
     execute_tool: writer_render_document
   save_document:
-    slots: [outline_document, draft_document]
+    slots: [outline_document, flat_draft_document, draft_document]
     execute_tool: writer_save_document
 
 steps:
   - id: prepare
   - id: outline
+  - id: write_flat_document
   - id: write_document
 
 slots:
@@ -188,6 +213,22 @@ slots:
     label: Full Draft
     type: file
     cardinality: single
+  - id: flat_draft_document
+    label: Flat Draft
+    type: file
+    cardinality: single
+  - id: flat_writing_context_after_draft
+    label: Writing Context After Flat Draft
+    type: file
+    cardinality: single
+  - id: flat_visual_plan
+    label: Flat Visual Plan
+    type: file
+    cardinality: single
+  - id: flat_resolved_media_assets
+    label: Flat Resolved Media
+    type: file
+    cardinality: single
   - id: writing_context_after_draft
     label: Writing Context After Draft
     type: file
@@ -222,6 +263,8 @@ ui:
       widgetType: writer-document
     draft_document:
       widgetType: writer-document
+    flat_draft_document:
+      widgetType: writer-document
   tabs:
     - id: prepare
       step_id: prepare
@@ -245,17 +288,26 @@ ui:
       slots:
         - id: draft_document
 
+    - id: flat_result
+      step_id: write_flat_document
+      label: Final Document
+      layout: list
+      slots:
+        - id: flat_draft_document
+
 i18n:
   zh-CN:
     name: AI 写作
     steps:
       prepare: {label: 写作准备}
       outline: {label: 大纲}
+      write_flat_document: {label: 连续正文成稿}
       write_document: {label: 成稿}
     tabs:
       prepare: {label: 写作准备}
       outline: {label: 大纲}
       result: {label: 成稿}
+      flat_result: {label: 成稿}
     slots:
       writing_task: {label: 写作任务}
       writer_command: {label: 写作控制命令}
@@ -271,3 +323,7 @@ i18n:
       short_writing_plan: {label: 短文写作计划}
       draft_blocks: {label: 章节草稿}
       draft_document: {label: 成稿}
+      flat_draft_document: {label: 成稿}
+      flat_writing_context_after_draft: {label: 成稿写作上下文}
+      flat_visual_plan: {label: 短文视觉规划}
+      flat_resolved_media_assets: {label: 短文已解析图片素材}

@@ -41,16 +41,17 @@ def test_build_writing_task_extracts_document_length_constraints(query, expected
 
 
 @pytest.mark.parametrize(
-    ('structure_mode', 'expected_step'),
+    ('selected_structure', 'expected_mode', 'expected_step'),
     [
-        ('flat', 'write_document'),
-        ('sectioned', 'outline'),
+        ('连续正文（不使用小标题）', 'flat', 'write_flat_document'),
+        ('分章节展开', 'sectioned', 'outline'),
     ],
 )
-def test_writer_command_trusts_explicit_workflow_structure_mode(
+def test_writer_command_trusts_validated_startup_structure(
     monkeypatch,
     tmp_path,
-    structure_mode,
+    selected_structure,
+    expected_mode,
     expected_step,
 ):
     tools = _load_tools_module()
@@ -60,7 +61,7 @@ def test_writer_command_trusts_explicit_workflow_structure_mode(
         params={
             'step_id': 'prepare',
             'user_input': query,
-            'workflow_parameters': {'structure_mode': structure_mode},
+            'startup_inputs': {'structure_mode': selected_structure},
         },
     )
     monkeypatch.setattr(tools, 'require_context', lambda: context)
@@ -72,11 +73,11 @@ def test_writer_command_trusts_explicit_workflow_structure_mode(
     )
     command = tools._load_writer_command(command_path)
 
-    assert command.structure_mode == structure_mode
+    assert command.structure_mode == expected_mode
     assert command.next_step == expected_step
 
 
-def test_writer_command_does_not_infer_structure_mode_from_keywords(monkeypatch, tmp_path):
+def test_writer_command_rejects_missing_startup_structure(monkeypatch, tmp_path):
     tools = _load_tools_module()
     query = '写一篇连续正文，不使用小标题'
     context = SimpleNamespace(
@@ -85,33 +86,9 @@ def test_writer_command_does_not_infer_structure_mode_from_keywords(monkeypatch,
     )
     monkeypatch.setattr(tools, 'require_context', lambda: context)
 
-    command_path = tools.writer_resolve_command(
-        user_input=query,
-        action='create',
-        source_role='none',
-    )
-    command = tools._load_writer_command(command_path)
-
-    assert command.structure_mode == 'sectioned'
-    assert command.next_step == 'outline'
-
-
-def test_task_mode_writer_rejects_missing_structure_mode(monkeypatch, tmp_path):
-    tools = _load_tools_module()
-    query = '写一篇介绍新能源汽车降价的文章'
-    context = SimpleNamespace(
-        workspace_path=str(tmp_path),
-        params={
-            'step_id': 'prepare',
-            'user_input': query,
-            'workflow_parameters': {'task_mode': True},
-        },
-    )
-    monkeypatch.setattr(tools, 'require_context', lambda: context)
-
     with pytest.raises(
         ValueError,
-        match=r'Task-mode Writer requires workflow_parameters\.structure_mode',
+        match=r'Writer requires startup_inputs\.structure_mode',
     ):
         tools.writer_resolve_command(
             user_input=query,
@@ -120,15 +97,15 @@ def test_task_mode_writer_rejects_missing_structure_mode(monkeypatch, tmp_path):
         )
 
 
-def test_writer_workflow_consumes_task_mode_structure_from_host():
+def test_writer_workflow_declares_structure_startup_input():
     content = (_ROOT / 'workflows' / 'writer-workflow' / 'workflow.yaml').read_text(
         encoding='utf-8',
     )
 
-    assert 'In task mode only' in content
-    assert 'immutable `structure_mode`' in content
-    assert 'Outside task mode, keep the existing' in content
-    assert 'do not classify the request text again' in content
+    assert 'clarification_fields:' in content
+    assert 'id: structure_mode' in content
+    assert 'allow_other: false' in content
+    assert 'at or below 1200' in content
 
 
 def test_flat_draft_workspace_skips_outline_and_section_generation(monkeypatch, tmp_path):
@@ -138,7 +115,7 @@ def test_flat_draft_workspace_skips_outline_and_section_generation(monkeypatch, 
         action='create',
         source_role='none',
         target_stage='document',
-        next_step='write_document',
+        next_step='write_flat_document',
         structure_mode='flat',
         user_instruction=query,
         request_fingerprint=tools._writer_request_fingerprint(query),
@@ -164,10 +141,11 @@ def test_flat_draft_workspace_skips_outline_and_section_generation(monkeypatch, 
     updated_context_path = tmp_path / 'writing_context_after_draft.json'
     updated_context_path.write_text('{"context_id":"ctx-flat"}', encoding='utf-8')
     short_document_args = {}
+    saved_payload = {}
     context = SimpleNamespace(
         workspace_path=str(tmp_path),
         params={
-            'step_id': 'write_document',
+            'step_id': 'write_flat_document',
             'user_input': query,
             'remote_inputs': {
                 'writer_command': str(command_path),
@@ -216,16 +194,28 @@ def test_flat_draft_workspace_skips_outline_and_section_generation(monkeypatch, 
     monkeypatch.setattr(
         tools,
         '_save_draft_workspace_artifacts',
-        lambda _result: ['short_writing_plan', 'draft_document', 'writing_context_after_draft'],
+        lambda result: (
+            saved_payload.update(result),
+            [
+                'short_writing_plan',
+                'flat_draft_document',
+                'flat_writing_context_after_draft',
+                'flat_visual_plan',
+            ],
+        )[-1],
     )
 
-    result = tools.writer_draft_workspace()
+    result = tools.writer_flat_draft_workspace()
 
     assert calls == ['short_plan', 'short_visual_plan', 'short_document']
     assert result['structure_mode'] == 'flat'
     assert result['draft_section_count'] is None
     assert Path(short_document_args['visual_plan_path']).is_file()
     assert short_document_args['resolved_media_assets_path'] == ''
+    assert 'draft_document' not in saved_payload
+    assert saved_payload['flat_draft_document'] == str(draft_path)
+    assert saved_payload['flat_writing_context_after_draft'] == str(updated_context_path)
+    assert saved_payload['flat_visual_plan'] == str(visual_plan_path)
 
 
 def test_flat_draft_workspace_resolves_planned_visuals(monkeypatch, tmp_path):
@@ -235,7 +225,7 @@ def test_flat_draft_workspace_resolves_planned_visuals(monkeypatch, tmp_path):
         action='create',
         source_role='none',
         target_stage='document',
-        next_step='write_document',
+        next_step='write_flat_document',
         structure_mode='flat',
         user_instruction=query,
         request_fingerprint=tools._writer_request_fingerprint(query),
@@ -279,7 +269,7 @@ def test_flat_draft_workspace_resolves_planned_visuals(monkeypatch, tmp_path):
     context = SimpleNamespace(
         workspace_path=str(tmp_path),
         params={
-            'step_id': 'write_document',
+            'step_id': 'write_flat_document',
             'user_input': query,
             'remote_inputs': {
                 'writer_command': str(command_path),
@@ -337,7 +327,7 @@ def test_flat_draft_workspace_resolves_planned_visuals(monkeypatch, tmp_path):
         ],
     )
 
-    result = tools.writer_draft_workspace()
+    result = tools.writer_flat_draft_workspace()
 
     assert [name for name, _kwargs in calls] == ['resolve', 'draft']
     assert short_visual_plan_args == {
@@ -566,7 +556,10 @@ def test_markdown_assembly_drops_unregistered_images(monkeypatch, tmp_path):
 
 def test_short_visual_plan_is_generated_independently(monkeypatch, tmp_path):
     tools = _load_tools_module()
-    context = SimpleNamespace(workspace_path=str(tmp_path), params={'step_id': 'write_document'})
+    context = SimpleNamespace(
+        workspace_path=str(tmp_path),
+        params={'step_id': 'write_flat_document'},
+    )
     monkeypatch.setattr(tools, 'require_context', lambda: context)
     writing_task_path = tmp_path / 'writing_task.json'
     writing_task_path.write_text('{}', encoding='utf-8')
@@ -614,10 +607,11 @@ def test_short_visual_plan_is_generated_independently(monkeypatch, tmp_path):
 
 def test_short_document_fills_resolved_visual_placeholder(monkeypatch, tmp_path):
     tools = _load_tools_module()
+    emitted = []
     context = SimpleNamespace(
         workspace_path=str(tmp_path),
-        params={'step_id': 'write_document'},
-        emit=lambda _event: None,
+        params={'step_id': 'write_flat_document'},
+        emit=emitted.append,
     )
     captured = {}
 
@@ -660,13 +654,14 @@ def test_short_document_fills_resolved_visual_placeholder(monkeypatch, tmp_path)
     assert 'visual-document-1' in captured['media_assets_json']
     assert '![购车决策](https://example.com/short-visual.png)' in document
     assert 'media-placeholder://' not in document
+    assert all(event['slot'] == 'flat_draft_document' for event in emitted)
 
 
 def test_short_document_persists_ir_artifact(monkeypatch, tmp_path):
     tools = _load_tools_module()
     context = SimpleNamespace(
         workspace_path=str(tmp_path),
-        params={'step_id': 'write_document'},
+        params={'step_id': 'write_flat_document'},
         emit=lambda _event: None,
     )
 
@@ -871,7 +866,8 @@ def test_markdown_rewrite_no_image_request_skips_visual_planning(monkeypatch, tm
     assert result['document_title'] == 'Rewritten title'
 
 
-def test_selection_rewrite_uses_slot_markdown_artifact_filename(monkeypatch, tmp_path):
+@pytest.mark.parametrize('slot', ['flat_draft_document', 'draft_document'])
+def test_selection_rewrite_uses_slot_markdown_artifact_filename(monkeypatch, tmp_path, slot):
     tools = _load_tools_module()
 
     class FakeWriterRevisionTools:
@@ -907,12 +903,12 @@ def test_selection_rewrite_uses_slot_markdown_artifact_filename(monkeypatch, tmp
         instruction='润色',
         selection={'type': 'markdown', 'selected_text': 'Original body.'},
         artifact_store=str(tmp_path),
-        slot='draft_document',
+        slot=slot,
     )
 
     artifact = result['artifact']['value']
-    assert artifact['filename'] == 'draft_document.md'
-    assert Path(artifact['path']).name == 'draft_document.md'
+    assert artifact['filename'] == f'{slot}.md'
+    assert Path(artifact['path']).name == f'{slot}.md'
     assert Path(artifact['path']).read_text(encoding='utf-8') == (
         '# Title\n\nPolished body.\n'
     )

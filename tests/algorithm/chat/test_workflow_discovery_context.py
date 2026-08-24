@@ -3,6 +3,7 @@ import json
 from types import SimpleNamespace
 
 import lazyllm
+import pytest
 from lazyllm.tools.agent import ToolManager
 from lazymind.chat.workflow import workflow_manager
 from lazymind.chat.workflow.workflow_manager import (
@@ -10,6 +11,7 @@ from lazymind.chat.workflow.workflow_manager import (
     resolve_workflow_injection,
 )
 from lazymind.workflow_toolkit import HostWorkflowToolkit
+from lazymind.workflow_sdk import WorkflowClientError
 
 
 def _catalog():
@@ -123,87 +125,64 @@ def test_selected_workflow_expands_trigger_and_execution_tools():
     assert 'Explicit Workflow Selection' in contribution.runtime_context
 
 
-def test_non_task_writer_trigger_keeps_existing_tool_contract():
-    catalog = [{
-        'workflow_ref': 'builtin:writer-workflow',
-        'workflow_id': 'writer-workflow',
-        'name': 'AI Writer',
-        'description': 'Write a complete document.',
-        'when_to_use': 'Resolve presentation structure before triggering.',
-        'revision_id': 'rev-writer',
+def _clarifying_catalog():
+    return [{
+        'workflow_ref': 'builtin:brief-workflow',
+        'workflow_id': 'brief-workflow',
+        'name': 'Brief Builder',
+        'description': 'Build a brief.',
+        'when_to_use': 'Use when the user requests a brief.',
+        'revision_id': 'rev-brief',
+        'runtime': {
+            'clarification_fields': [{
+                'id': 'tone',
+                'label': 'Tone',
+                'question': 'Which tone should be used?',
+                'type': 'single',
+                'choices': ['Professional', 'Conversational'],
+                'guidance': 'Infer a tone only when the request states one unambiguously.',
+                'allow_other': False,
+            }],
+        },
     }]
+
+
+def test_declared_startup_input_is_exposed_in_discovery_and_trigger_schema():
+    catalog = _clarifying_catalog()
+    discovery = build_workflow_discovery_context(catalog, current_query='Build a brief')
+    field = json.loads(discovery.prompt[discovery.prompt.index('{'):])['workflows'][0][
+        'startup_clarification_fields'
+    ][0]
+    assert field['id'] == 'tone'
+    assert field['guidance'].startswith('Infer a tone')
+    assert field['allow_other'] is False
+
     contribution = resolve_workflow_injection(
         None,
         conversation_id='conversation-1',
-        current_query='写一篇文章',
+        current_query='Build a professional brief',
         workflow_catalog=catalog,
-        allowed_workflow_refs=['builtin:writer-workflow'],
-        workflow_activations=build_workflow_discovery_context(catalog).activations,
+        allowed_workflow_refs=['builtin:brief-workflow'],
+        workflow_activations=discovery.activations,
     )
     trigger = next(
         tool for tool in contribution.tools
-        if getattr(tool, '__name__', '') == 'trigger_writer_workflow'
+        if getattr(tool, '__name__', '') == 'trigger_brief_workflow'
     )
-
     schema = ToolManager([trigger]).tools_description[0]['function']['parameters']
-
-    assert 'structure_mode' not in inspect.signature(trigger).parameters
-    assert 'structure_mode' not in schema['properties']
-    assert 'Host has fixed structure_mode' not in (trigger.__doc__ or '')
-
-
-def test_task_writer_clarification_hides_trigger_and_requires_ask_user():
-    catalog = [{
-        'workflow_ref': 'builtin:writer-workflow',
-        'workflow_id': 'writer-workflow',
-        'name': 'AI Writer',
-        'description': 'Write a complete document.',
-        'when_to_use': 'Use for writing tasks.',
-        'revision_id': 'rev-writer',
-    }]
-    previous = lazyllm.globals.get('agentic_config')
-    lazyllm.globals['agentic_config'] = {
-        'enable_workflow': True,
-        'task_mode': True,
-        'writer_structure_route': 'clarify',
-    }
-    try:
-        contribution = resolve_workflow_injection(
-            None,
-            conversation_id='conversation-1',
-            current_query='写一篇新能源汽车降价的文章',
-            workflow_catalog=catalog,
-            allowed_workflow_refs=['builtin:writer-workflow'],
-            workflow_activations=build_workflow_discovery_context(catalog).activations,
-        )
-    finally:
-        if previous is None:
-            lazyllm.globals.pop('agentic_config', None)
-        else:
-            lazyllm.globals['agentic_config'] = previous
-
-    tool_names = {getattr(tool, '__name__', '') for tool in contribution.tools}
-    assert 'trigger_writer_workflow' not in tool_names
-    assert 'ask_writer_structure' in contribution.runtime_context
-    assert '连续正文（不使用小标题）' in contribution.runtime_context
-    assert '分章节展开' in contribution.runtime_context
+    assert 'startup_inputs' in inspect.signature(trigger).parameters
+    assert 'startup_inputs' in schema['properties']
+    assert 'allow_other=false' in contribution.runtime_context
 
 
-def test_task_writer_trigger_resolves_structure_after_writer_selection(monkeypatch):
-    catalog = [{
-        'workflow_ref': 'builtin:writer-workflow',
-        'workflow_id': 'writer-workflow',
-        'name': 'AI Writer',
-        'description': 'Write a complete document.',
-        'when_to_use': 'Use for writing tasks.',
-        'revision_id': 'rev-writer',
-    }]
+def test_declared_startup_inputs_are_validated_and_forwarded(monkeypatch):
+    catalog = _clarifying_catalog()
     activation = build_workflow_discovery_context(catalog).activations[0]
     captured = {}
 
     class Client:
         def get_workflow(self, _workflow_id, _revision_id):
-            return SimpleNamespace(result={'revision_id': 'rev-writer'})
+            return SimpleNamespace(result={'revision_id': 'rev-brief'})
 
     class Toolkit:
         def __init__(self, *_args, **_kwargs):
@@ -213,50 +192,27 @@ def test_task_writer_trigger_resolves_structure_after_writer_selection(monkeypat
             captured.update(kwargs)
             return {'status': 'needs_input'}
 
-    seen = []
-
-    def resolve_structure(query):
-        seen.append(query)
-        return 'flat'
-
-    monkeypatch.setattr(workflow_manager, '_conversation_has_attachments', lambda: True)
+    monkeypatch.setattr(workflow_manager, '_conversation_has_attachments', lambda: False)
     monkeypatch.setattr(workflow_manager, '_client', lambda: Client())
     monkeypatch.setattr(workflow_manager, 'HostWorkflowToolkit', Toolkit)
 
     trigger = workflow_manager._workflow_trigger_tools(
         [activation],
-        {'builtin:writer-workflow'},
-        current_query=(
-            '写一篇1000字的文章，使用我上传的图片，'
-            '只有文章标题和连续正文，不使用小标题。'
-        ),
+        {'builtin:brief-workflow'},
+        current_query='Build a professional brief',
         conversation_id='conversation-1',
-        task_mode=True,
-        writer_structure_resolver=resolve_structure,
     )[0]
 
-    result = trigger()
-
-    assert seen == [
-        '写一篇1000字的文章，使用我上传的图片，'
-        '只有文章标题和连续正文，不使用小标题。'
-    ]
-    assert captured['workflow_parameters'] == {
-        'task_mode': True,
-        'structure_mode': 'flat',
-    }
+    result = trigger(startup_inputs={'tone': 'Professional'})
+    assert captured['startup_inputs'] == {'tone': 'Professional'}
     assert result['outcome'] == 'waiting_for_input'
 
+    with pytest.raises(WorkflowClientError, match='must use one declared choice'):
+        trigger(startup_inputs={'tone': 'Playful'})
 
-def test_task_writer_trigger_requests_ask_user_before_session_creation(monkeypatch):
-    catalog = [{
-        'workflow_ref': 'builtin:writer-workflow',
-        'workflow_id': 'writer-workflow',
-        'name': 'AI Writer',
-        'description': 'Write a complete document.',
-        'when_to_use': 'Use for writing tasks.',
-        'revision_id': 'rev-writer',
-    }]
+
+def test_declared_startup_inputs_are_required_before_session_creation(monkeypatch):
+    catalog = _clarifying_catalog()
     activation = build_workflow_discovery_context(catalog).activations[0]
     monkeypatch.setattr(workflow_manager, '_conversation_has_attachments', lambda: False)
     monkeypatch.setattr(
@@ -267,24 +223,16 @@ def test_task_writer_trigger_requests_ask_user_before_session_creation(monkeypat
 
     trigger = workflow_manager._workflow_trigger_tools(
         [activation],
-        {'builtin:writer-workflow'},
-        current_query='写一篇关于新能源汽车的文章',
+        {'builtin:brief-workflow'},
+        current_query='Build a brief',
         conversation_id='conversation-1',
-        task_mode=True,
-        writer_structure_resolver=lambda _query: 'clarify',
     )[0]
 
-    result = trigger()
-
-    assert result['outcome'] == 'writer_structure_clarification_required'
-    assert 'session_id' not in result
-    assert result['next_action'] == {
-        'tool': 'ask_writer_structure',
-        'arguments': {},
-    }
+    with pytest.raises(WorkflowClientError, match='Resolve every declared startup input'):
+        trigger()
 
 
-def test_workflow_toolkit_passes_workflow_parameters_to_preparation():
+def test_workflow_toolkit_passes_startup_inputs_to_preparation():
     class Response:
         def __init__(self):
             self.result = {'status': 'needs_input'}
@@ -300,20 +248,20 @@ def test_workflow_toolkit_passes_workflow_parameters_to_preparation():
     client = Client()
     toolkit = HostWorkflowToolkit(
         lambda: client,
-        allowed_workflow_ids=['writer-workflow'],
+        allowed_workflow_ids=['brief-workflow'],
         origin_ref='conversation-1',
     )
 
     toolkit.prepare_workflow(
-        'writer-workflow',
-        request_context='写一篇文章',
-        workflow_parameters={'structure_mode': 'flat'},
+        'brief-workflow',
+        request_context='Build a brief',
+        startup_inputs={'tone': 'Professional'},
     )
 
     assert client.fields == {
         'origin_ref': 'conversation-1',
-        'request_context': '写一篇文章',
-        'workflow_parameters': {'structure_mode': 'flat'},
+        'request_context': 'Build a brief',
+        'startup_inputs': {'tone': 'Professional'},
     }
 
 

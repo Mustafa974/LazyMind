@@ -84,11 +84,13 @@ type CompiledBypass struct {
 // collect before it initializes a Workflow session. It is deliberately part of
 // the package contract: hosts must not branch on a particular workflow id.
 type ClarificationField struct {
-	ID       string   `json:"id" yaml:"id"`
-	Label    string   `json:"label,omitempty" yaml:"label,omitempty"`
-	Question string   `json:"question" yaml:"question"`
-	Type     string   `json:"type,omitempty" yaml:"type,omitempty"`
-	Choices  []string `json:"choices,omitempty" yaml:"choices,omitempty"`
+	ID         string   `json:"id" yaml:"id"`
+	Label      string   `json:"label,omitempty" yaml:"label,omitempty"`
+	Question   string   `json:"question" yaml:"question"`
+	Type       string   `json:"type,omitempty" yaml:"type,omitempty"`
+	Choices    []string `json:"choices,omitempty" yaml:"choices,omitempty"`
+	Guidance   string   `json:"guidance,omitempty" yaml:"guidance,omitempty"`
+	AllowOther *bool    `json:"allow_other,omitempty" yaml:"allow_other,omitempty"`
 }
 
 // RuntimePolicy contains host-neutral execution behavior declared by a

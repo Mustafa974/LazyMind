@@ -100,6 +100,9 @@ func TestWriterDocumentRenderSlotIncludesSource(t *testing.T) {
 	if _, ok := writerDocumentSlot("source_document"); ok {
 		t.Fatal("source_document must remain read-only")
 	}
+	if slot, ok := writerDocumentSlot("flat_draft_document"); !ok || slot != "flat_draft_document" {
+		t.Fatalf("flat_draft_document slot = %q, %v", slot, ok)
+	}
 }
 
 func TestLoadWriterWriteBackArtifact_InlineMarkdown(t *testing.T) {

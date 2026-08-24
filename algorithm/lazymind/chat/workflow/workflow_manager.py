@@ -10,15 +10,11 @@ import json
 import logging
 import re
 from dataclasses import asdict, dataclass
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import httpx
 import lazyllm
 
-from lazymind.chat.engine.prompts.writer_structure import (
-    WRITER_STRUCTURE_CHOICES,
-    WRITER_STRUCTURE_QUESTION,
-)
 from lazymind.chat.engine.tools.intent_writer import enable_workflow_intent_scopes
 from lazymind.workflow_sdk import AdvanceRequest, StepCommand, WorkflowClient, WorkflowClientError
 from lazymind.workflow_toolkit import (
@@ -524,12 +520,17 @@ def _runtime_clarification_fields(runtime_policy: Any) -> List[Dict[str, Any]]:
             choice for value in (raw.get('choices') or [])
             if (choice := _clean_workflow_text(value))
         ]
+        allow_other = raw.get('allow_other', True)
+        if not isinstance(allow_other, bool):
+            allow_other = True
         result.append({
             'id': field_id,
             'label': _clean_workflow_text(raw.get('label')) or field_id,
             'question': question,
             'type': question_type,
             'choices': choices,
+            'guidance': _clean_workflow_text(raw.get('guidance')),
+            'allow_other': allow_other,
         })
     return result
 
@@ -692,21 +693,100 @@ def _startup_clarification_guidance(runtime_policy: Any) -> str:
         'This Workflow declares startup_clarification_fields. Before calling its trigger, '
         'inspect the current request, relevant attachment names/content already available, '
         'and prior conversation turns. Treat a field as present only when it is explicit or '
-        'unambiguously inferable. Do not ask for fields that are already present. If one or '
+        'unambiguously inferable under its declared guidance. Resolve every present field to a '
+        'startup_inputs value and pass all resolved values to the trigger. Do not ask for fields '
+        'that are already present. If one or '
         'more fields are missing, call ask_user exactly once TOTAL with only those missing fields, '
         'putting all of them in that single card, then stop without triggering the Workflow in '
-        'that turn. Include each '
-        'declared field id in its question object. Whenever meaningful, generate 2-4 concise, '
-        'context-specific suggested answers from the current request and use type=single so the '
-        'user can click one; declared choices are useful seeds, not a limit. Keep type=text only '
-        'when responsible suggestions cannot be inferred. On the answer turn, NEVER call ask_user '
-        'again or reassess fields as missing. Combine the original request, all already-known '
-        'fields, and the new answers into one concise request_context and pass that value to '
-        'the trigger; an answer-only current_query must never replace the original request. '
+        'that turn. Include each declared field id in its question object. For a field with '
+        'allow_other=false, use its declared question, type, and choices exactly, set '
+        'allow_other=false, and never add or substitute choices. For other fields, whenever '
+        'meaningful, generate 2-4 concise, context-specific suggested answers from the current '
+        'request and use type=single so the user can click one; declared choices are useful '
+        'seeds, not a limit. Keep type=text only when responsible suggestions cannot be inferred. '
+        'On the answer turn, NEVER call ask_user again or reassess fields as missing. Combine the '
+        'original request, all already-known fields, and the new answers into one concise '
+        'request_context; pass that plus every resolved answer in startup_inputs to the trigger. '
+        'An answer-only current_query must never replace the original request. '
         'If no field is missing, trigger immediately. Never ask for an upload unless the '
         'Workflow separately declares it as a required input. Declared fields: '
         + json.dumps(fields, ensure_ascii=False, default=str)
     )
+
+
+def _validate_startup_inputs(
+    runtime_policy: Any,
+    startup_inputs: Any,
+) -> Dict[str, Any]:
+    """Validate model-resolved startup values against the package declaration."""
+    fields = _runtime_clarification_fields(runtime_policy)
+    if not fields:
+        if startup_inputs not in (None, {}):
+            raise WorkflowClientError(
+                'WORKFLOW_STARTUP_INPUTS_UNDECLARED',
+                'This Workflow does not declare startup inputs.',
+            )
+        return {}
+    if not isinstance(startup_inputs, dict):
+        raise WorkflowClientError(
+            'WORKFLOW_STARTUP_INPUTS_REQUIRED',
+            'Resolve every declared startup input before triggering the Workflow.',
+            details={'missing_fields': [field['id'] for field in fields]},
+        )
+
+    declared = {field['id']: field for field in fields}
+    unknown = sorted(set(startup_inputs) - set(declared))
+    if unknown:
+        raise WorkflowClientError(
+            'WORKFLOW_STARTUP_INPUTS_UNKNOWN',
+            'Startup inputs contain undeclared fields.',
+            details={'unknown_fields': unknown},
+        )
+
+    normalized: Dict[str, Any] = {}
+    missing: List[str] = []
+    for field_id, field in declared.items():
+        value = startup_inputs.get(field_id)
+        field_type = field['type']
+        if field_type == 'boolean':
+            if not isinstance(value, bool):
+                missing.append(field_id)
+                continue
+            normalized[field_id] = value
+            continue
+        if field_type == 'multiple':
+            values = [str(item).strip() for item in value] if isinstance(value, list) else []
+            values = [item for item in values if item]
+            if not values:
+                missing.append(field_id)
+                continue
+            if not field['allow_other'] and any(item not in field['choices'] for item in values):
+                raise WorkflowClientError(
+                    'WORKFLOW_STARTUP_INPUT_INVALID_CHOICE',
+                    f'Startup input {field_id!r} must use only declared choices.',
+                    details={'field_id': field_id, 'choices': field['choices']},
+                )
+            normalized[field_id] = values
+            continue
+        text = str(value or '').strip()
+        if not text:
+            missing.append(field_id)
+            continue
+        if field_type == 'single' and not field['allow_other'] and text not in field['choices']:
+            raise WorkflowClientError(
+                'WORKFLOW_STARTUP_INPUT_INVALID_CHOICE',
+                f'Startup input {field_id!r} must use one declared choice.',
+                details={'field_id': field_id, 'choices': field['choices']},
+            )
+        normalized[field_id] = text
+
+    if missing:
+        raise WorkflowClientError(
+            'WORKFLOW_STARTUP_INPUTS_REQUIRED',
+            'Resolve every declared startup input before triggering the Workflow.',
+            details={'missing_fields': missing},
+        )
+    return normalized
 
 
 def workflow_activation_from_catalog_item(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -808,8 +888,6 @@ def _workflow_trigger_tools(
     activations: List[Dict[str, Any]], allowed_refs: set[str], current_query: str = '',
     conversation_id: str = '', session_holder: Optional[Dict[str, str]] = None,
     conversation_history: Optional[List[Dict[str, Any]]] = None,
-    task_mode: bool = False, writer_structure_route: str = '',
-    writer_structure_resolver: Optional[Callable[[str], str]] = None,
 ) -> List[Any]:
     """Bind backend-prepared activations to public package reads."""
     attachments_available = _conversation_has_attachments()
@@ -830,18 +908,16 @@ def _workflow_trigger_tools(
             continue
         if name in used_names:
             continue
-        if workflow_id == 'writer-workflow' and task_mode and writer_structure_route == 'clarify':
-            continue
         used_names.add(name)
 
         def make_trigger(
             bound_id: str, bound_ref: str, bound_revision: str, bound_query: str,
-            bound_clarification_answer: bool,
+            bound_clarification_answer: bool, bound_runtime_policy: Any,
         ) -> Any:
             def run_trigger(
                 input_bindings: Optional[Dict[str, str]] = None,
                 request_context: Optional[str] = None,
-                workflow_parameters: Optional[Dict[str, Any]] = None,
+                startup_inputs: Optional[Dict[str, Any]] = None,
             ) -> Dict[str, Any]:
                 # Once startup clarification has happened, the Host-composed
                 # query is authoritative because it contains both the original
@@ -880,51 +956,10 @@ def _workflow_trigger_tools(
                             'instruction': 'Read the current Ready frontier and continue execution.',
                         },
                     }
-                if bound_id == 'writer-workflow' and task_mode:
-                    structure_mode = str(
-                        (workflow_parameters or {}).get('structure_mode')
-                        or writer_structure_route
-                    ).strip()
-                    if not structure_mode:
-                        if writer_structure_resolver is None:
-                            raise WorkflowClientError(
-                                'WRITER_STRUCTURE_UNRESOLVED',
-                                'Task-mode Writer requires a presentation structure decision.',
-                            )
-                        structure_mode = str(
-                            writer_structure_resolver(effective_context) or ''
-                        ).strip()
-                    if structure_mode == 'clarify':
-                        return {
-                            'status': 'waiting',
-                            'outcome': 'writer_structure_clarification_required',
-                            'reason': (
-                                'Writer structure is unresolved. Call the no-argument '
-                                'ask_writer_structure tool and end the turn; no Workflow Session exists.'
-                            ),
-                            'workflow_ref': bound_ref,
-                            'workflow_id': bound_id,
-                            'request_context': effective_context,
-                            'next_action': {
-                                'tool': 'ask_writer_structure',
-                                'arguments': {},
-                            },
-                        }
-                    if structure_mode not in {'flat', 'sectioned'}:
-                        raise WorkflowClientError(
-                            'WRITER_STRUCTURE_INVALID',
-                            'Task-mode Writer structure must be flat or sectioned.',
-                            details={'structure_mode': structure_mode},
-                        )
-                    workflow_parameters = {
-                        **(workflow_parameters or {}),
-                        'task_mode': True,
-                        'structure_mode': structure_mode,
-                    }
-                    LOG.info(
-                        'task-mode Writer trigger resolved structure_mode=%s',
-                        structure_mode,
-                    )
+                resolved_startup_inputs = _validate_startup_inputs(
+                    bound_runtime_policy,
+                    startup_inputs,
+                )
                 resolved_bindings: Dict[str, Any] = {}
                 for material_id, attachment_ref in (input_bindings or {}).items():
                     from lazymind.chat.engine.subagent.tools import _resolve_attachment
@@ -945,7 +980,7 @@ def _workflow_trigger_tools(
                 prepared = toolkit.prepare_workflow(
                     bound_id, input_bindings=resolved_bindings,
                     request_context=effective_context,
-                    workflow_parameters=workflow_parameters,
+                    startup_inputs=resolved_startup_inputs,
                 )
                 session_id = str(prepared.get('session_id') or '')
                 if not session_id:
@@ -1025,41 +1060,22 @@ def _workflow_trigger_tools(
                         ),
                     },
                 }
-            fixed_writer_structure = (
-                writer_structure_route
-                if (
-                    bound_id == 'writer-workflow'
-                    and task_mode
-                    and writer_structure_route in {'flat', 'sectioned'}
-                )
-                else ''
-            )
-            if fixed_writer_structure and attachments_available:
+            has_startup_inputs = bool(_runtime_clarification_fields(bound_runtime_policy))
+            if attachments_available and has_startup_inputs:
                 def bound_trigger(
                     input_bindings: Optional[Dict[str, str]] = None,
                     request_context: Optional[str] = None,
+                    startup_inputs: Optional[Dict[str, Any]] = None,
                 ) -> Dict[str, Any]:
-                    """Initialize AI Writer with the Host-resolved presentation structure."""
-                    return run_trigger(
-                        input_bindings=input_bindings,
-                        request_context=request_context,
-                        workflow_parameters={
-                            'task_mode': True,
-                            'structure_mode': fixed_writer_structure,
-                        },
-                    )
-            elif fixed_writer_structure:
+                    """Initialize with declared startup inputs and optional attachments."""
+                    return run_trigger(input_bindings, request_context, startup_inputs)
+            elif has_startup_inputs:
                 def bound_trigger(
                     request_context: Optional[str] = None,
+                    startup_inputs: Optional[Dict[str, Any]] = None,
                 ) -> Dict[str, Any]:
-                    """Initialize AI Writer with the Host-resolved presentation structure."""
-                    return run_trigger(
-                        request_context=request_context,
-                        workflow_parameters={
-                            'task_mode': True,
-                            'structure_mode': fixed_writer_structure,
-                        },
-                    )
+                    """Initialize with every package-declared startup input resolved."""
+                    return run_trigger(request_context=request_context, startup_inputs=startup_inputs)
             elif attachments_available:
                 def bound_trigger(
                     input_bindings: Optional[Dict[str, str]] = None,
@@ -1084,6 +1100,7 @@ def _workflow_trigger_tools(
             revision_id,
             trigger_query,
             trigger_query != str(current_query or '').strip(),
+            item.get('runtime'),
         )
 
         trigger_workflow.__name__ = name
@@ -1095,25 +1112,14 @@ def _workflow_trigger_tools(
             ' No user attachments are available; start without input bindings so the '
             'Workflow can generate from text or collect images itself.'
         )
-        structure_guidance = (
-            f' The Host has fixed structure_mode={writer_structure_route!r}; do not reclassify it.'
-            if (
-                workflow_id == 'writer-workflow'
-                and task_mode
-                and writer_structure_route in {'flat', 'sectioned'}
-            ) else (
-                ' In task mode, the Host resolves Writer structure when this tool is called. '
-                'If the result has outcome=writer_structure_clarification_required, call the '
-                'no-argument ask_writer_structure tool and end the turn.'
-                if workflow_id == 'writer-workflow' and task_mode else ''
-            )
-        )
         clarification_guidance = (
             ' If this turn follows startup clarification, request_context must merge the '
-            'original request with every clarification answer; otherwise omit it.'
+            'original request with every clarification answer; otherwise omit it. Pass all '
+            'resolved declared field values through startup_inputs.'
+            if _runtime_clarification_fields(item.get('runtime')) else ''
         )
         trigger_workflow.__doc__ = (
-            description + structure_guidance + attachment_guidance + clarification_guidance
+            description + attachment_guidance + clarification_guidance
         )
         tools.append(trigger_workflow)
     return tools
@@ -1141,7 +1147,6 @@ def resolve_workflow_injection(
     allowed_workflow_refs: Optional[List[str]] = None,
     workflow_activations: Optional[List[Dict[str, Any]]] = None,
     conversation_history: Optional[List[Dict[str, Any]]] = None,
-    writer_structure_resolver: Optional[Callable[[str], str]] = None,
 ) -> WorkflowAgentContribution:
     """Map public Workflow APIs to LazyMind Chat tools; no Runtime decisions live here."""
     cfg = _agentic_config()
@@ -1217,14 +1222,9 @@ def resolve_workflow_injection(
             ],
         ]
     session_holder: Dict[str, str] = {'session_id': session_id}
-    task_mode = bool(cfg.get('task_mode'))
-    writer_structure_route = str(cfg.get('writer_structure_route') or '')
     trigger_tools = _workflow_trigger_tools(
         activations, allowed_refs, current_query, conversation_id, session_holder,
         conversation_history,
-        task_mode=task_mode,
-        writer_structure_route=writer_structure_route,
-        writer_structure_resolver=writer_structure_resolver,
     )
     toolkit = HostWorkflowToolkit(
         _client, allowed_workflow_ids=allowed_ids, origin_ref=conversation_id,
@@ -1427,27 +1427,6 @@ def resolve_workflow_injection(
         )
     elif discovery_context.prompt:
         selection_context = discovery_context.prompt
-    if task_mode and writer_structure_route:
-        if writer_structure_route == 'clarify':
-            writer_route_context = (
-                '## Writer Structure Routing [AUTHORITATIVE]\n'
-                'This new-task writing request does not state a clear length or presentation '
-                'structure. Do not trigger the Writer Workflow and do not choose a default. '
-                'Call the no-argument `ask_writer_structure` tool now. It owns the fixed question '
-                f'`{WRITER_STRUCTURE_QUESTION}` and the choices `{WRITER_STRUCTURE_CHOICES[0]}` and '
-                f'`{WRITER_STRUCTURE_CHOICES[1]}`. End the turn after that tool call.'
-            )
-        else:
-            writer_route_context = (
-                '## Writer Structure Routing [AUTHORITATIVE]\n'
-                f'The task-mode structure router fixed this request to '
-                f'`{writer_structure_route}`. Trigger the Writer Workflow without a '
-                '`structure_mode` argument; the Host supplies it. Do not ask again and do not '
-                'reinterpret the structure from the topic.'
-            )
-        selection_context = '\n\n'.join(
-            value for value in (selection_context, writer_route_context) if value
-        )
     return WorkflowAgentContribution(
         tools, [], patch, selection_context, runtime_policy,
     )

@@ -225,6 +225,7 @@ func Compile(workflowYAML, stateYAML, scenario string, profile Profile) CompileR
 		field.ID = strings.TrimSpace(field.ID)
 		field.Label = strings.TrimSpace(field.Label)
 		field.Question = strings.TrimSpace(field.Question)
+		field.Guidance = strings.TrimSpace(field.Guidance)
 		field.Type = strings.ToLower(strings.TrimSpace(field.Type))
 		if field.Type == "" {
 			field.Type = "text"

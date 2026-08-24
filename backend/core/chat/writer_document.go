@@ -66,7 +66,7 @@ func writerDocumentSlot(slot string) (string, bool) {
 	if slot == "" {
 		return "draft_document", true
 	}
-	return slot, slot == "outline_document" || slot == "draft_document"
+	return slot, slot == "outline_document" || slot == "flat_draft_document" || slot == "draft_document"
 }
 
 func writerDocumentRenderSlot(slot string) (string, bool) {
@@ -245,7 +245,7 @@ func RenderWriterDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	slot, ok := writerDocumentRenderSlot(body.Slot)
 	if !ok {
-		common.ReplyErr(w, "slot must be source_document, outline_document, or draft_document", http.StatusBadRequest)
+		common.ReplyErr(w, "slot must be source_document, outline_document, flat_draft_document, or draft_document", http.StatusBadRequest)
 		return
 	}
 	db := store.DB()
@@ -314,7 +314,7 @@ func SaveWriterDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	slot, ok := writerDocumentSlot(body.Slot)
 	if !ok {
-		common.ReplyErr(w, "slot must be outline_document or draft_document", http.StatusBadRequest)
+		common.ReplyErr(w, "slot must be outline_document, flat_draft_document, or draft_document", http.StatusBadRequest)
 		return
 	}
 	db := store.DB()

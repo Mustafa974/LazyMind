@@ -65,12 +65,6 @@ from lazymind.chat.engine.tools.intent_writer import (
     render_intent_section,
 )
 from lazymind.chat.engine.tools.skill_listing import build_list_skills_tool
-from lazymind.chat.engine.prompts.writer_structure import (
-    WRITER_STRUCTURE_CHOICES,
-    WRITER_STRUCTURE_QUESTION,
-    resolve_writer_structure_route,
-    writer_structure_route_from_ask_answer,
-)
 from lazymind.chat.service.utils import (
     SensitiveFilter,
     SensitiveMatch,
@@ -428,24 +422,6 @@ def _build_ask_user_tool() -> list:
     return [ask_user]
 
 
-def _build_writer_structure_ask_tool() -> list:
-    """Return a no-argument stop-tool for task-mode Writer structure routing."""
-    from lazymind.chat.engine.tools.ask_user import ask_user as send_ask_user
-
-    def ask_writer_structure() -> str:
-        """Ask the fixed Writer structure question after its trigger requests clarification."""
-        return send_ask_user(
-            questions=[{
-                'text': WRITER_STRUCTURE_QUESTION,
-                'type': 'single',
-                'choices': list(WRITER_STRUCTURE_CHOICES),
-                'allow_other': False,
-            }],
-        )
-
-    return [ask_writer_structure]
-
-
 def _should_register_ask_user(
     agentic_config: Dict[str, Any],
     disabled_tools: set[str] | None = None,
@@ -546,36 +522,6 @@ def _resolve_task_profile_with_model(
         classifier=classify,
         enable_llm_fallback=True,
     )
-
-
-def _resolve_writer_structure_with_model(
-    query: str,
-    *,
-    trace_id: str = '',
-    session_id: str = '',
-) -> str:
-    set_trace_context({
-        'trace_id': trace_id,
-        'session_id': session_id or trace_id,
-        'sampled': True,
-    })
-
-    def classify(prompt: str) -> Any:
-        try:
-            router_llm = AutoModel(model='llm')
-            result = router_llm(
-                prompt,
-                response_format={'type': 'json_object'},
-                stream_output=False,
-                timeout=_TASK_PROFILE_ROUTER_TIMEOUT_SECONDS,
-            )
-            LOG.info(f'[ChatServer] [WRITER_STRUCTURE_RAW] result={result!r}')
-            return result
-        except Exception as exc:
-            LOG.warning(f'[ChatServer] [WRITER_STRUCTURE_ERROR] error={exc!r}')
-            raise
-
-    return resolve_writer_structure_route(query, classifier=classify)
 
 
 async def handle_chat(request: ChatRequest) -> Union[Dict[str, Any], StreamingResponse]:
@@ -885,23 +831,6 @@ async def _handle_chat_impl(
             task_profile.router_error,
         )
 
-    writer_structure_route = ''
-    if runtime.task_mode:
-        agentic_config['task_mode'] = True
-        # The answer comes from the fixed two-choice Ask User card, so it is an
-        # authoritative selection rather than a new request to classify. This
-        # avoids invoking the classifier again on the short answer. All other
-        # requests are classified lazily only after ChatAgent selects Writer.
-        selected_structure = writer_structure_route_from_ask_answer(query)
-        if selected_structure is not None:
-            writer_structure_route = selected_structure
-        if writer_structure_route:
-            agentic_config['writer_structure_route'] = writer_structure_route
-            LOG.info(
-                f'[ChatServer] [WRITER_STRUCTURE_ROUTE] [sid={conversation.session_id}] '
-                f'route={writer_structure_route} task_mode=true'
-            )
-
     if task_profile is not None:
         excluded_kb_ids = set(task_profile.excluded_resources.knowledge_base_ids)
         if excluded_kb_ids and agentic_config.get('filters'):
@@ -950,14 +879,6 @@ async def _handle_chat_impl(
         allowed_workflow_refs=effective_allowed_workflow_refs,
         workflow_activations=workflow.activations,
         conversation_history=agent_history,
-        writer_structure_resolver=(
-            lambda request: _resolve_writer_structure_with_model(
-                request,
-                trace_id=(conversation_id or conversation.session_id or '').strip(),
-                session_id=conversation.session_id,
-            )
-            if runtime.task_mode else None
-        ),
     )
     workflow_tools = workflow_contribution.tools
     agentic_config.update(workflow_contribution.agentic_config_patch)
@@ -1080,23 +1001,7 @@ async def _handle_chat_impl(
             and 'ask_user' not in disabled
         )
     )
-    if writer_structure_route == 'clarify' and 'ask_user' not in disabled:
-        allow_ask_user = True
-    ask_user_tools = (
-        _build_ask_user_tool()
-        if allow_ask_user and writer_structure_route != 'clarify'
-        else []
-    )
-    writer_structure_ask_tools = (
-        _build_writer_structure_ask_tool()
-        if (
-            runtime.task_mode
-            and writer_structure_route in {'', 'clarify'}
-            and not workflow_turn_is_bound
-            and 'ask_user' not in disabled
-        )
-        else []
-    )
+    ask_user_tools = _build_ask_user_tool() if allow_ask_user else []
     ask_user_configs = [ASK_USER_TOOL_CONFIG] if ask_user_tools else []
     # Generic chat files are not Workflow artifacts. Keeping save_chat_artifact
     # available on a bound Workflow turn lets the model claim success after
@@ -1109,14 +1014,7 @@ async def _handle_chat_impl(
     )
     intent_tools = [] if workflow_turn_is_bound else [intentwriter]
     all_tools = (intent_tools + agent_tools + artifact_tools + subagent_tools + attachment_tools
-                 + skill_listing_tools + ask_user_tools + writer_structure_ask_tools
-                 + workflow_tools + mcp_tools)
-    if writer_structure_route == 'clarify':
-        # Task-mode writer clarification is a hard boundary before Workflow creation.
-        # Keep only ChatAgent-owned clarification tools so execution cannot bypass it.
-        active_configs = []
-        attachment_configs = []
-        all_tools = [intentwriter, *writer_structure_ask_tools]
+                 + skill_listing_tools + ask_user_tools + workflow_tools + mcp_tools)
     active_workflow_tool_isolation = bool(
         isinstance(effective_workflow_context, dict)
         and effective_workflow_context.get('session_id')
@@ -1387,8 +1285,6 @@ async def _handle_chat_impl(
     stop_tools = list(workflow_contribution.stop_tools)
     if allow_ask_user and 'ask_user' not in stop_tools:
         stop_tools.append('ask_user')
-    if writer_structure_ask_tools and 'ask_writer_structure' not in stop_tools:
-        stop_tools.append('ask_writer_structure')
 
     plan = AgentRunPlan(
         role=AgentRole.CHAT,
