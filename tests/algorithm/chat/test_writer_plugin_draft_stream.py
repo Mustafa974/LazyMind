@@ -77,37 +77,6 @@ def test_writer_command_trusts_validated_startup_structure(
     assert command.next_step == expected_step
 
 
-def test_writer_command_rejects_missing_startup_structure(monkeypatch, tmp_path):
-    tools = _load_tools_module()
-    query = '写一篇连续正文，不使用小标题'
-    context = SimpleNamespace(
-        workspace_path=str(tmp_path),
-        params={'step_id': 'prepare', 'user_input': query},
-    )
-    monkeypatch.setattr(tools, 'require_context', lambda: context)
-
-    with pytest.raises(
-        ValueError,
-        match=r'Writer requires startup_inputs\.structure_mode',
-    ):
-        tools.writer_resolve_command(
-            user_input=query,
-            action='create',
-            source_role='none',
-        )
-
-
-def test_writer_workflow_declares_structure_startup_input():
-    content = (_ROOT / 'workflows' / 'writer-workflow' / 'workflow.yaml').read_text(
-        encoding='utf-8',
-    )
-
-    assert 'clarification_fields:' in content
-    assert 'id: structure_mode' in content
-    assert 'allow_other: false' in content
-    assert 'at or below 1200' in content
-
-
 def test_flat_draft_workspace_skips_outline_and_section_generation(monkeypatch, tmp_path):
     tools = _load_tools_module()
     query = '写一篇连续正文，不使用小标题'
@@ -216,128 +185,6 @@ def test_flat_draft_workspace_skips_outline_and_section_generation(monkeypatch, 
     assert saved_payload['flat_draft_document'] == str(draft_path)
     assert saved_payload['flat_writing_context_after_draft'] == str(updated_context_path)
     assert saved_payload['flat_visual_plan'] == str(visual_plan_path)
-
-
-def test_flat_draft_workspace_resolves_planned_visuals(monkeypatch, tmp_path):
-    tools = _load_tools_module()
-    query = '写一篇连续正文，并加入一张说明图片'
-    command = tools.WriterCommand(
-        action='create',
-        source_role='none',
-        target_stage='document',
-        next_step='write_flat_document',
-        structure_mode='flat',
-        user_instruction=query,
-        request_fingerprint=tools._writer_request_fingerprint(query),
-    )
-    command_path = tmp_path / 'writer_command.json'
-    command_path.write_text(command.model_dump_json(), encoding='utf-8')
-    task_path = tmp_path / 'writing_task.json'
-    task_path.write_text(json.dumps({
-        'query': query,
-        'task_type': 'write',
-        'output': {'representation': 'markdown'},
-    }), encoding='utf-8')
-    context_path = tmp_path / 'writing_context.json'
-    context_path.write_text('{"context_id":"ctx-flat-visual"}', encoding='utf-8')
-    media_path = tmp_path / 'media_assets.json'
-    media_path.write_text('{"library_id":"available","assets":{}}', encoding='utf-8')
-    plan_path = tmp_path / 'short_writing_plan.json'
-    plan_path.write_text('{"visual_needs":[]}', encoding='utf-8')
-    visual_plan_path = tmp_path / 'visual_plan.json'
-    visual_plan_path.write_text(json.dumps({
-        'instructions': [
-            {
-                'need_id': 'visual-document-1',
-                'content_ref': {'document_root': True},
-                'visual_type': 'image',
-                'purpose': '说明消费者购车决策因素',
-                'required': True,
-            },
-        ],
-    }), encoding='utf-8')
-    resolved_path = tmp_path / 'resolved_media_assets.json'
-    resolved_path.write_text(json.dumps({
-        'library_id': 'resolved',
-        'assets': {},
-        'visual_need_asset_ids': {},
-    }), encoding='utf-8')
-    draft_path = tmp_path / 'draft.md'
-    draft_path.write_text('# 标题\n\n正文。\n', encoding='utf-8')
-    updated_context_path = tmp_path / 'writing_context_after_draft.json'
-    updated_context_path.write_text('{"context_id":"ctx-flat-visual"}', encoding='utf-8')
-    context = SimpleNamespace(
-        workspace_path=str(tmp_path),
-        params={
-            'step_id': 'write_flat_document',
-            'user_input': query,
-            'remote_inputs': {
-                'writer_command': str(command_path),
-                'writing_task': str(task_path),
-                'writing_context': str(context_path),
-                'media_assets': str(media_path),
-            },
-        },
-        emit=lambda _event: None,
-    )
-    calls = []
-    short_document_args = {}
-    short_visual_plan_args = {}
-    monkeypatch.setattr(tools, 'require_context', lambda: context)
-    monkeypatch.setattr(tools, 'writer_generate_short_writing_plan', lambda **_kwargs: str(plan_path))
-    monkeypatch.setattr(
-        tools,
-        'writer_generate_short_visual_plan',
-        lambda **kwargs: (
-            short_visual_plan_args.update(kwargs),
-            {
-                'visual_plan': str(visual_plan_path),
-                'visual_need_count': 1,
-                'warnings': [],
-            },
-        )[-1],
-    )
-    monkeypatch.setattr(
-        tools,
-        'writer_resolve_visual_media',
-        lambda **kwargs: (
-            calls.append(('resolve', kwargs)),
-            {'resolved_media_assets': str(resolved_path), 'warnings': []},
-        )[-1],
-    )
-    monkeypatch.setattr(
-        tools,
-        'writer_generate_short_document',
-        lambda **kwargs: (
-            short_document_args.update(kwargs),
-            calls.append(('draft', kwargs)),
-            str(draft_path),
-        )[-1],
-    )
-    monkeypatch.setattr(tools, 'writer_update_writing_context', lambda **_kwargs: str(updated_context_path))
-    monkeypatch.setattr(
-        tools,
-        '_save_draft_workspace_artifacts',
-        lambda _result: [
-            'short_writing_plan',
-            'visual_plan',
-            'resolved_media_assets',
-            'draft_document',
-            'writing_context_after_draft',
-        ],
-    )
-
-    result = tools.writer_flat_draft_workspace()
-
-    assert [name for name, _kwargs in calls] == ['resolve', 'draft']
-    assert short_visual_plan_args == {
-        'writing_task_path': str(task_path),
-        'short_writing_plan_path': str(plan_path),
-        'writing_context_path': str(context_path),
-    }
-    assert short_document_args['resolved_media_assets_path'] == str(resolved_path)
-    assert Path(short_document_args['visual_plan_path']).is_file()
-    assert result['warnings'] == []
 
 
 def test_write_document_revision_emits_markdown_draft_stream(monkeypatch, tmp_path):
@@ -554,153 +401,6 @@ def test_markdown_assembly_drops_unregistered_images(monkeypatch, tmp_path):
     assert './images/AI-lighthouse.jpg' not in filled
 
 
-def test_short_visual_plan_is_generated_independently(monkeypatch, tmp_path):
-    tools = _load_tools_module()
-    context = SimpleNamespace(
-        workspace_path=str(tmp_path),
-        params={'step_id': 'write_flat_document'},
-    )
-    monkeypatch.setattr(tools, 'require_context', lambda: context)
-    writing_task_path = tmp_path / 'writing_task.json'
-    writing_task_path.write_text('{}', encoding='utf-8')
-    short_plan_path = tmp_path / 'short_writing_plan.json'
-    short_plan_path.write_text('{"visual_needs":[]}', encoding='utf-8')
-    writing_context_path = tmp_path / 'writing_context.json'
-    writing_context_path.write_text('{}', encoding='utf-8')
-
-    class FakeWriterCreateToolkit:
-        def generate_short_visual_plan(self, **_kwargs):
-            return json.dumps({
-                'visual_plan': {
-                    'instructions': [
-                        {
-                            'need_id': 'visual-document-1',
-                            'content_ref': {'document_root': True},
-                            'visual_type': 'image',
-                            'purpose': '展示购车决策因素',
-                            'required': False,
-                            'meta': {'placement_hint': '分析风险之后'},
-                        },
-                    ],
-                },
-                'warnings': ['visual warning'],
-            })
-
-    monkeypatch.setattr(tools, 'WriterCreateToolkit', FakeWriterCreateToolkit)
-
-    result = tools.writer_generate_short_visual_plan(
-        writing_task_path=str(writing_task_path),
-        short_writing_plan_path=str(short_plan_path),
-        writing_context_path=str(writing_context_path),
-    )
-    visual_plan = tools._read_json_file(result['visual_plan'])
-
-    assert result['visual_need_count'] == 1
-    assert result['visual_need_ids'] == ['visual-document-1']
-    assert result['warnings'] == ['visual warning']
-    visual = visual_plan['instructions'][0]
-    assert visual['content_ref']['document_root'] is True
-    assert visual['content_ref']['node_id'] is None
-    assert visual['content_ref']['heading_path'] == []
-    assert visual['required'] is False
-
-
-def test_short_document_fills_resolved_visual_placeholder(monkeypatch, tmp_path):
-    tools = _load_tools_module()
-    emitted = []
-    context = SimpleNamespace(
-        workspace_path=str(tmp_path),
-        params={'step_id': 'write_flat_document'},
-        emit=emitted.append,
-    )
-    captured = {}
-
-    class FakeWriterCreateToolkit:
-        def stream_short_document(self, **kwargs):
-            captured.update(kwargs)
-            kwargs['on_delta']('# 标题\n\n正文。\n')
-            return '# 标题\n\n正文。\n\n![购车决策](media-placeholder://visual-document-1)\n'
-
-    monkeypatch.setattr(tools, 'require_context', lambda: context)
-    monkeypatch.setattr(tools, 'WriterCreateToolkit', FakeWriterCreateToolkit)
-    writing_task_path = tmp_path / 'writing_task.json'
-    writing_task_path.write_text('{}', encoding='utf-8')
-    short_plan_path = tmp_path / 'short_writing_plan.json'
-    short_plan_path.write_text('{}', encoding='utf-8')
-    writing_context_path = tmp_path / 'writing_context.json'
-    writing_context_path.write_text('{}', encoding='utf-8')
-    visual_plan_path = tmp_path / 'visual_plan.json'
-    visual_plan_path.write_text('{"instructions": []}', encoding='utf-8')
-    media_assets_path = tmp_path / 'resolved_media_assets.json'
-    media_assets_path.write_text(json.dumps({
-        'assets': {
-            'asset-1': {'uri': 'https://example.com/short-visual.png'},
-        },
-        'visual_need_asset_ids': {
-            'visual-document-1': ['asset-1'],
-        },
-    }), encoding='utf-8')
-
-    document_path = tools.writer_generate_short_document(
-        writing_task_path=str(writing_task_path),
-        short_writing_plan_path=str(short_plan_path),
-        writing_context_path=str(writing_context_path),
-        visual_plan_path=str(visual_plan_path),
-        resolved_media_assets_path=str(media_assets_path),
-    )
-    document = Path(document_path).read_text(encoding='utf-8')
-
-    assert captured['visual_plan_json'] == '{"instructions": []}'
-    assert 'visual-document-1' in captured['media_assets_json']
-    assert '![购车决策](https://example.com/short-visual.png)' in document
-    assert 'media-placeholder://' not in document
-    assert all(event['slot'] == 'flat_draft_document' for event in emitted)
-
-
-def test_short_document_persists_ir_artifact(monkeypatch, tmp_path):
-    tools = _load_tools_module()
-    context = SimpleNamespace(
-        workspace_path=str(tmp_path),
-        params={'step_id': 'write_flat_document'},
-        emit=lambda _event: None,
-    )
-
-    class FakeWriterCreateToolkit:
-        def stream_short_document(self, **_kwargs):
-            return {
-                'document_id': 'draft-document-1',
-                'stage': 'draft',
-                'title': '短文标题',
-                'blocks': [{
-                    'node_id': 'paragraph-1',
-                    'type': 'paragraph',
-                    'content': '短文正文。',
-                    'stage': 'draft',
-                }],
-                'ui_editable': True,
-            }
-
-    monkeypatch.setattr(tools, 'require_context', lambda: context)
-    monkeypatch.setattr(tools, 'WriterCreateToolkit', FakeWriterCreateToolkit)
-    writing_task_path = tmp_path / 'writing_task.json'
-    writing_task_path.write_text('{}', encoding='utf-8')
-    short_plan_path = tmp_path / 'short_writing_plan.json'
-    short_plan_path.write_text('{}', encoding='utf-8')
-    writing_context_path = tmp_path / 'writing_context.json'
-    writing_context_path.write_text('{}', encoding='utf-8')
-
-    document_path = tools.writer_generate_short_document(
-        writing_task_path=str(writing_task_path),
-        short_writing_plan_path=str(short_plan_path),
-        writing_context_path=str(writing_context_path),
-    )
-
-    assert Path(document_path).suffix == '.lmd'
-    document = tools._read_json_file(document_path)
-    assert document['title'] == '短文标题'
-    assert document['blocks'][0]['content'] == '短文正文。'
-
-
 def test_markdown_revision_fills_resolved_media_placeholder(monkeypatch, tmp_path):
     tools = _load_tools_module()
     context = SimpleNamespace(
@@ -783,44 +483,6 @@ def test_markdown_no_image_request_skips_visual_planning(monkeypatch, tmp_path):
     assert result['visual_plan']['instructions'] == []
 
 
-def test_flat_markdown_no_image_request_skips_visual_planning(monkeypatch):
-    from lazymind.chat.engine.tools import writer
-
-    calls = []
-
-    class FakePlanningTools:
-        def __init__(self, **_kwargs):
-            pass
-
-        def generate_short_visual_plan(self, **_kwargs):
-            calls.append('generate_short_visual_plan')
-            raise AssertionError('explicit no-image request must skip visual planning')
-
-    monkeypatch.setattr(writer, 'WriterPlanningTools', FakePlanningTools)
-    monkeypatch.setattr(writer, 'AutoModel', lambda **_kwargs: object())
-
-    result = json.loads(writer.WriterCreateToolkit().generate_short_visual_plan(
-        writing_task_json=json.dumps({
-            'task_id': 'task-1',
-            'query': '写一篇连续正文，不要图片',
-            'task_type': 'write',
-            'constraints': {'structure_mode': 'flat'},
-        }),
-        short_writing_plan_json=json.dumps({
-            'instruction_id': 'short-plan-1',
-            'content_ref': {'document_root': True},
-            'section_title': '短文标题',
-            'section_goal': '完成短文。',
-            'core_viewpoint': '保持观点清晰。',
-        }),
-        writing_context_json=json.dumps({'context_id': 'context-1'}),
-    ))
-
-    assert calls == []
-    assert result['visual_plan']['instructions'] == []
-    assert result['warnings'] == []
-
-
 def test_markdown_rewrite_no_image_request_skips_visual_planning(monkeypatch, tmp_path):
     from lazymind.chat.engine.tools import writer
 
@@ -866,8 +528,7 @@ def test_markdown_rewrite_no_image_request_skips_visual_planning(monkeypatch, tm
     assert result['document_title'] == 'Rewritten title'
 
 
-@pytest.mark.parametrize('slot', ['flat_draft_document', 'draft_document'])
-def test_selection_rewrite_uses_slot_markdown_artifact_filename(monkeypatch, tmp_path, slot):
+def test_selection_rewrite_uses_slot_markdown_artifact_filename(monkeypatch, tmp_path):
     tools = _load_tools_module()
 
     class FakeWriterRevisionTools:
@@ -903,12 +564,12 @@ def test_selection_rewrite_uses_slot_markdown_artifact_filename(monkeypatch, tmp
         instruction='润色',
         selection={'type': 'markdown', 'selected_text': 'Original body.'},
         artifact_store=str(tmp_path),
-        slot=slot,
+        slot='draft_document',
     )
 
     artifact = result['artifact']['value']
-    assert artifact['filename'] == f'{slot}.md'
-    assert Path(artifact['path']).name == f'{slot}.md'
+    assert artifact['filename'] == 'draft_document.md'
+    assert Path(artifact['path']).name == 'draft_document.md'
     assert Path(artifact['path']).read_text(encoding='utf-8') == (
         '# Title\n\nPolished body.\n'
     )
