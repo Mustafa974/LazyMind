@@ -831,7 +831,6 @@ async def _handle_chat_impl(
             task_profile.router_error,
         )
 
-    if task_profile is not None:
         excluded_kb_ids = set(task_profile.excluded_resources.knowledge_base_ids)
         if excluded_kb_ids and agentic_config.get('filters'):
             effective_filters = dict(agentic_config['filters'])
