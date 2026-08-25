@@ -2940,7 +2940,6 @@ def _draft_workspace_completion(
         'status': 'completed',
         'operation': result.get('operation'),
         'representation': result.get('representation'),
-        'structure_mode': result.get('structure_mode'),
         'draft_section_count': len(draft_blocks) if isinstance(draft_blocks, list) else None,
         'saved_artifact_keys': saved_keys,
         'warnings': list(result.get('warnings') or []),
@@ -2949,31 +2948,8 @@ def _draft_workspace_completion(
     }
 
 
-_FLAT_OUTPUT_SLOTS = {
-    'draft_document': 'flat_draft_document',
-    'writing_context_after_draft': 'flat_writing_context_after_draft',
-    'visual_plan': 'flat_visual_plan',
-    'resolved_media_assets': 'flat_resolved_media_assets',
-}
-
-
-def _published_draft_workspace_result(
-    result: Mapping[str, Any],
-    expected_structure: Literal['flat', 'sectioned'],
-) -> dict[str, Any]:
-    published = dict(result)
-    if expected_structure != 'flat':
-        return published
-    for source, target in _FLAT_OUTPUT_SLOTS.items():
-        if source in published:
-            published[target] = published.pop(source)
-    return published
-
-
-def _run_draft_workspace(
-    expected_structure: Literal['flat', 'sectioned'],
-) -> dict:
-    """Run one structure-specific draft branch through deterministic top-level tools."""
+def writer_draft_workspace() -> dict:
+    """Run one existing draft workflow branch through deterministic top-level tools."""
     _emit_writer_progress('正在读取成稿任务与已有 checkpoint')
     user_input = _authoritative_writer_user_input('')
     writer_command_path = _authoritative_writer_input_path(
@@ -2996,11 +2972,6 @@ def _run_draft_workspace(
     draft_document_path = _authoritative_writer_input_path('draft_document')
     target_document_path = _authoritative_writer_input_path('target_document')
     command = _load_writer_command(writer_command_path)
-    if command.structure_mode != expected_structure:
-        raise ValueError(
-            f'This step requires structure_mode={expected_structure!r}; '
-            f'WriterCommand selected {command.structure_mode!r}.'
-        )
     continuing_completed_outline = (
         command.target_stage == 'outline'
         and command.action in {'create', 'use_outline'}
@@ -3054,78 +3025,18 @@ def _run_draft_workspace(
     result: dict[str, Any] = dict(state.get('result') or {})
     result['operation'] = operation
     result['writer_command'] = writer_command_path
-    result['structure_mode'] = command.structure_mode
     if state.get('completed'):
         _emit_writer_progress('正在复用已完成的成稿 checkpoint')
         saved_keys = list(state.get('saved_artifact_keys') or [])
         if not state.get('artifacts_saved'):
-            saved_keys = _save_draft_workspace_artifacts(
-                _published_draft_workspace_result(result, expected_structure)
-            )
+            saved_keys = _save_draft_workspace_artifacts(result)
             state['artifacts_saved'] = True
             state['saved_artifact_keys'] = saved_keys
             _persist_draft_workspace_state(state, checkpoint_path, completed=True)
         return _draft_workspace_completion(result, saved_keys)
 
     resolved_media = str(result.get('resolved_media_assets') or '')
-    if expected_structure == 'flat':
-        if operation != 'generate' or command.action != 'create':
-            raise ValueError('write_flat_document only supports new flat document creation.')
-        task = _read_json_file(writing_task_path)
-        representation = str((task.get('output') or {}).get('representation') or '').strip()
-        if representation not in {'markdown', 'ir'}:
-            raise ValueError("Flat short-document generation requires 'markdown' or 'ir' representation.")
-        if not result.get('short_writing_plan'):
-            result['short_writing_plan'] = writer_generate_short_writing_plan(
-                writing_task_path=writing_task_path,
-                writing_context_path=writing_context_path,
-            )
-            state['result'] = result
-            _persist_draft_workspace_state(state, checkpoint_path)
-        if not result.get('visual_plan'):
-            planning = writer_generate_short_visual_plan(
-                writing_task_path=writing_task_path,
-                short_writing_plan_path=result['short_writing_plan'],
-                writing_context_path=writing_context_path,
-            )
-            result.update({
-                'visual_plan': planning['visual_plan'],
-                'visual_need_count': planning['visual_need_count'],
-                'warnings': [
-                    *(result.get('warnings') or []),
-                    *(planning.get('warnings') or []),
-                ],
-            })
-            state['result'] = result
-            _persist_draft_workspace_state(state, checkpoint_path)
-        visual_need_count = int(result.get('visual_need_count') or 0)
-        if visual_need_count > 0 and not resolved_media:
-            if not media_assets_path:
-                raise ValueError('media_assets_path is required when the short draft has visual media.')
-            media = writer_resolve_visual_media(
-                visual_plan_path=result['visual_plan'],
-                media_assets_path=media_assets_path,
-            )
-            resolved_media = media['resolved_media_assets']
-            result['resolved_media_assets'] = resolved_media
-            result['warnings'] = [
-                *(result.get('warnings') or []),
-                *(media.get('warnings') or []),
-            ]
-            state['result'] = result
-            _persist_draft_workspace_state(state, checkpoint_path)
-        if not result.get('draft_document'):
-            result['draft_document'] = writer_generate_short_document(
-                writing_task_path=writing_task_path,
-                short_writing_plan_path=result['short_writing_plan'],
-                writing_context_path=writing_context_path,
-                visual_plan_path=result['visual_plan'],
-                resolved_media_assets_path=resolved_media,
-            )
-            result['representation'] = representation
-            state['result'] = result
-            _persist_draft_workspace_state(state, checkpoint_path)
-    elif operation in {'generate', 'rewrite'}:
+    if operation in {'generate', 'rewrite'}:
         if operation == 'generate':
             if not outline_document_path:
                 raise ValueError('outline_document_path is required for generate.')
@@ -3341,20 +3252,161 @@ def _run_draft_workspace(
     state['result'] = result
     _persist_draft_workspace_state(state, checkpoint_path)
     _emit_writer_progress('成稿校验完成，正在保存工作区结果')
-    saved_keys = _save_draft_workspace_artifacts(
-        _published_draft_workspace_result(result, expected_structure)
-    )
+    saved_keys = _save_draft_workspace_artifacts(result)
     state['artifacts_saved'] = True
     state['saved_artifact_keys'] = saved_keys
     _persist_draft_workspace_state(state, checkpoint_path, completed=True)
     return _draft_workspace_completion(result, saved_keys)
 
 
+_FLAT_OUTPUT_SLOTS = {
+    'draft_document': 'flat_draft_document',
+    'writing_context_after_draft': 'flat_writing_context_after_draft',
+    'visual_plan': 'flat_visual_plan',
+    'resolved_media_assets': 'flat_resolved_media_assets',
+}
+
+
+def _published_flat_draft_workspace_result(
+    result: Mapping[str, Any],
+) -> dict[str, Any]:
+    published = dict(result)
+    for source, target in _FLAT_OUTPUT_SLOTS.items():
+        if source in published:
+            published[target] = published.pop(source)
+    return published
+
+
 def writer_flat_draft_workspace() -> dict:
     """Generate one new flat document on the dedicated flat Workflow path."""
-    return _run_draft_workspace('flat')
+    _emit_writer_progress('正在读取短文成稿任务与已有 checkpoint')
+    user_input = _authoritative_writer_user_input('')
+    writer_command_path = _authoritative_writer_input_path(
+        'writer_command', require_workflow_binding=True,
+    )
+    writing_task_path = _authoritative_writer_input_path(
+        'writing_task', require_workflow_binding=True,
+    )
+    writing_context_path = _authoritative_writer_input_path(
+        'writing_context', require_workflow_binding=True,
+    )
+    media_assets_path = _authoritative_writer_input_path('media_assets')
+    command = _load_writer_command(writer_command_path)
+    if command.structure_mode != 'flat':
+        raise ValueError(
+            'write_flat_document requires writer_command.structure_mode="flat".'
+        )
+    if command.target_stage != 'document' or command.action != 'create':
+        raise ValueError('write_flat_document only supports new flat document creation.')
+    if not writing_task_path or not writing_context_path:
+        raise ValueError('writing_task_path and writing_context_path are required.')
+    if user_input and command.request_fingerprint != _writer_request_fingerprint(user_input):
+        raise ValueError(
+            'writer_command belongs to a different user request; restart from prepare.'
+        )
 
+    operation = 'generate'
+    fingerprint = _draft_workspace_fingerprint(
+        operation,
+        user_input,
+        writing_task_path,
+        writing_context_path,
+        media_assets_path,
+        '',
+        '',
+        '',
+        '',
+    )
+    state, checkpoint_path = _draft_workspace_state(fingerprint)
+    result: dict[str, Any] = dict(state.get('result') or {})
+    result['operation'] = operation
+    result['writer_command'] = writer_command_path
+    if state.get('completed'):
+        _emit_writer_progress('正在复用已完成的短文成稿 checkpoint')
+        saved_keys = list(state.get('saved_artifact_keys') or [])
+        if not state.get('artifacts_saved'):
+            saved_keys = _save_draft_workspace_artifacts(
+                _published_flat_draft_workspace_result(result)
+            )
+            state['artifacts_saved'] = True
+            state['saved_artifact_keys'] = saved_keys
+            _persist_draft_workspace_state(state, checkpoint_path, completed=True)
+        return _draft_workspace_completion(result, saved_keys)
 
-def writer_draft_workspace() -> dict:
-    """Run the existing outline/rewrite/revision document path unchanged."""
-    return _run_draft_workspace('sectioned')
+    task = _read_json_file(writing_task_path)
+    representation = str((task.get('output') or {}).get('representation') or '').strip()
+    if representation not in {'markdown', 'ir'}:
+        raise ValueError(
+            "Flat short-document generation requires 'markdown' or 'ir' representation."
+        )
+    if not result.get('short_writing_plan'):
+        result['short_writing_plan'] = writer_generate_short_writing_plan(
+            writing_task_path=writing_task_path,
+            writing_context_path=writing_context_path,
+        )
+        state['result'] = result
+        _persist_draft_workspace_state(state, checkpoint_path)
+    if not result.get('visual_plan'):
+        planning = writer_generate_short_visual_plan(
+            writing_task_path=writing_task_path,
+            short_writing_plan_path=result['short_writing_plan'],
+            writing_context_path=writing_context_path,
+        )
+        result.update({
+            'visual_plan': planning['visual_plan'],
+            'visual_need_count': planning['visual_need_count'],
+            'warnings': [
+                *(result.get('warnings') or []),
+                *(planning.get('warnings') or []),
+            ],
+        })
+        state['result'] = result
+        _persist_draft_workspace_state(state, checkpoint_path)
+
+    resolved_media = str(result.get('resolved_media_assets') or '')
+    visual_need_count = int(result.get('visual_need_count') or 0)
+    if visual_need_count > 0 and not resolved_media:
+        if not media_assets_path:
+            raise ValueError(
+                'media_assets_path is required when the short draft has visual media.'
+            )
+        media = writer_resolve_visual_media(
+            visual_plan_path=result['visual_plan'],
+            media_assets_path=media_assets_path,
+        )
+        resolved_media = media['resolved_media_assets']
+        result['resolved_media_assets'] = resolved_media
+        result['warnings'] = [
+            *(result.get('warnings') or []),
+            *(media.get('warnings') or []),
+        ]
+        state['result'] = result
+        _persist_draft_workspace_state(state, checkpoint_path)
+    if not result.get('draft_document'):
+        result['draft_document'] = writer_generate_short_document(
+            writing_task_path=writing_task_path,
+            short_writing_plan_path=result['short_writing_plan'],
+            writing_context_path=writing_context_path,
+            visual_plan_path=result['visual_plan'],
+            resolved_media_assets_path=resolved_media,
+        )
+        result['representation'] = representation
+        state['result'] = result
+        _persist_draft_workspace_state(state, checkpoint_path)
+
+    if not result.get('writing_context_after_draft'):
+        _emit_writer_progress('正在更新短文成稿上下文')
+        result['writing_context_after_draft'] = writer_update_writing_context(
+            content_artifact_path=result['draft_document'],
+            writing_context_path=writing_context_path,
+        )
+    state['result'] = result
+    _persist_draft_workspace_state(state, checkpoint_path)
+    _emit_writer_progress('短文成稿校验完成，正在保存工作区结果')
+    saved_keys = _save_draft_workspace_artifacts(
+        _published_flat_draft_workspace_result(result)
+    )
+    state['artifacts_saved'] = True
+    state['saved_artifact_keys'] = saved_keys
+    _persist_draft_workspace_state(state, checkpoint_path, completed=True)
+    return _draft_workspace_completion(result, saved_keys)
