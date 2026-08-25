@@ -283,7 +283,7 @@ i18n:
     steps:
       prepare: {label: 写作准备}
       outline: {label: 大纲}
-      write_flat_document: {label: 连续正文成稿}
+      write_flat_document: {label: 短文成稿}
       write_document: {label: 成稿}
     tabs:
       prepare: {label: 写作准备}

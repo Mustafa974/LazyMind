@@ -160,7 +160,7 @@ steps:
       outline_write_result must report success.
 
   write_flat_document:
-    label: 连续正文成稿
+    label: 短文成稿
     tools_only: true
     stream_heartbeat: true
     prompt: |
