@@ -237,6 +237,7 @@ export interface WriteBackWriterDocumentResult {
 
 export interface WriteBackWriterDocumentRequest {
   base_revision: number;
+  slot?: WriterDocumentSlot;
   source_document: Record<string, unknown>;
   revised_document: Record<string, unknown>;
 }
@@ -508,6 +509,7 @@ export function WorkflowSessionApi() {
       baseRevision: number,
       sourceDocument?: Record<string, unknown>,
       revisedDocument?: Record<string, unknown>,
+      slot?: WriterDocumentSlot,
       options?: RawAxiosRequestConfig,
     ) {
       const payload: Record<string, unknown> = { base_revision: baseRevision };
@@ -515,6 +517,7 @@ export function WorkflowSessionApi() {
       // selected revision as the authoritative write-back input.
       if (sourceDocument !== undefined) payload.source_document = sourceDocument;
       if (revisedDocument !== undefined) payload.revised_document = revisedDocument;
+      if (slot !== undefined && slot !== 'draft_document') payload.slot = slot;
       return axiosInstance.post<{
         code: number;
         message: string;

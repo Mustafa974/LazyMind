@@ -2412,6 +2412,10 @@ def writer_preview_selection_rewrite(
     else:
         if selection_type != 'markdown':
             raise ValueError("Markdown artifacts require selection.type='markdown'.")
+        if slot == 'flat_draft_document':
+            instruction += (
+                '\nKeep the replacement as exactly one Markdown paragraph; do not split it.'
+            )
         replace_set = StringReplaceSet.model_validate(
             revision.build_selected_markdown_replace_set(
                 document, instruction, str(selection.get('selected_text') or ''), context,
