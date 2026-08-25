@@ -258,18 +258,24 @@ ui:
       completed_continue_step: write_document
 
     - id: result
-      step_id: write_document
+      status_step_ids:
+        - write_document
+        - write_flat_document
       label: Final Document
       layout: list
       slots:
         - id: draft_document
-
-    - id: flat_result
-      step_id: write_flat_document
-      label: Final Document
-      layout: list
-      slots:
         - id: flat_draft_document
+      composite_behavior:
+        hide_empty_columns: true
+        empty_column_scope: selected
+        mutually_exclusive:
+          - slots:
+              - draft_document
+              - flat_draft_document
+            prefer:
+              - draft_document
+              - flat_draft_document
 
 i18n:
   zh-CN:
@@ -283,7 +289,6 @@ i18n:
       prepare: {label: 写作准备}
       outline: {label: 大纲}
       result: {label: 成稿}
-      flat_result: {label: 成稿}
     slots:
       writing_task: {label: 写作任务}
       writer_command: {label: 写作控制命令}
