@@ -76,15 +76,10 @@ steps:
       The wrapper reads the authoritative user request directly. Pass source_filename only for an
       uploaded .md, .markdown, .txt, or .lmd source, using its basename exactly. Never put
       a Feishu/Lark URL or an uploaded image filename in source_filename. The workspace
-      saves its declared artifacts itself. During this call the wrapper runs the package-owned
-      structure classifier against the immutable request. A clear flat result routes directly
-      to write_flat_document; a clear sectioned result routes through outline. An unclear or
-      failed classification defaults to the existing sectioned path. Do not call ask_user or
-      invent fallback artifacts.
+      saves its declared artifacts itself. Do not invent fallback artifacts.
 
       Report representation and the exact `REQUIRED_NEXT_STEP: <next_step>` returned.
-      Do not assume that a missing source_document implies outline. Follow the returned
-      next_step exactly; flat creation continues to write_flat_document.
+      If source_document is absent, state that processing continues directly to outline.
     tools:
       - kb
       - cloud_files
