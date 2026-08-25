@@ -63,8 +63,7 @@ It must not produce an outline, section instructions, or draft blocks.
 
 ### write_document
 
-`write_document` keeps the existing sectioned generation, rewrite, and revision path and owns
-the user-visible `draft_document` slot.
+`write_document` owns the single user-visible `draft_document` slot and has three modes.
 
 Sectioned generation/rewrite mode:
 
