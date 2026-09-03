@@ -46,6 +46,7 @@ from lazyllm.tools.writer.numbering import (
     materialize_markdown,
 )
 from lazyllm.tools.writer.provider import match_writer_provider
+from lazyllm.tools.writer.provider.github import GitHubWriterProvider
 from lazyllm.tools.writer.tools import (
     WriterDraftingTools,
     WriterPlanningTools,
@@ -3115,6 +3116,37 @@ def _modify_plan_needs_media(path: str) -> bool:
     )
 
 
+def _prepare_github_markdown_code_fences(
+    document_path: str,
+    target_document_path: str,
+) -> tuple[str, str]:
+    """Create GitHub-only editor copies and return an updated target when needed."""
+    source = Path(str(document_path or ''))
+    if source.suffix.lower() not in {'.md', '.markdown'} or not source.is_file() \
+            or not target_document_path:
+        return str(document_path), ''
+    target = TargetDocument.model_validate(_read_json_file(target_document_path))
+    if not str(target.adapter or '').lower().startswith('github'):
+        return str(document_path), ''
+    markdown = source.read_text(encoding='utf-8')
+    target_before = target.model_dump()
+    normalized = GitHubWriterProvider.normalize_code_fences_for_writer(
+        markdown, target,
+    )
+    if normalized == markdown and target.model_dump() == target_before:
+        return str(document_path), ''
+    root = _run_root('github-code-fences')
+    normalized_path = root / source.name
+    normalized_path.write_text(normalized, encoding='utf-8')
+    updated_target_path = _save_json_artifact(
+        'target_document',
+        json.dumps(target.model_dump(), ensure_ascii=False),
+        writer_schema('task.TargetDocument'),
+        directory=root,
+    )
+    return str(normalized_path), updated_target_path
+
+
 def _save_draft_workspace_artifacts(result: Mapping[str, Any]) -> list[str]:
     from lazymind.chat.engine.subagent.tools import save_artifacts
 
@@ -3475,6 +3507,18 @@ def writer_draft_workspace() -> dict:
         result.setdefault('target_document', target_document_path)
         if media_assets_path and not result.get('resolved_media_assets'):
             result['resolved_media_assets'] = resolved_media or media_assets_path
+    if representation == 'markdown' and target_document_path \
+            and result.get('draft_document') \
+            and not result.get('github_code_fences_prepared'):
+        prepared_draft, updated_target = _prepare_github_markdown_code_fences(
+            str(result['draft_document']), target_document_path,
+        )
+        result['draft_document'] = prepared_draft
+        if updated_target:
+            result['target_document'] = updated_target
+        result['github_code_fences_prepared'] = True
+        state['result'] = result
+        _persist_draft_workspace_state(state, checkpoint_path)
     if not result.get('writing_context_after_draft'):
         _emit_writer_progress('正在更新成稿上下文')
         result['writing_context_after_draft'] = writer_update_writing_context(
@@ -3631,6 +3675,17 @@ def writer_flat_draft_workspace() -> dict:
         result.setdefault('target_document', target_document_path)
         if media_assets_path and not result.get('resolved_media_assets'):
             result['resolved_media_assets'] = resolved_media or media_assets_path
+    if representation == 'markdown' and target_document_path \
+            and not result.get('github_code_fences_prepared'):
+        prepared_draft, updated_target = _prepare_github_markdown_code_fences(
+            str(result['draft_document']), target_document_path,
+        )
+        result['draft_document'] = prepared_draft
+        if updated_target:
+            result['target_document'] = updated_target
+        result['github_code_fences_prepared'] = True
+        state['result'] = result
+        _persist_draft_workspace_state(state, checkpoint_path)
     if not result.get('writing_context_after_draft'):
         _emit_writer_progress('正在更新短文成稿上下文')
         result['writing_context_after_draft'] = writer_update_writing_context(

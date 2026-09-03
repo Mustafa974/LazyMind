@@ -891,8 +891,13 @@ def test_draft_workspace_revise_uses_writing_task_representation(
     assert calls == ([expected_writer] if expected_writer else [])
     if representation == 'markdown':
         assert state['result']['resolved_media_assets'] == media_assets
-        assert state['result']['draft_document'] == draft_document
+        assert state['result']['draft_document'] != draft_document
         assert Path(state['result']['draft_document']).read_text(
             encoding='utf-8',
-        ) == markdown_draft
-        assert state['result']['target_document'] == target_document
+        ) == markdown_draft.replace('```mermaid', '```text').replace(
+            '```go', '```text',
+        ).replace('```java', '```text')
+        target = tools._read_json_file(state['result']['target_document'])
+        assert [
+            item['language'] for item in target['meta']['github_writer_code_fences']
+        ] == ['mermaid', 'go', 'java']
