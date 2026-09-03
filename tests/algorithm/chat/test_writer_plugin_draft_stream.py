@@ -694,12 +694,16 @@ def test_load_local_lmd_removes_cloud_binding(monkeypatch, tmp_path):
     assert not loaded['blocks'][0].get('provider_binding')
 
 
+@pytest.mark.parametrize('destination', [
+    'https://github.com/acme/docs/tree/main/articles',
+    'https://github.com/acme/docs/wiki',
+])
 def test_prepare_new_document_plans_github_target_without_writing(
     monkeypatch,
     tmp_path,
+    destination,
 ):
     tools = _load_tools_module()
-    destination = 'https://github.com/acme/docs/tree/main/articles'
     request = f'写一篇关于可复用工作流的文章，保存到 {destination}'
     context = SimpleNamespace(
         workspace_path=str(tmp_path),

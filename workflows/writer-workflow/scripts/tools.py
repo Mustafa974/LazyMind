@@ -415,7 +415,7 @@ _PROVIDER_DOCUMENT_LOCATOR = re.compile(
 )
 _GITHUB_CREATE_PARENT = re.compile(
     r'^https?://(?:www\.)?github\.com/[^/\s]+/[^/\s]+'
-    r'(?:/tree/[^?#\s]+)?/?(?:[?#].*)?$',
+    r'(?:/wiki|/tree/[^?#\s]+)?/?(?:[?#].*)?$',
     re.IGNORECASE,
 )
 _LOCAL_WRITER_DOCUMENT_SUFFIXES = {'.md', '.markdown', '.txt', '.lmd'}
