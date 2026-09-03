@@ -807,7 +807,17 @@ def test_draft_workspace_revise_uses_writing_task_representation(
     media_assets = write_json('media_assets.json', {'assets': {}})
     modify_plan = write_json('modify_plan.json', {'instructions': []})
     revision_set = write_json('revision_set.json', {})
-    draft_document = write_json('draft_document.json', {})
+    markdown_draft = (
+        '```mermaid\nflowchart LR\nA --> B\n```\n\n'
+        '```go\npackage main\n```\n\n'
+        '```java\nclass Main {}\n```\n'
+    )
+    if representation == 'markdown':
+        draft_path = tmp_path / 'draft_document.md'
+        draft_path.write_text(markdown_draft, encoding='utf-8')
+        draft_document = str(draft_path)
+    else:
+        draft_document = write_json('draft_document.json', {})
     context_after_draft = write_json('context_after_draft.json', {})
     remote_inputs = {
         'writer_command': writer_command,
@@ -868,3 +878,8 @@ def test_draft_workspace_revise_uses_writing_task_representation(
     assert calls == ([expected_writer] if expected_writer else [])
     if representation == 'markdown':
         assert state['result']['resolved_media_assets'] == media_assets
+        assert state['result']['draft_document'] == draft_document
+        assert Path(state['result']['draft_document']).read_text(
+            encoding='utf-8',
+        ) == markdown_draft
+        assert state['result']['target_document'] == target_document
