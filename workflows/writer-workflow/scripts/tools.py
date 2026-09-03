@@ -9,9 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import re
-import shutil
 import tempfile
 import uuid
 from pathlib import Path
@@ -48,7 +46,6 @@ from lazyllm.tools.writer.numbering import (
     materialize_markdown,
 )
 from lazyllm.tools.writer.provider import match_writer_provider
-from lazyllm.tools.writer.provider.github import GitHubWriterProvider
 from lazyllm.tools.writer.tools import (
     WriterDraftingTools,
     WriterPlanningTools,
@@ -78,17 +75,7 @@ from lazymind.chat.engine.tools.writer import (
     sync_writer_documents,
     writer_schema,
 )
-from lazymind.chat.service.utils.static_file_url import static_file_url_from_any
 from lazymind.model_config import is_model_role_available
-
-_MARKDOWN_IMAGE_URL_RE = re.compile(
-    r'(?P<prefix>!\[[^\]]*\]\(\s*)(?P<url><[^>]+>|[^\s)]+)(?P<suffix>[^)]*\))',
-)
-_HTML_MEDIA_URL_RE = re.compile(
-    r'(?P<prefix><(?:img|source|video|audio)\b[^>]*?\bsrc=["\'])'
-    r'(?P<url>[^"\']+)(?P<suffix>["\'])',
-    re.IGNORECASE,
-)
 
 WRITER_IMAGE_ACQUISITION_PROMPT = '''Create one professional visual for a document.
 
@@ -889,16 +876,21 @@ def writer_load_document(user_input: str, stage: str = 'final') -> dict:
     }
 
 
-def writer_plan_document(parent_uri: str, adapter: str) -> str:
-    """Save a validated future provider target without writing remote content."""
-    root = _run_root('plan-document')
-    payload = _json_loads(
-        WriterResourceToolkit().plan_document(parent_uri=parent_uri, adapter=adapter),
-        {},
-    )
+def _writer_resolve_create_target(parent_uri: str) -> str:
+    """Resolve and save a future target without exposing a Writer tool API."""
+    root = _run_root('resolve-create-target')
+    provider = match_writer_provider(parent_uri)
+    resolve_create_target = getattr(provider, '_resolve_create_target', None)
+    if not callable(resolve_create_target):
+        raise ValueError(
+            f'Provider {provider.provider!r} does not support deferred document creation.',
+        )
+    target = resolve_create_target(parent_uri)
+    if not target.meta.get('create_pending'):
+        raise ValueError('The provider locator is not a document creation target.')
     return _save_json_artifact(
         'target_document',
-        json.dumps(payload, ensure_ascii=False),
+        json.dumps(target.model_dump(), ensure_ascii=False),
         writer_schema('task.TargetDocument'),
         directory=root,
     )
@@ -1169,7 +1161,7 @@ def writer_prepare_workspace(
     provider_warnings: list[str] = []
     representation = 'markdown'
     if operation == 'create' and command.target_ref:
-        target_document = writer_plan_document(command.target_ref, 'github')
+        target_document = _writer_resolve_create_target(command.target_ref)
     if operation != 'create':
         if source_kind == 'local':
             source_document = writer_load_local_document(source_filename)
@@ -2789,18 +2781,6 @@ def _replace_document_and_read_back(
         persisted_document = WriterDocument.model_validate(persisted)
         persisted_document.ui_editable = True
         persisted = persisted_document.model_dump()
-    display_document = None
-    if (
-        str(payload.get('provider') or adapter).strip().lower() == 'github'
-        and isinstance(persisted, str)
-        and media_library is not None
-    ):
-        preview = _previewable_markdown_content(
-            persisted,
-            media_library.model_dump(),
-        )
-        if preview != persisted:
-            display_document = preview
     result = PatchResult(
         success=True,
         message='Document written to provider and read back successfully.',
@@ -2810,7 +2790,7 @@ def _replace_document_and_read_back(
             'write_result': write_result,
         },
     )
-    response = {
+    return {
         'success': True,
         'changed': True,
         'provider_synced': True,
@@ -2821,9 +2801,6 @@ def _replace_document_and_read_back(
         'write_result': write_result,
         'target_document': payload.get('target_document'),
     }
-    if display_document is not None:
-        response['display_document'] = display_document
-    return response
 
 
 def _action_result_path(result: dict, key: str | None = None) -> str:
@@ -3138,207 +3115,12 @@ def _modify_plan_needs_media(path: str) -> bool:
     )
 
 
-def _rewrite_document_media_urls(content: str, url_map: Mapping[str, str]) -> str:
-    """Rewrite only explicitly mapped media URLs."""
-    if not content or not url_map:
-        return content
-
-    def replace(match: re.Match) -> str:
-        token = str(match.group('url') or '')
-        value = token.strip('<>')
-        replacement = str(url_map.get(value) or '')
-        if not replacement:
-            return match.group(0)
-        if token.startswith('<') and token.endswith('>'):
-            replacement = f'<{replacement}>'
-        return f"{match.group('prefix')}{replacement}{match.group('suffix')}"
-
-    rewritten = _MARKDOWN_IMAGE_URL_RE.sub(replace, content)
-    return _HTML_MEDIA_URL_RE.sub(replace, rewritten)
-
-
-def _previewable_markdown_content(
-    content: str,
-    media_assets: Any = None,
-    *,
-    remember_preview_references: bool = False,
-) -> str:
-    media_assets = _action_artifact_data(media_assets) if media_assets is not None else {}
-    assets = media_assets.get('assets') if isinstance(media_assets, dict) else None
-    if not isinstance(assets, dict):
-        return content
-    referenced_urls = {
-        str(match.group('url') or '').strip('<>')
-        for pattern in (_MARKDOWN_IMAGE_URL_RE, _HTML_MEDIA_URL_RE)
-        for match in pattern.finditer(content)
-    }
-    url_map: dict[str, str] = {}
-    for asset_id, asset in assets.items():
-        if not isinstance(asset, dict):
-            continue
-        meta = asset.get('meta') if isinstance(asset.get('meta'), dict) else {}
-        if remember_preview_references and not isinstance(asset.get('meta'), dict):
-            asset['meta'] = meta
-        source_reference = str(meta.get('source_reference') or '').strip()
-        local_path = str(asset.get('local_path') or '').strip()
-        if not local_path or not Path(local_path).is_file():
-            continue
-        previous_reference = str(meta.get('preview_reference') or '').strip()
-        preview_reference = _publish_preview_media(local_path, meta)
-        if not preview_reference:
-            continue
-        if remember_preview_references:
-            preview_reference = (
-                f'{preview_reference.split("#", 1)[0]}'
-                f'#writer-media-{hashlib.sha256(str(asset_id).encode()).hexdigest()[:16]}'
-            )
-            meta['preview_reference'] = preview_reference
-        url_map[f'asset://{asset_id}'] = preview_reference
-        if source_reference:
-            url_map[source_reference] = preview_reference
-        if previous_reference:
-            url_map[previous_reference] = preview_reference
-        digest = str(meta.get('sha256') or '').strip().lower()
-        if re.fullmatch(r'[0-9a-f]{64}', digest):
-            for reference in referenced_urls:
-                if digest in reference.lower():
-                    url_map[reference] = preview_reference
-    return _rewrite_document_media_urls(content, url_map)
-
-
-def _previewable_markdown_document(
-    document_path: str,
-    media_assets_path: str = '',
-) -> str:
-    source = Path(str(document_path or ''))
-    if source.suffix.lower() not in {'.md', '.markdown'} or not source.is_file() \
-            or not media_assets_path:
-        return str(document_path)
-    content = source.read_text(encoding='utf-8')
-    preview = _previewable_markdown_content(
-        content,
-        _read_json_file(media_assets_path),
-    )
-    if preview == content:
-        return str(document_path)
-    path = _run_root('preview-document') / source.name
-    path.write_text(preview, encoding='utf-8')
-    return str(path)
-
-
-def _previewable_markdown_workspace_artifacts(
-    document_path: str,
-    media_assets_path: str,
-) -> tuple[str, str]:
-    """Create linked preview copies while keeping the imported files canonical."""
-    source = Path(str(document_path or ''))
-    if source.suffix.lower() not in {'.md', '.markdown'} or not source.is_file() \
-            or not media_assets_path:
-        return str(document_path), str(media_assets_path)
-    media_assets = _read_json_file(media_assets_path)
-    if not isinstance(media_assets, dict):
-        return str(document_path), str(media_assets_path)
-    content = source.read_text(encoding='utf-8')
-    preview = _previewable_markdown_content(
-        content,
-        media_assets,
-        remember_preview_references=True,
-    )
-    if preview == content:
-        return str(document_path), str(media_assets_path)
-    root = _run_root('preview-workspace')
-    preview_document = root / source.name
-    preview_document.write_text(preview, encoding='utf-8')
-    preview_media_assets = _save_json_artifact(
-        'media_assets',
-        json.dumps(media_assets, ensure_ascii=False),
-        writer_schema('multimodal.MediaAssetLibrary'),
-        directory=root,
-    )
-    return str(preview_document), preview_media_assets
-
-
-def _publish_preview_media(local_path: str, meta: Mapping[str, Any]) -> str:
-    source = Path(local_path)
-    signed = static_file_url_from_any(str(source))
-    if signed:
-        return signed
-    upload_root = str(
-        os.environ.get('LAZYMIND_SHARED_UPLOAD_DIR')
-        or os.environ.get('LAZYMIND_UPLOAD_ROOT')
-        or ''
-    ).strip()
-    if not upload_root:
-        return ''
-    digest = str(meta.get('sha256') or '').strip().lower()
-    if not re.fullmatch(r'[0-9a-f]{64}', digest):
-        hasher = hashlib.sha256()
-        with source.open('rb') as fh:
-            for chunk in iter(lambda: fh.read(1024 * 1024), b''):
-                hasher.update(chunk)
-        digest = hasher.hexdigest()
-    suffix = source.suffix.lower()
-    if not re.fullmatch(r'\.[a-z0-9]{1,10}', suffix):
-        suffix = '.bin'
-    destination = Path(upload_root) / 'writer-preview-assets' / digest[:2] / f'{digest}{suffix}'
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    if not destination.is_file():
-        temporary = destination.with_name(f'.{destination.name}.{uuid.uuid4().hex}.tmp')
-        try:
-            shutil.copyfile(source, temporary)
-            temporary.replace(destination)
-        finally:
-            if temporary.exists():
-                temporary.unlink()
-    return static_file_url_from_any(str(destination))
-
-
-def _writer_target_adapter(target_document: Any) -> str:
-    try:
-        target = _action_artifact_data(target_document) if target_document else {}
-    except (OSError, TypeError, ValueError, json.JSONDecodeError):
-        return ''
-    return (
-        str(target.get('adapter') or '').strip().lower()
-        if isinstance(target, dict) else ''
-    )
-
-
 def _save_draft_workspace_artifacts(result: Mapping[str, Any]) -> list[str]:
     from lazymind.chat.engine.subagent.tools import save_artifacts
 
     ctx = require_context()
     allowed = set(ctx.output_slots or [])
     save_result = dict(result)
-    if _writer_target_adapter(save_result.get('target_document')) == 'github':
-        try:
-            preview_pairs = (
-                ('flat_draft_document', 'flat_resolved_media_assets'),
-                ('draft_document', 'resolved_media_assets'),
-                ('source_document', 'media_assets'),
-            )
-            for document_key, preferred_media_key in preview_pairs:
-                if allowed and document_key not in allowed:
-                    continue
-                document_path = str(save_result.get(document_key) or '')
-                media_key = (
-                    preferred_media_key
-                    if save_result.get(preferred_media_key)
-                    else 'media_assets'
-                )
-                media_assets_path = str(save_result.get(media_key) or '')
-                if not document_path or not media_assets_path:
-                    continue
-                preview_document, preview_media_assets = (
-                    _previewable_markdown_workspace_artifacts(
-                        document_path,
-                        media_assets_path,
-                    )
-                )
-                save_result[document_key] = preview_document
-                save_result[media_key] = preview_media_assets
-        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            LOG.warning('Unable to publish GitHub Markdown preview assets: %s', exc)
     entries: list[dict[str, Any]] = []
     saved_keys: list[str] = []
     for key, value in save_result.items():
@@ -3691,8 +3473,7 @@ def writer_draft_workspace() -> dict:
 
     if representation == 'markdown' and target_document_path:
         result.setdefault('target_document', target_document_path)
-        if _writer_target_adapter(target_document_path) == 'github' \
-                and media_assets_path and not result.get('resolved_media_assets'):
+        if media_assets_path and not result.get('resolved_media_assets'):
             result['resolved_media_assets'] = resolved_media or media_assets_path
     if not result.get('writing_context_after_draft'):
         _emit_writer_progress('正在更新成稿上下文')
@@ -3848,8 +3629,7 @@ def writer_flat_draft_workspace() -> dict:
 
     if representation == 'markdown' and target_document_path:
         result.setdefault('target_document', target_document_path)
-        if _writer_target_adapter(target_document_path) == 'github' \
-                and media_assets_path and not result.get('resolved_media_assets'):
+        if media_assets_path and not result.get('resolved_media_assets'):
             result['resolved_media_assets'] = resolved_media or media_assets_path
     if not result.get('writing_context_after_draft'):
         _emit_writer_progress('正在更新短文成稿上下文')

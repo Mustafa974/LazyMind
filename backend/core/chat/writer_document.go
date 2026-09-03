@@ -16,6 +16,7 @@ import (
 	"lazymind/core/algo"
 	"lazymind/core/common"
 	"lazymind/core/common/orm"
+	"lazymind/core/doc"
 	"lazymind/core/log"
 	"lazymind/core/store"
 	"lazymind/core/workflow"
@@ -344,6 +345,7 @@ func RenderWriterDocument(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "invalid render response", http.StatusBadGateway)
 		return
 	}
+	attachWriterMediaURLs(ctx, db, sessionID, slot, result)
 	common.ReplyOK(w, result)
 }
 
@@ -520,6 +522,7 @@ func SaveWriterDocument(w http.ResponseWriter, r *http.Request) {
 	if exportDocument, exists := result["export_document"]; exists {
 		reply["export_document"] = exportDocument
 	}
+	attachWriterMediaURLs(ctx, db, sessionID, slot, reply)
 	common.ReplyOK(w, reply)
 }
 
@@ -727,7 +730,6 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "writer document write-back failed", http.StatusBadGateway)
 		return
 	}
-	displayDocument := writerSyncDisplayDocument(result)
 
 	representation := strings.ToLower(strings.TrimSpace(result.Representation))
 	if representation == "" {
@@ -789,7 +791,7 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 	artifact, err := json.Marshal(map[string]any{
 		"schema":         schema,
 		"schema_version": "0.1",
-		"data":           displayDocument,
+		"data":           result.PersistedDocument,
 		"meta": map[string]any{
 			"created_by": "writer-write-back-api",
 			"created_at": time.Now().UTC().Format(time.RFC3339Nano),
@@ -834,7 +836,7 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 		"status": "synced", "revision": revision.Revision,
 		"provider_synced": true, "artifact_saved": true,
 		"patch_result":   result.PatchResult,
-		"document":       displayDocument,
+		"document":       result.PersistedDocument,
 		"provider":       confirmedProvider,
 		"representation": representation,
 		"write_result":   result.WriteResult,
@@ -855,6 +857,107 @@ func loadSelectedWriterArtifact(
 		return nil, err
 	}
 	return loadWriterArtifactRevision(ctx, db, revision)
+}
+
+type writerMediaAsset struct {
+	MediaAssetID string `json:"media_asset_id"`
+	URI          string `json:"uri"`
+	LocalPath    string `json:"local_path"`
+	Meta         struct {
+		SourceReference string `json:"source_reference"`
+	} `json:"meta"`
+}
+
+func attachWriterMediaURLs(
+	ctx context.Context,
+	db *gorm.DB,
+	sessionID string,
+	documentSlot string,
+	result map[string]any,
+) {
+	if representation, _ := result["representation"].(string); representation != "markdown" {
+		return
+	}
+	if urls := writerDocumentMediaURLs(ctx, db, sessionID, documentSlot); len(urls) > 0 {
+		result["media_urls"] = urls
+	}
+}
+
+func writerDocumentMediaURLs(
+	ctx context.Context,
+	db *gorm.DB,
+	sessionID string,
+	documentSlot string,
+) map[string]string {
+	mediaSlots := []string{"resolved_media_assets", "media_assets"}
+	switch documentSlot {
+	case "source_document", "outline_document":
+		mediaSlots = []string{"media_assets"}
+	case "flat_draft_document":
+		mediaSlots = []string{"flat_resolved_media_assets", "media_assets"}
+	}
+
+	urls := map[string]string{}
+	for _, mediaSlot := range mediaSlots {
+		artifact, err := loadSelectedWriterArtifact(ctx, db, sessionID, mediaSlot)
+		if err != nil {
+			continue
+		}
+		data, err := writerArtifactData(artifact.Value, false)
+		if err != nil {
+			continue
+		}
+		for assetID, asset := range writerMediaAssets(data) {
+			previewURL := doc.StaticFileURLFromAnyStoragePath(asset.LocalPath)
+			if previewURL == "" {
+				previewURL = doc.StaticFileURLFromAnyStoragePath(asset.URI)
+			}
+			if previewURL == "" {
+				continue
+			}
+			references := []string{strings.TrimSpace(asset.Meta.SourceReference)}
+			if assetID = strings.TrimSpace(assetID); assetID != "" {
+				references = append(references, "asset://"+assetID)
+			}
+			if mediaAssetID := strings.TrimSpace(asset.MediaAssetID); mediaAssetID != "" {
+				references = append(references, "asset://"+mediaAssetID)
+			}
+			for _, reference := range references {
+				if reference == "" {
+					continue
+				}
+				if _, exists := urls[reference]; !exists {
+					urls[reference] = previewURL
+				}
+			}
+		}
+	}
+	return urls
+}
+
+func writerMediaAssets(data json.RawMessage) map[string]writerMediaAsset {
+	var library struct {
+		Assets json.RawMessage `json:"assets"`
+	}
+	if json.Unmarshal(data, &library) != nil || len(library.Assets) == 0 {
+		return nil
+	}
+	keyed := map[string]writerMediaAsset{}
+	if json.Unmarshal(library.Assets, &keyed) == nil {
+		return keyed
+	}
+	var listed []writerMediaAsset
+	if json.Unmarshal(library.Assets, &listed) != nil {
+		return nil
+	}
+	for index, asset := range listed {
+		key := strings.TrimSpace(asset.MediaAssetID)
+		if key == "" {
+			key = strconv.Itoa(index)
+		}
+		keyed[key] = asset
+	}
+	return keyed
 }
 
 func loadWriterArtifactRevision(
@@ -1294,17 +1397,6 @@ func writerSyncReply(
 		"artifact_saved": artifactSaved, "patch_result": result.PatchResult,
 		"document": result.PersistedDocument,
 	})
-}
-
-func writerSyncDisplayDocument(result *algo.WriterDocumentSyncResponse) json.RawMessage {
-	if result != nil && len(result.DisplayDocument) > 0 &&
-		strings.TrimSpace(string(result.DisplayDocument)) != "null" {
-		return result.DisplayDocument
-	}
-	if result == nil {
-		return nil
-	}
-	return result.PersistedDocument
 }
 
 func writerSyncStatus(status int) int {

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -33,22 +35,6 @@ func TestWriterSyncReplyUsesProviderSynced(t *testing.T) {
 	}
 	if strings.Contains(body, "feishu_synced") {
 		t.Fatalf("legacy sync field leaked into response: %s", body)
-	}
-}
-
-func TestWriterSyncDisplayDocumentUsesOptionalDisplayVersion(t *testing.T) {
-	persisted := json.RawMessage(`"![image](assets/image.png)"`)
-	display := json.RawMessage(`"![image](/static-files/image.png)"`)
-	result := &algo.WriterDocumentSyncResponse{
-		PersistedDocument: persisted,
-		DisplayDocument:   display,
-	}
-	if got := writerSyncDisplayDocument(result); string(got) != string(display) {
-		t.Fatalf("display document = %s, want %s", got, display)
-	}
-	result.DisplayDocument = nil
-	if got := writerSyncDisplayDocument(result); string(got) != string(persisted) {
-		t.Fatalf("fallback document = %s, want %s", got, persisted)
 	}
 }
 
@@ -101,6 +87,117 @@ func TestWriterProviderSelectionSupportsGitHubTarget(t *testing.T) {
 	config, ok := writerProviderToolConfig(map[string]any{"github": "token"}, "github")
 	if !ok || config["github"] != "token" {
 		t.Fatalf("unexpected GitHub provider config: %#v", config)
+	}
+}
+
+func TestRenderWriterDocumentReturnsSessionAuthorizedMediaURLs(t *testing.T) {
+	uploadRoot := t.TempDir()
+	imagePath := filepath.Join(uploadRoot, "session", "diagram.png")
+	if err := os.MkdirAll(filepath.Dir(imagePath), 0o755); err != nil {
+		t.Fatalf("create image directory: %v", err)
+	}
+	if err := os.WriteFile(imagePath, []byte("image"), 0o644); err != nil {
+		t.Fatalf("write image: %v", err)
+	}
+	t.Setenv("LAZYMIND_UPLOAD_ROOT", uploadRoot)
+
+	chatService := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/workflow/actions:invoke" {
+			t.Errorf("path = %q, want workflow action invoke", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"result": map[string]any{
+				"title":          "Draft",
+				"representation": "markdown",
+				"document":       "![diagram](docs/assets/diagram.png)",
+				"numbering": map[string]any{
+					"ordered_style": "decimal",
+					"entries":       map[string]any{},
+				},
+			},
+		})
+	}))
+	t.Cleanup(chatService.Close)
+	t.Setenv("LAZYMIND_CHAT_SERVICE_URL", chatService.URL)
+
+	db := orm.MigrateTestDB(t, &orm.WorkflowSession{}, &orm.WorkflowSlotRevision{})
+	store.Init(db.DB, db.DB, nil)
+	t.Cleanup(func() { store.Init(nil, nil, nil) })
+	now := time.Now().UTC()
+	if err := db.Create(&orm.WorkflowSession{
+		ID: "session", ConversationID: "conversation", WorkflowID: "writer-workflow",
+		Status: "completed", CreateUserID: "user-1", CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed writer session: %v", err)
+	}
+	seedWriterRevision(t, db, "source", "source_document", 1, true, "ai",
+		json.RawMessage(`{"schema":"text/markdown","data":"![diagram](docs/assets/diagram.png)"}`))
+	mediaArtifact, err := json.Marshal(map[string]any{
+		"schema": "lazyllm.tools.writer.data_models.media.MediaAssetLibrary",
+		"data": map[string]any{
+			"assets": map[string]any{
+				"diagram": map[string]any{
+					"media_asset_id": "diagram-id",
+					"local_path":     imagePath,
+					"meta": map[string]any{
+						"source_reference": "docs/assets/diagram.png",
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal media artifact: %v", err)
+	}
+	seedWriterRevision(t, db, "media", "media_assets", 1, true, "ai", mediaArtifact)
+
+	render := func(userID string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/api/core/workflow-sessions/session/writer-document:render",
+			strings.NewReader(`{"slot":"source_document"}`),
+		)
+		req.Header.Set("X-User-Id", userID)
+		req = mux.SetURLVars(req, map[string]string{"session_id": "session"})
+		recorder := httptest.NewRecorder()
+		RenderWriterDocument(recorder, req)
+		return recorder
+	}
+
+	recorder := render("user-1")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("render status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		Data struct {
+			Document  string            `json:"document"`
+			MediaURLs map[string]string `json:"media_urls"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode render response: %v", err)
+	}
+	if response.Data.Document != "![diagram](docs/assets/diagram.png)" {
+		t.Fatalf("document was rewritten: %q", response.Data.Document)
+	}
+	signedURL := response.Data.MediaURLs["docs/assets/diagram.png"]
+	if !strings.HasPrefix(signedURL, "/static-files/") ||
+		!strings.Contains(signedURL, "expires=") || !strings.Contains(signedURL, "sig=") {
+		t.Fatalf("unexpected signed media URL: %q", signedURL)
+	}
+	if strings.Contains(recorder.Body.String(), uploadRoot) {
+		t.Fatalf("render response exposed the local upload path: %s", recorder.Body.String())
+	}
+
+	unauthorized := render("user-2")
+	if unauthorized.Code != http.StatusNotFound {
+		t.Fatalf("unauthorized status = %d, want %d; body=%s",
+			unauthorized.Code, http.StatusNotFound, unauthorized.Body.String())
+	}
+	if strings.Contains(unauthorized.Body.String(), "diagram.png") {
+		t.Fatalf("unauthorized response exposed media metadata: %s", unauthorized.Body.String())
 	}
 }
 

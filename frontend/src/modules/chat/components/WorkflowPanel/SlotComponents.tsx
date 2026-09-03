@@ -2,7 +2,13 @@ import { useState, useCallback, useLayoutEffect, useRef, useEffect, useMemo, cre
 import ReactDOM from "react-dom";
 import type { SlotRevision, SlotVersionEntry, SlotWidgetConfig } from "@/modules/chat/store/workflowPanel";
 import { useWorkflowStore, draftStore } from "@/modules/chat/store/workflowPanel";
-import { resolveCoreAssetUrl, resolveMarkdownImageUrlAsync, isExpiredSignedUrl } from "@/modules/knowledge/utils/imageUrl";
+import {
+  resolveCoreAssetUrl,
+  resolveMarkdownImageUrlAsync,
+  resolveMarkdownImageUrlFromMap,
+  isExpiredSignedUrl,
+  type MarkdownImageResolver,
+} from "@/modules/knowledge/utils/imageUrl";
 import { buildDiffLinesWithInline } from "@/modules/memory/shared";
 import { DiffLineContent } from "@/modules/memory/components/DiffLineContent";
 import { uploadFileInChunks } from "@/modules/chat/utils/chunkUpload";
@@ -2804,6 +2810,10 @@ function SlotWriterDocument({
   const latestRevisionRef = useRef(slot.revision);
   const apiListIndex = -1;
   const editingKey = `${sessionId}:${slotId}:${apiListIndex}:writer-document`;
+  const resolveWriterMarkdownImage = useCallback<MarkdownImageResolver>(
+    (url) => resolveMarkdownImageUrlFromMap(url, rendered?.media_urls),
+    [rendered?.media_urls],
+  );
 
   const applySavedRevision = useCallback((
     revision?: number,
@@ -3140,6 +3150,7 @@ function SlotWriterDocument({
         ) : canEdit ? (
           <MarkdownArtifactEditor
             markdown={markdown}
+            resolveImageUrl={resolveWriterMarkdownImage}
             numbering={rendered.numbering}
             sourceRevision={displayRevision}
             editingKey={editingKey}
@@ -3170,7 +3181,9 @@ function SlotWriterDocument({
             tabIndex={canRewrite ? 0 : undefined}
           >
             <div className='writer-artifact__markdown'>
-              <MarkdownViewer>{rendered.export_document ?? markdown}</MarkdownViewer>
+              <MarkdownViewer resolveImageUrl={resolveWriterMarkdownImage}>
+                {rendered.export_document ?? markdown}
+              </MarkdownViewer>
             </div>
           </div>
         )}

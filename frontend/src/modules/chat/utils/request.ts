@@ -281,6 +281,8 @@ export interface RenderWriterDocumentResult {
   title: string;
   representation: WriterDocumentRepresentation;
   document: RenderedWriterDocument;
+  /** Session-authorized display URLs keyed by the unchanged Markdown image source. */
+  media_urls?: Record<string, string>;
   /** Number-materialized Markdown used only by download/export flows. */
   export_document?: string;
   numbering: WriterNumberingState;

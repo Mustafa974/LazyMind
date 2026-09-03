@@ -140,9 +140,8 @@ def test_write_document_revision_emits_markdown_draft_stream(monkeypatch, tmp_pa
     )
 
 
-def test_github_preview_artifact_maps_media_before_standard_render(
-    monkeypatch,
-    tmp_path,
+def test_save_draft_workspace_artifacts_keeps_markdown_and_media_canonical(
+    monkeypatch, tmp_path,
 ):
     from lazymind.chat.engine.subagent import tools as subagent_tools
 
@@ -152,11 +151,6 @@ def test_github_preview_artifact_maps_media_before_standard_render(
         output_slots=['draft_document', 'resolved_media_assets'],
     )
     monkeypatch.setattr(tools, 'require_context', lambda: context)
-    monkeypatch.setattr(
-        tools,
-        '_publish_preview_media',
-        lambda local_path, _meta: f'/preview/{Path(local_path).name}',
-    )
     media_dir = tmp_path / 'media'
     media_dir.mkdir()
     imported_image = media_dir / 'diagram.svg'
@@ -180,11 +174,6 @@ def test_github_preview_artifact_maps_media_before_standard_render(
             },
         },
     }), encoding='utf-8')
-    target_path = tmp_path / 'target_document.json'
-    target_path.write_text(json.dumps({
-        'adapter': 'github',
-        'uri': 'githubrepo:/acme/docs/README.md?ref=main',
-    }), encoding='utf-8')
     saved_entries = []
 
     def save_artifacts(entries):
@@ -196,25 +185,24 @@ def test_github_preview_artifact_maps_media_before_standard_render(
     saved_keys = tools._save_draft_workspace_artifacts({
         'draft_document': str(canonical_path),
         'resolved_media_assets': str(media_assets_path),
-        'target_document': str(target_path),
     })
     saved = {entry['key']: entry['value'] for entry in saved_entries}
-    preview_path = saved['draft_document']
-    preview_media_path = saved['resolved_media_assets']
-    rendered = tools.writer_render_document(preview_path)
 
     assert saved_keys == ['draft_document', 'resolved_media_assets']
-    preview = rendered['document']
-    assert rendered['representation'] == 'markdown'
-    assert '![原图](/preview/diagram.svg#writer-media-' in preview
-    assert '(docs/assets/unmapped.svg)' in preview
-    preview_media = tools._read_json_file(preview_media_path)
-    assert preview_media['assets']['imported']['meta']['source_reference'] == (
+    assert saved['draft_document'] == str(canonical_path)
+    assert saved['resolved_media_assets'] == str(media_assets_path)
+    assert canonical_path.read_text(encoding='utf-8') == (
+        '# 文档\n\n'
+        '![原图](docs/assets/diagram.svg)\n\n'
+        '![未导入](docs/assets/unmapped.svg)\n'
+    )
+    media = tools._read_json_file(saved['resolved_media_assets'])
+    assert media['assets']['imported']['meta']['source_reference'] == (
         'docs/assets/diagram.svg'
     )
 
 
-def test_github_sync_keeps_persisted_paths_and_returns_preview(monkeypatch, tmp_path):
+def test_github_sync_returns_only_persisted_markdown(monkeypatch, tmp_path):
     tools = _load_tools_module()
     image = tmp_path / 'image.jpg'
     image.write_bytes(b'image')
@@ -232,12 +220,6 @@ def test_github_sync_keeps_persisted_paths_and_returns_preview(monkeypatch, tmp_
         },
     }
     persisted = f'# Document\n\n![image](assets/aa/{digest}.jpg)\n'
-    monkeypatch.setattr(
-        tools,
-        '_publish_preview_media',
-        lambda _local_path, _meta: '/static-files/image.jpg',
-    )
-
     class FakeWriterResourceToolkit:
         def replace_document(self, **_kwargs):
             return json.dumps({
@@ -267,7 +249,7 @@ def test_github_sync_keeps_persisted_paths_and_returns_preview(monkeypatch, tmp_
     )
 
     assert result['persisted_document'] == persisted
-    assert '![image](/static-files/image.jpg)' in result['display_document']
+    assert 'display_document' not in result
 
 
 def test_markdown_draft_blocks_do_not_pass_resolved_media(monkeypatch, tmp_path):
@@ -738,8 +720,8 @@ def test_prepare_new_document_plans_github_target_without_writing(
     monkeypatch.setattr(tools, 'writer_classify_structure', lambda _query: 'flat')
     monkeypatch.setattr(
         tools,
-        'writer_plan_document',
-        lambda parent_uri, adapter: planned_calls.append((parent_uri, adapter)) or target_path,
+        '_writer_resolve_create_target',
+        lambda parent_uri: planned_calls.append(parent_uri) or target_path,
     )
     monkeypatch.setattr(tools, 'writer_build_writing_task', lambda **_kwargs: writing_task)
     monkeypatch.setattr(
@@ -762,7 +744,38 @@ def test_prepare_new_document_plans_github_target_without_writing(
     assert command.source_ref is None
     assert command.target_ref == destination
     assert result['target_document'] == target_path
-    assert planned_calls == [(destination, 'github')]
+    assert planned_calls == [destination]
+
+
+def test_resolve_create_target_uses_matched_provider(monkeypatch, tmp_path):
+    tools = _load_tools_module()
+    context = SimpleNamespace(
+        workspace_path=str(tmp_path),
+        params={'step_id': 'prepare'},
+    )
+
+    class FakeProvider:
+        provider = 'example'
+
+        def _resolve_create_target(self, parent_uri):
+            return tools.TargetDocument(
+                adapter='example',
+                uri=f'example:{parent_uri}',
+                meta={'create_pending': True},
+            )
+
+    monkeypatch.setattr(tools, 'require_context', lambda: context)
+    monkeypatch.setattr(tools, 'match_writer_provider', lambda _uri: FakeProvider())
+
+    target_path = tools._writer_resolve_create_target('/documents')
+
+    assert tools._read_json_file(target_path) == {
+        'doc_id': None,
+        'uri': 'example:/documents',
+        'adapter': 'example',
+        'title': None,
+        'meta': {'create_pending': True},
+    }
 
 
 @pytest.mark.parametrize(
