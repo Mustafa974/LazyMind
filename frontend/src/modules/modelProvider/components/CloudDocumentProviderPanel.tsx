@@ -15,7 +15,7 @@ import {
 import type { CloudDocumentProvidersVm } from "../hooks/useCloudDocumentProviders";
 
 function getProviderTitle(
-  type: "feishu" | "notion" | "local" | "googledrive",
+  type: "feishu" | "notion" | "local" | "googledrive" | "wechat",
   t: CloudDocumentProvidersVm["t"],
 ) {
   if (type === "local") {
@@ -27,11 +27,14 @@ function getProviderTitle(
   if (type === "googledrive") {
     return t("modelProvider.external.googleDriveTitle");
   }
+  if (type === "wechat") {
+    return t("modelProvider.wechatOfficialAccount.title");
+  }
   return t("modelProvider.cloudDocuments.notionTitle");
 }
 
 function getProviderDescription(
-  type: "feishu" | "notion" | "local" | "googledrive",
+  type: "feishu" | "notion" | "local" | "googledrive" | "wechat",
   t: CloudDocumentProvidersVm["t"],
   vm: CloudDocumentProvidersVm,
 ) {
@@ -58,6 +61,15 @@ function getProviderDescription(
           account: vm.googleDriveConnection.accountName,
         })
       : t("modelProvider.external.googleDriveDesc");
+  }
+  if (type === "wechat") {
+    if (vm.isWeChatOfficialAccountAuthValid) {
+      return t("modelProvider.wechatOfficialAccount.hubConnected");
+    }
+    if (vm.hasWeChatOfficialAccount) {
+      return t("modelProvider.wechatOfficialAccount.hubPending");
+    }
+    return t("modelProvider.wechatOfficialAccount.hubDescription");
   }
 
   if (vm.isNotionAuthValid) {
@@ -115,12 +127,15 @@ export default function CloudDocumentProviderPanel({ vm }: { vm: CloudDocumentPr
     isFeishuAuthValid,
     isNotionAuthValid,
     isGoogleDriveAuthValid,
+    isWeChatOfficialAccountAuthValid,
+    hasWeChatOfficialAccount,
     isMailConnected,
     mailConnectionLabel,
     handleManageFeishuAuth,
     handleManageLocalSource,
     handleManageGoogleDrive,
     handleManageMail,
+    handleManageWeChatOfficialAccount,
     handleOpenNotionSetup,
   } = vm;
 
@@ -163,15 +178,22 @@ export default function CloudDocumentProviderPanel({ vm }: { vm: CloudDocumentPr
       {cloudAuthProviderOptions.map((item) => {
         const isFeishu = item.type === "feishu";
         const isGoogleDrive = item.type === "googledrive";
+        const isWeChatOfficialAccount = item.type === "wechat";
         const isAuthValid = isFeishu
           ? isFeishuAuthValid
           : isGoogleDrive
             ? isGoogleDriveAuthValid
-            : isNotionAuthValid;
-        const isProviderLocked = !isAuthValid;
+            : isWeChatOfficialAccount
+              ? isWeChatOfficialAccountAuthValid
+              : isNotionAuthValid;
+        const isProviderLocked = isWeChatOfficialAccount
+          ? !hasWeChatOfficialAccount
+          : !isAuthValid;
         const authStatusText = isAuthValid
           ? t("modelProvider.cloudDocuments.authValid")
-          : t("modelProvider.cloudDocuments.credentialMissing");
+          : isWeChatOfficialAccount && hasWeChatOfficialAccount
+            ? t("modelProvider.cloudDocuments.authPending")
+            : t("modelProvider.cloudDocuments.credentialMissing");
 
         const handleManage = () => {
           if (isFeishu) {
@@ -180,6 +202,10 @@ export default function CloudDocumentProviderPanel({ vm }: { vm: CloudDocumentPr
           }
           if (isGoogleDrive) {
             handleManageGoogleDrive();
+            return;
+          }
+          if (isWeChatOfficialAccount) {
+            handleManageWeChatOfficialAccount();
             return;
           }
           handleOpenNotionSetup();
@@ -197,7 +223,7 @@ export default function CloudDocumentProviderPanel({ vm }: { vm: CloudDocumentPr
             </div>
             <Tag
               className="model-provider-cloud-doc-resource-status"
-              color={isAuthValid ? "success" : "default"}
+              color={isAuthValid ? "success" : isProviderLocked ? "default" : "processing"}
             >
               {authStatusText}
             </Tag>
