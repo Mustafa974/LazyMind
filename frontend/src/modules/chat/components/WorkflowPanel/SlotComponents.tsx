@@ -3128,7 +3128,11 @@ function SlotWriterDocument({
     );
   }
 
-  if (rendered.representation === 'markdown' && !markdownTabActivated) return null;
+  if (
+    slotId === 'source_document'
+    && rendered.representation === 'markdown'
+    && !markdownTabActivated
+  ) return null;
 
   return (
     <div className='workflow-slot workflow-slot--artifact'>
