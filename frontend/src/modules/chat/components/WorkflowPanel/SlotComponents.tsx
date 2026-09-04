@@ -3128,8 +3128,10 @@ function SlotWriterDocument({
     );
   }
 
+  // Keep ordinary Writer documents on the visible-tab mount path. Eagerly
+  // mount generated Markdown only when this task is bound to GitHub.
   if (
-    slotId === 'source_document'
+    (slotId === 'source_document' || slot.provider !== 'github')
     && rendered.representation === 'markdown'
     && !markdownTabActivated
   ) return null;
