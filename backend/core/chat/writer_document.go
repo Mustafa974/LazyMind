@@ -93,7 +93,7 @@ func writerDocumentProvider(values ...json.RawMessage) string {
 		if provider == "" {
 			provider = strings.ToLower(strings.TrimSpace(identity.Adapter))
 		}
-		if provider == "feishu" || provider == "notion" {
+		if provider == "feishu" || provider == "notion" || provider == "obsidian" {
 			return provider
 		}
 	}
@@ -541,7 +541,7 @@ func SaveWriterDocument(w http.ResponseWriter, r *http.Request) {
 }
 
 // WriteBackWriterDocument writes the active IR or Markdown draft to the selected
-// cloud-document provider and saves the provider-confirmed IR as a new revision.
+// provider and saves the provider-confirmed document as a new revision.
 func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 	sessionID := common.PathVar(r, "session_id")
 	if sessionID == "" {
@@ -605,6 +605,7 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 		}, http.StatusConflict)
 		return
 	}
+	requestedProvider := strings.ToLower(strings.TrimSpace(body.Provider))
 
 	syncRequest := algo.WriterDocumentSyncRequest{
 		WorkflowID: session.WorkflowID, RevisionID: session.WorkflowRevisionID,
@@ -656,7 +657,10 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 			common.ReplyErr(w, "load resolved_media_assets failed", http.StatusInternalServerError)
 			return
 		}
-		if writerDocumentIsUnbound(revisedDocument) {
+		if writerDocumentIsUnbound(revisedDocument) || requestedProvider == "obsidian" {
+			// A local Obsidian export does not need a provider baseline from the
+			// original IR source. It is converted to Markdown at the Obsidian
+			// publication boundary below.
 			syncRequest.RevisedDocument = revisedDocument
 		} else {
 			baseline, baselineErr := loadWriterWriteBackBaseline(
@@ -691,21 +695,16 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 			syncRequest.RevisedDocument = revisedDocument
 		}
 	}
-	toolConfig, err := loadChatToolConfig(ctx, db, userID)
-	if err != nil {
-		common.ReplyErr(w, "load cloud document authorization failed", http.StatusBadGateway)
-		return
-	}
 	boundProvider := writerDocumentProvider(
 		syncRequest.SourceDocument,
 		syncRequest.RevisedDocument,
 		syncRequest.TargetDocument,
 	)
-	provider := strings.ToLower(strings.TrimSpace(body.Provider))
+	provider := requestedProvider
 	if provider == "" {
 		provider = boundProvider
 	}
-	if provider != "feishu" && provider != "notion" {
+	if provider != "feishu" && provider != "notion" && provider != "obsidian" {
 		common.ReplyErr(w, "unsupported writer document provider", http.StatusBadRequest)
 		return
 	}
@@ -722,14 +721,21 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 		syncRequest.TargetDocument = nil
 	}
 	syncRequest.Adapter = provider
-	providerConfig, ok := writerProviderToolConfig(toolConfig, provider)
-	if !ok {
-		common.ReplyErrWithData(w, "cloud document authorization required", map[string]any{
-			"status": provider + "_configuration_required", "provider": provider,
-		}, http.StatusBadRequest)
-		return
+	if provider != "obsidian" {
+		toolConfig, configErr := loadChatToolConfig(ctx, db, userID)
+		if configErr != nil {
+			common.ReplyErr(w, "load cloud document authorization failed", http.StatusBadGateway)
+			return
+		}
+		providerConfig, ok := writerProviderToolConfig(toolConfig, provider)
+		if !ok {
+			common.ReplyErrWithData(w, "cloud document authorization required", map[string]any{
+				"status": provider + "_configuration_required", "provider": provider,
+			}, http.StatusBadRequest)
+			return
+		}
+		syncRequest.ToolConfig = providerConfig
 	}
-	syncRequest.ToolConfig = providerConfig
 	result, status, err := algo.SyncWriterDocument(ctx, syncRequest)
 	if err != nil {
 		common.ReplyErrWithData(w, "writer document write-back failed", map[string]any{
@@ -742,9 +748,24 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "writer document write-back failed", http.StatusBadGateway)
 		return
 	}
+	if (provider != boundProvider || provider == "obsidian") && len(result.TargetDocument) > 0 {
+		if _, err := workflow.SaveWriterTargetDocument(
+			ctx, db, sessionID, draft.Revision.StepID, draft.Revision.Attempt, provider, result.TargetDocument,
+		); err != nil {
+			common.ReplyErrWithData(w, "writer target save failed", map[string]any{
+				"status": "artifact_save_failed", "provider_synced": true,
+				"artifact_saved": false,
+			}, http.StatusInternalServerError)
+			return
+		}
+	}
 
+	schema := "lazyllm.tools.writer.data_models.writer_ir.WriterDocument"
+	if provider == "obsidian" {
+		schema = "text/markdown"
+	}
 	artifact, err := json.Marshal(map[string]any{
-		"schema":         "lazyllm.tools.writer.data_models.writer_ir.WriterDocument",
+		"schema":         schema,
 		"schema_version": "0.1",
 		"data":           result.PersistedDocument,
 		"meta": map[string]any{

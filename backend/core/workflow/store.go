@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -1280,6 +1281,59 @@ func WriteSlotRevisionWithHumanArtifact(
 		Where("session_id = ? AND slot_id = ? AND revision = ?", sessionID, slotID, revision).
 		First(&result).Error
 	return &result, err
+}
+
+// SaveWriterTargetDocument records the provider-confirmed Writer target as the
+// selected target_document revision for a session.
+func SaveWriterTargetDocument(
+	ctx context.Context,
+	db *gorm.DB,
+	sessionID, stepID string,
+	attempt int,
+	expectedProvider string,
+	target json.RawMessage,
+) (*orm.WorkflowSlotRevision, error) {
+	var identity struct {
+		Adapter    string `json:"adapter"`
+		DocumentID string `json:"doc_id"`
+		URI        string `json:"uri"`
+	}
+	provider := strings.ToLower(strings.TrimSpace(expectedProvider))
+	if len(target) == 0 || json.Unmarshal(target, &identity) != nil ||
+		strings.TrimSpace(identity.Adapter) == "" ||
+		strings.TrimSpace(identity.DocumentID) == "" || strings.TrimSpace(identity.URI) == "" ||
+		(provider != "" && strings.ToLower(strings.TrimSpace(identity.Adapter)) != provider) {
+		return nil, fmt.Errorf("invalid writer target document")
+	}
+	artifact, err := json.Marshal(map[string]any{
+		"schema":         "lazyllm.tools.writer.data_models.task.TargetDocument",
+		"schema_version": "0.1",
+		"data":           target,
+		"meta": map[string]any{
+			"created_by": "writer-provider-sync",
+			"created_at": time.Now().UTC().Format(time.RFC3339Nano),
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	revision, err := WriteSlotRevisionWithHumanArtifact(
+		ctx, db, sessionID, "target_document", "target_document", stepID, attempt,
+		"single", nil, "json", artifact, nil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if err := db.WithContext(ctx).Model(&orm.WorkflowSlotRevision{}).
+		Where("id = ?", revision.ID).
+		Update("change_source", "provider_sync").Error; err != nil {
+		return nil, err
+	}
+	NotifyWorkflowArtifactUpdated(
+		ctx, db, sessionID, revision.StepID, revision.SlotID, revision.Slot,
+		revision.Revision, revision.ListIndex, "provider_sync",
+	)
+	return revision, nil
 }
 
 // LoadSlotRevisionValue resolves the selected artifact representation used by a
