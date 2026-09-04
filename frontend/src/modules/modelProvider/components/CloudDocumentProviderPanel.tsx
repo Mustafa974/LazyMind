@@ -6,7 +6,12 @@ import {
 } from "@ant-design/icons";
 import { FeishuCredentialHintAlertFromForm } from "@/modules/dataSource/common/FeishuCredentialHintAlert";
 import { formatValidFeishuAccountNames } from "@/modules/dataSource/utils/feishuAccount";
-import { cloudAuthProviderOptions, cloudProviderOptions } from "../constants/cloudProviderOptions";
+import { getCloudDataSourceCallbackUrl } from "@/modules/dataSource/common/feishuOAuth";
+import {
+  cloudAuthProviderOptions,
+  cloudProviderOptions,
+  type CloudProviderType,
+} from "../constants/cloudProviderOptions";
 import {
   CLOUD_DOCUMENTS_FEISHU_SETUP_PATH,
   CLOUD_DOCUMENTS_NOTION_SETUP_PATH,
@@ -14,7 +19,7 @@ import {
 import type { CloudDocumentProvidersVm } from "../hooks/useCloudDocumentProviders";
 
 function getProviderTitle(
-  type: "feishu" | "notion" | "local" | "googledrive",
+  type: CloudProviderType,
   t: CloudDocumentProvidersVm["t"],
 ) {
   if (type === "local") {
@@ -26,11 +31,14 @@ function getProviderTitle(
   if (type === "googledrive") {
     return t("modelProvider.external.googleDriveTitle");
   }
+  if (type === "github") {
+    return t("modelProvider.cloudDocuments.githubTitle");
+  }
   return t("modelProvider.cloudDocuments.notionTitle");
 }
 
 function getProviderDescription(
-  type: "feishu" | "notion" | "local" | "googledrive",
+  type: CloudProviderType,
   t: CloudDocumentProvidersVm["t"],
   vm: CloudDocumentProvidersVm,
 ) {
@@ -57,6 +65,17 @@ function getProviderDescription(
           account: vm.googleDriveConnection.accountName,
         })
       : t("modelProvider.external.googleDriveDesc");
+  }
+  if (type === "github") {
+    if (vm.isGitHubAuthValid) {
+      return t("modelProvider.cloudDocuments.githubConnected", {
+        account: vm.githubConnection?.accountName || "GitHub account",
+      });
+    }
+    if (!vm.isGitHubSetupReady) {
+      return t("modelProvider.cloudDocuments.githubSetupRequiredHint");
+    }
+    return t("modelProvider.cloudDocuments.githubAuthPendingHint");
   }
 
   if (vm.isNotionAuthValid) {
@@ -113,13 +132,16 @@ export default function CloudDocumentProviderPanel({ vm }: { vm: CloudDocumentPr
     canCreateLocalSource,
     isFeishuAuthValid,
     isNotionAuthValid,
+    isGitHubAuthValid,
     isGoogleDriveAuthValid,
     isFeishuSetupReady,
     isNotionSetupReady,
+    isGitHubSetupReady,
     handleManageFeishuAuth,
     handleManageLocalSource,
     handleManageGoogleDrive,
     handleOpenNotionSetup,
+    handleOpenGitHubSetup,
   } = vm;
 
   if (vm.loading) {
@@ -164,13 +186,20 @@ export default function CloudDocumentProviderPanel({ vm }: { vm: CloudDocumentPr
 
       {cloudAuthProviderOptions.map((item) => {
         const isFeishu = item.type === "feishu";
+        const isGitHub = item.type === "github";
         const isGoogleDrive = item.type === "googledrive";
         const isAuthValid = isFeishu
           ? isFeishuAuthValid
           : isGoogleDrive
             ? isGoogleDriveAuthValid
-            : isNotionAuthValid;
-        const isSetupReady = isFeishu ? isFeishuSetupReady : isNotionSetupReady;
+            : isGitHub
+              ? isGitHubAuthValid
+              : isNotionAuthValid;
+        const isSetupReady = isFeishu
+          ? isFeishuSetupReady
+          : isGitHub
+            ? isGitHubSetupReady
+            : isNotionSetupReady;
         const isProviderLocked = !isGoogleDrive && !isAuthValid && !isSetupReady;
         const authStatusText = isAuthValid
           ? t("modelProvider.cloudDocuments.authValid")
@@ -185,6 +214,10 @@ export default function CloudDocumentProviderPanel({ vm }: { vm: CloudDocumentPr
           }
           if (isGoogleDrive) {
             handleManageGoogleDrive();
+            return;
+          }
+          if (isGitHub) {
+            handleOpenGitHubSetup();
             return;
           }
           handleOpenNotionSetup();
@@ -244,7 +277,9 @@ export function CloudDocumentModals({ vm }: { vm: CloudDocumentProvidersVm }) {
       title={
         cloudSetupProvider === "feishu"
           ? t("modelProvider.cloudDocuments.feishuCredentialModalTitle")
-          : t("modelProvider.cloudDocuments.notionCredentialModalTitle")
+          : cloudSetupProvider === "github"
+            ? t("modelProvider.cloudDocuments.githubCredentialModalTitle")
+            : t("modelProvider.cloudDocuments.notionCredentialModalTitle")
       }
       open={feishuSetupModalOpen}
       destroyOnHidden
@@ -276,7 +311,9 @@ export function CloudDocumentModals({ vm }: { vm: CloudDocumentProvidersVm }) {
             placeholder={t(
               cloudSetupProvider === "notion"
                 ? "modelProvider.cloudDocuments.notionAppIdPlaceholder"
-                : "modelProvider.cloudDocuments.appIdPlaceholder",
+                : cloudSetupProvider === "github"
+                  ? "modelProvider.cloudDocuments.githubAppIdPlaceholder"
+                  : "modelProvider.cloudDocuments.appIdPlaceholder",
             )}
           />
         </Form.Item>
@@ -291,10 +328,21 @@ export function CloudDocumentModals({ vm }: { vm: CloudDocumentProvidersVm }) {
         </Form.Item>
         {cloudSetupProvider === "feishu" ? (
           <FeishuCredentialHintAlertFromForm form={feishuSetupForm} />
+        ) : cloudSetupProvider === "github" ? (
+          <Alert
+            showIcon
+            type="info"
+            message={t("modelProvider.cloudDocuments.githubCredentialHint")}
+          />
         ) : (
           <Alert showIcon type="info" message={t("modelProvider.cloudDocuments.notionCredentialHint")} />
         )}
-        {cloudSetupProvider !== "feishu" ? (
+        {cloudSetupProvider === "github" ? (
+          <p style={{ marginTop: 12, marginBottom: 0 }}>
+            {t("modelProvider.cloudDocuments.githubCallbackLabel")}{" "}
+            <code>{getCloudDataSourceCallbackUrl("github")}</code>
+          </p>
+        ) : cloudSetupProvider !== "feishu" ? (
           <p style={{ marginTop: 12, marginBottom: 0 }}>
             <a
               href={`${CLOUD_DOCUMENTS_NOTION_SETUP_PATH}?from=cloud-documents`}
