@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -128,6 +130,153 @@ func TestBuildWorkflowArtifactsSummaryExecutesJoinQuery(t *testing.T) {
 	}
 	if !strings.Contains(summary, "output: done") {
 		t.Fatalf("unexpected summary: %q", summary)
+	}
+}
+
+func TestOnSubAgentDoneSnapshotMarksSuccessfulWriterPublishProviderSync(t *testing.T) {
+	const writeResult = `{"schema":"lazyllm.tools.writer.data_models.revision.PatchResult","data":{"success":true,"target_document":{"adapter":"obsidian","doc_id":"vlt_test:note.md","uri":"obsidian://vlt_test/note.md"}}}`
+	for _, changeSource := range []string{"ai", "host"} {
+		t.Run(changeSource, func(t *testing.T) {
+			var draftArtifactSeq, writeResultArtifactSeq *int
+			var writeResultHumanArtifactID *string
+			if changeSource == "host" {
+				draftSeq, writeResultSeq := 1, 2
+				draftArtifactSeq = &draftSeq
+				writeResultArtifactSeq = &writeResultSeq
+				root := t.TempDir()
+				t.Setenv("LAZYMIND_SUBAGENT_WORKSPACE", root)
+				resultPath := filepath.Join(root, "publish_result.json")
+				if err := os.WriteFile(resultPath, []byte(writeResult), 0o600); err != nil {
+					t.Fatalf("write publish result: %v", err)
+				}
+				id := "write-result-host-value"
+				writeResultHumanArtifactID = &id
+			}
+			db := newTestDB(t)
+			if err := db.AutoMigrate(&orm.WorkflowHumanArtifact{}); err != nil {
+				t.Fatalf("migrate host artifacts: %v", err)
+			}
+			ctx := context.Background()
+			if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
+				SessionID: "writer-session", ConversationID: "writer-conversation", WorkflowID: "writer-workflow",
+			}); err != nil {
+				t.Fatalf("create session: %v", err)
+			}
+			if _, err := CreateSessionStep(ctx, db.DB, "writer-session", "write_document", "writer-task", 1); err != nil {
+				t.Fatalf("create step: %v", err)
+			}
+			now := time.Now().UTC()
+			if writeResultHumanArtifactID != nil {
+				pathValue, err := json.Marshal(map[string]string{"path": filepath.Join(os.Getenv("LAZYMIND_SUBAGENT_WORKSPACE"), "publish_result.json")})
+				if err != nil {
+					t.Fatalf("marshal publish result path: %v", err)
+				}
+				if err := db.Create(&orm.WorkflowHumanArtifact{
+					ID: *writeResultHumanArtifactID, SessionID: "writer-session", Slot: "document_write_result",
+					ContentType: "file", Value: pathValue, CreatedAt: now,
+				}).Error; err != nil {
+					t.Fatalf("create host write result: %v", err)
+				}
+			}
+			for _, artifact := range []orm.SubAgentArtifact{
+				{ID: "draft-artifact", TaskID: "writer-task", Slot: "draft_document", ContentType: "file", Value: json.RawMessage(`{"path":"draft_document.md"}`), Seq: 1, CreatedAt: now},
+				{ID: "write-result-artifact", TaskID: "writer-task", Slot: "document_write_result", ContentType: "file", Value: json.RawMessage(writeResult), Seq: 2, CreatedAt: now},
+			} {
+				if err := db.Create(&artifact).Error; err != nil {
+					t.Fatalf("create artifact: %v", err)
+				}
+			}
+			for _, revision := range []orm.WorkflowSlotRevision{
+				{ID: "draft-revision", SessionID: "writer-session", SlotID: "draft_document", Slot: "draft_document", StepID: "write_document", Attempt: 1, Revision: 1, Selected: true, Validity: "effective", ChangeSource: changeSource, ArtifactSeq: draftArtifactSeq, CreatedAt: now},
+				{ID: "write-result-revision", SessionID: "writer-session", SlotID: "document_write_result", Slot: "document_write_result", StepID: "write_document", Attempt: 1, Revision: 1, Selected: true, Validity: "effective", ChangeSource: changeSource, ArtifactSeq: writeResultArtifactSeq, HumanArtifactID: writeResultHumanArtifactID, CreatedAt: now},
+			} {
+				if err := db.Create(&revision).Error; err != nil {
+					t.Fatalf("create revision: %v", err)
+				}
+			}
+
+			OnSubAgentDoneSnapshot(ctx, db.DB, &WorkflowChatContext{
+				SessionID: "writer-session", StepID: "write_document",
+			})
+
+			var draft orm.WorkflowSlotRevision
+			if err := db.Where("id = ?", "draft-revision").First(&draft).Error; err != nil {
+				t.Fatalf("load draft revision: %v", err)
+			}
+			if draft.ChangeSource != "provider_sync" {
+				t.Fatalf("draft change_source = %q, want provider_sync", draft.ChangeSource)
+			}
+			var target orm.WorkflowSlotRevision
+			if err := db.Where("session_id = ? AND slot_id = ? AND selected = ?", "writer-session", "target_document", true).
+				First(&target).Error; err != nil {
+				t.Fatalf("load updated target document: %v", err)
+			}
+			if target.ChangeSource != "provider_sync" {
+				t.Fatalf("target change_source = %q, want provider_sync", target.ChangeSource)
+			}
+		})
+	}
+}
+
+func TestOnSubAgentDoneSnapshotLeavesFailedWriterPublishUnchanged(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
+		SessionID: "writer-failed-session", ConversationID: "writer-failed-conversation", WorkflowID: "writer-workflow",
+	}); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if _, err := CreateSessionStep(ctx, db.DB, "writer-failed-session", "write_document", "writer-failed-task", 1); err != nil {
+		t.Fatalf("create step: %v", err)
+	}
+	now := time.Now().UTC()
+	writeResultSeq := 2
+	for _, artifact := range []orm.SubAgentArtifact{
+		{ID: "failed-draft-artifact", TaskID: "writer-failed-task", Slot: "draft_document", ContentType: "file", Value: json.RawMessage(`{"path":"draft_document.md"}`), Seq: 1, CreatedAt: now},
+		{ID: "failed-write-result-artifact", TaskID: "writer-failed-task", Slot: "document_write_result", ContentType: "file", Value: json.RawMessage(`{"schema":"lazyllm.tools.writer.data_models.revision.PatchResult","data":{"success":false}}`), Seq: 2, CreatedAt: now},
+	} {
+		if err := db.Create(&artifact).Error; err != nil {
+			t.Fatalf("create artifact: %v", err)
+		}
+	}
+	for _, revision := range []orm.WorkflowSlotRevision{
+		{ID: "failed-draft-revision", SessionID: "writer-failed-session", SlotID: "draft_document", Slot: "draft_document", StepID: "write_document", Attempt: 1, Revision: 1, Selected: true, Validity: "effective", ChangeSource: "host", CreatedAt: now},
+		{ID: "failed-write-result-revision", SessionID: "writer-failed-session", SlotID: "document_write_result", Slot: "document_write_result", StepID: "write_document", Attempt: 1, Revision: 1, Selected: true, Validity: "effective", ChangeSource: "host", ArtifactSeq: &writeResultSeq, CreatedAt: now},
+	} {
+		if err := db.Create(&revision).Error; err != nil {
+			t.Fatalf("create revision: %v", err)
+		}
+	}
+
+	OnSubAgentDoneSnapshot(ctx, db.DB, &WorkflowChatContext{
+		SessionID: "writer-failed-session", StepID: "write_document",
+	})
+
+	var draft orm.WorkflowSlotRevision
+	if err := db.Where("id = ?", "failed-draft-revision").First(&draft).Error; err != nil {
+		t.Fatalf("load draft revision: %v", err)
+	}
+	if draft.ChangeSource != "host" {
+		t.Fatalf("draft change_source = %q, want host", draft.ChangeSource)
+	}
+	if err := db.Model(&orm.WorkflowSlotRevision{}).
+		Where("id = ?", "failed-write-result-revision").
+		Update("attempt", 2).Error; err != nil {
+		t.Fatalf("move write result to another attempt: %v", err)
+	}
+	if err := db.Model(&orm.SubAgentArtifact{}).
+		Where("id = ?", "failed-write-result-artifact").
+		Update("value", json.RawMessage(`{"schema":"lazyllm.tools.writer.data_models.revision.PatchResult","data":{"success":true}}`)).Error; err != nil {
+		t.Fatalf("mark mismatched write result successful: %v", err)
+	}
+	OnSubAgentDoneSnapshot(ctx, db.DB, &WorkflowChatContext{
+		SessionID: "writer-failed-session", StepID: "write_document",
+	})
+	if err := db.Where("id = ?", "failed-draft-revision").First(&draft).Error; err != nil {
+		t.Fatalf("reload draft revision: %v", err)
+	}
+	if draft.ChangeSource != "host" {
+		t.Fatalf("mismatched attempt changed draft source to %q", draft.ChangeSource)
 	}
 }
 
