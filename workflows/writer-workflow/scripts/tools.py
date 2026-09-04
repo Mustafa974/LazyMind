@@ -46,6 +46,7 @@ from lazyllm.tools.writer.numbering import (
     materialize_markdown,
 )
 from lazyllm.tools.writer.provider import match_writer_provider
+from lazyllm.tools.writer.provider.obsidian import ObsidianWriterProvider
 from lazyllm.tools.writer.tools import (
     WriterDraftingTools,
     WriterPlanningTools,
@@ -743,12 +744,19 @@ def _markdown_filename(title: str) -> str:
 def _save_publish_payload(payload: dict, root: Path) -> dict:
     draft_document = payload.get('draft_document') or {}
     publish_result = payload.get('publish_result') or {}
+    target_document = payload.get('target_document')
     if isinstance(publish_result, dict):
         publish_result = {
             **publish_result,
             'success': bool(publish_result.get('success', draft_document)),
         }
-    return {
+    if str(payload.get('provider') or '').strip().lower() == 'obsidian' \
+            and isinstance(target_document, dict):
+        publish_result = {
+            **publish_result,
+            'target_document': target_document,
+        }
+    saved = {
         'publish_result': _save_json_artifact(
             'publish_result',
             json.dumps(publish_result, ensure_ascii=False),
@@ -770,6 +778,7 @@ def _save_publish_payload(payload: dict, root: Path) -> dict:
         ),
         'published_link': str(payload.get('published_link') or ''),
     }
+    return saved
 
 
 def writer_build_writing_task(query: str, representation: str = 'markdown') -> str:
@@ -844,6 +853,30 @@ def writer_load_document(user_input: str, stage: str = 'final') -> dict:
         ),
         'representation': str(payload.get('representation') or ''),
     }
+
+
+def _normalize_obsidian_source_document(
+    source_document_path: str,
+    target_document_path: str,
+    media_assets_path: str,
+) -> str:
+    target = TargetDocument.model_validate(_read_json_file(target_document_path))
+    if str(target.adapter or '').strip().lower() != 'obsidian':
+        return source_document_path
+    source = _read_json_string(source_document_path)
+    media_assets = MediaAssetLibrary.model_validate(_read_json_file(media_assets_path))
+    normalized = ObsidianWriterProvider._normalize_materialized_image_paths(
+        source,
+        dict(target.meta.get('obsidian_bridge') or {}),
+        media_assets,
+    )
+    if normalized == source:
+        return source_document_path
+    return _save_writer_document(
+        'source_document',
+        normalized,
+        directory=_run_root('normalize-obsidian-source'),
+    )
 
 
 def writer_profile_resources(
@@ -1019,7 +1052,11 @@ def writer_prepare_workspace(
         if Path(path).suffix.lower() in _LOCAL_WRITER_DOCUMENT_SUFFIXES
     ]
     source_filename = str(source_filename or '').strip()
-    cloud_source_locator = _provider_document_locator(user_input or '')
+    provider_locator = _provider_document_locator(user_input or '')
+    obsidian_absolute_locator = ''
+    if not provider_locator:
+        obsidian_absolute_locator = ObsidianWriterProvider.find_absolute_path_locator(user_input or '')
+    cloud_source_locator = provider_locator or obsidian_absolute_locator
     has_cloud_source = bool(cloud_source_locator)
 
     # Models occasionally copy a provider locator into both fields.
@@ -1044,10 +1081,13 @@ def writer_prepare_workspace(
                 'or .lmd document.',
             )
         if has_cloud_source:
-            raise ValueError(
-                'The request contains both a provider document locator and a local source '
-                'document. Specify exactly one document source.',
-            )
+            if not local_candidates:
+                source_filename = ''
+            else:
+                raise ValueError(
+                    'The request contains both a provider document locator and a local source '
+                    'document. Specify exactly one document source.',
+                )
 
     source_kind = 'cloud' if has_cloud_source else (
         'local' if source_filename or local_candidates else 'cloud'
@@ -1107,7 +1147,10 @@ def writer_prepare_workspace(
                 'revise_document': 'draft',
                 'prepare_only': 'final',
             }[operation]
-            loaded = writer_load_document(user_input=user_input, stage=source_stage)
+            loaded = writer_load_document(
+                user_input=obsidian_absolute_locator or user_input,
+                stage=source_stage,
+            )
             source_document = loaded['source_document']
             target_document = loaded['target_document']
             representation = loaded['representation']
@@ -1120,6 +1163,12 @@ def writer_prepare_workspace(
         writing_task_path=writing_task,
         source_document_path=source_document if operation != 'use_outline' else '',
     )
+    if source_document and target_document:
+        source_document = _normalize_obsidian_source_document(
+            source_document,
+            target_document,
+            media_result['media_assets'],
+        )
     resource_profiles = writer_profile_resources(
         writing_task_path=writing_task,
         user_input=user_input,
@@ -2715,7 +2764,7 @@ def _replace_document_and_read_back(
             'write_result': write_result,
         },
     )
-    return {
+    response = {
         'success': True,
         'changed': True,
         'provider_synced': True,
@@ -2724,6 +2773,16 @@ def _replace_document_and_read_back(
         'representation': payload.get('representation'),
         'provider': payload.get('provider'),
     }
+    if response['representation'] == 'markdown':
+        # Markdown cannot carry a Writer IR provider binding. Return the
+        # resolved target so Core can retain the existing target slot.
+        response['target_document'] = (
+            payload.get('target_document')
+            if str(payload.get('provider') or '').strip().lower() == 'obsidian'
+            and isinstance(payload.get('target_document'), dict)
+            else target.model_dump(exclude_defaults=True)
+        )
+    return response
 
 
 def _action_result_path(result: dict, key: str | None = None) -> str:
