@@ -3749,8 +3749,8 @@ function SlotJsonFile({
     setRewritePreview(null);
   }, []);
 
-  const handleWriteBackSuccess = useCallback((revision: number) => {
-    setPayload(document);
+  const handleWriteBackSuccess = useCallback((revision: number, savedDocument: WriterDocument) => {
+    setPayload(savedDocument);
     applySavedRevision(revision);
     onRefresh?.();
   }, [applySavedRevision, onRefresh]);
