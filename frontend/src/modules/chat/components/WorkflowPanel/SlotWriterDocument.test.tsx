@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useWorkflowStore, type SlotRevision } from '@/modules/chat/store/workflowPanel';
 
 const workflowApi = vi.hoisted(() => ({
@@ -7,6 +7,8 @@ const workflowApi = vi.hoisted(() => ({
   renderWriterDocument: vi.fn(),
   saveWriterDocument: vi.fn(),
 }));
+const markdownEditorRender = vi.hoisted(() => vi.fn());
+const chunkUpload = vi.hoisted(() => ({ uploadFileInChunks: vi.fn() }));
 
 vi.mock('@/modules/chat/utils/request', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/modules/chat/utils/request')>(),
@@ -17,26 +19,34 @@ vi.mock('@/modules/chat/components/MarkdownViewer', () => ({
   default: ({ children }: { children: string }) => <div>{children}</div>,
 }));
 
+vi.mock('@/modules/chat/utils/chunkUpload', () => chunkUpload);
+
 vi.mock('./FilePreviewDrawer', () => ({
   FilePreviewDrawer: () => null,
 }));
 
 vi.mock('./MarkdownArtifactEditor', () => ({
-  MarkdownArtifactEditor: ({
-    onSave,
-    sourceRevision,
-  }: {
+  MarkdownArtifactEditor: (props: {
+    markdown: string;
+    resolveImageUrl?: (url: string) => Promise<string>;
     onSave: (markdown: string, revision: number, mode: 'draft') => Promise<unknown>;
     sourceRevision: number;
-  }) => (
-    <button
-      type='button'
-      data-source-revision={sourceRevision}
-      onClick={() => void onSave('# Edited draft', sourceRevision, 'draft')}
-    >
-      save markdown draft
-    </button>
-  ),
+  }) => {
+    markdownEditorRender(props);
+    const {
+      onSave,
+      sourceRevision,
+    } = props;
+    return (
+      <button
+        type='button'
+        data-source-revision={sourceRevision}
+        onClick={() => void onSave('# Edited draft', sourceRevision, 'draft')}
+      >
+        save markdown draft
+      </button>
+    );
+  },
 }));
 
 vi.mock('./WriterDownloadFormat', () => ({
@@ -49,6 +59,8 @@ vi.mock('./WriterDownloadFormat', () => ({
 
 import { resolveSnapshotDiffText, SlotRenderer, SlotVersionPopover } from './SlotComponents';
 import { WriterProviderChoice } from './SlotComponents';
+
+afterEach(() => vi.unstubAllGlobals());
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -74,7 +86,20 @@ function writerSlot(revision: number): SlotRevision {
   };
 }
 
-function renderedMarkdown(document: string) {
+function writerSourceSlot(): SlotRevision {
+  return {
+    slot_id: 'source_document',
+    revision: 1,
+    selected: true,
+    slot: 'source_document',
+    created_at: '2026-09-04T00:00:00Z',
+    content_type: 'file',
+    artifact_value: { filename: 'source.md', url: 'https://example.test/source.md' },
+    editor_profile: 'writer-markdown-source',
+  };
+}
+
+function renderedMarkdown(document: string, media_urls?: Record<string, string>) {
   return {
     data: {
       code: 0,
@@ -84,6 +109,7 @@ function renderedMarkdown(document: string) {
         representation: 'markdown',
         document,
         numbering: { ordered_style: 'hierarchical', entries: {} },
+        media_urls,
       },
     },
   };
@@ -123,6 +149,9 @@ describe('SlotWriterDocument render refresh', () => {
     workflowApi.getSlots.mockResolvedValue({ data: { data: { slots: [] } } });
     workflowApi.renderWriterDocument.mockReset();
     workflowApi.saveWriterDocument.mockReset();
+    markdownEditorRender.mockReset();
+    chunkUpload.uploadFileInChunks.mockReset();
+    chunkUpload.uploadFileInChunks.mockResolvedValue('/var/lib/lazymind/uploads/source.md');
   });
 
   it('persists Markdown autosaves as drafts without creating checkpoints', async () => {
@@ -283,6 +312,42 @@ describe('SlotWriterDocument render refresh', () => {
 
     expect(screen.getByText('# latest document')).toBeInTheDocument();
     expect(document.querySelector('.workflow-slot--error')).not.toBeInTheDocument();
+  });
+
+  it('uses the server-selected source profile for media and draft saves', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => '# Original',
+    }));
+    workflowApi.renderWriterDocument.mockResolvedValue(renderedMarkdown('# Original', {
+      '_assets/logo.png': 'https://example.test/signed-logo.png',
+    }));
+    const patchSlotItemValue = vi.fn().mockResolvedValue(2);
+    useWorkflowStore.setState({ patchSlotItemValue });
+
+    render(
+      <SlotRenderer
+        slot={writerSourceSlot()}
+        expectedType='file'
+        sessionId='writer-session'
+        slotId='source_document'
+      />,
+    );
+
+    await screen.findByRole('button', { name: 'save markdown draft' });
+    const editorProps = markdownEditorRender.mock.calls.at(-1)?.[0];
+    await expect(editorProps.resolveImageUrl('_assets/logo.png')).resolves.toBe(
+      'https://example.test/signed-logo.png',
+    );
+
+    await act(() => editorProps.onSave('# Original', 1, 'draft'));
+    expect(patchSlotItemValue).not.toHaveBeenCalled();
+    await act(() => editorProps.onSave('# Edited draft', 1, 'draft'));
+    expect(patchSlotItemValue).toHaveBeenCalledWith(
+      'writer-session', 'source_document', -1,
+      expect.objectContaining({ document_format: 'markdown' }),
+      'file', 'draft', 1,
+    );
   });
 });
 

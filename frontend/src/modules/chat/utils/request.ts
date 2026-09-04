@@ -248,7 +248,11 @@ export interface WriteBackWriterDocumentRequest {
   revised_document: Record<string, unknown>;
 }
 
-export type WriterDocumentSlot = 'outline_document' | 'flat_draft_document' | 'draft_document';
+export type WriterDocumentSlot =
+  | 'source_document'
+  | 'outline_document'
+  | 'flat_draft_document'
+  | 'draft_document';
 export type WriterDocumentRepresentation = 'markdown' | 'ir';
 export type RenderedWriterDocument = string | Record<string, unknown>;
 export type WriterHeadingNumberingMode = 'ordered' | 'unordered';

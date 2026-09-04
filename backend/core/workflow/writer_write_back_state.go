@@ -16,6 +16,7 @@ const (
 	writerWriteBackSyncedClean     = "synced_clean"
 	writerWriteBackSyncedDirty     = "synced_dirty"
 	writerWriteBackBlocked         = "blocked"
+	writerMarkdownSourceEditor     = "writer-markdown-source"
 )
 
 type writerProviderBinding struct {
@@ -50,6 +51,15 @@ func enrichWriterWriteBackSlots(ctx context.Context, db *gorm.DB, sessionID stri
 			target = &slots[i]
 		}
 	}
+	if source != nil && target != nil && isWriterWorkflowSession(ctx, db, sessionID) {
+		targetValue, err := loadWriterSlotDTOValue(ctx, db, sessionID, *target)
+		if err == nil {
+			binding, bound := writerProviderBindingFromTargetArtifact(targetValue)
+			if bound && binding.Provider == "github" {
+				source.EditorProfile = writerMarkdownSourceEditor
+			}
+		}
+	}
 
 	for i := range slots {
 		slot := &slots[i]
@@ -65,6 +75,14 @@ func enrichWriterWriteBackSlots(ctx context.Context, db *gorm.DB, sessionID stri
 		slot.ProviderDocumentID = info.ProviderDocumentID
 		slot.LastSyncedRevision = info.LastSyncedRevision
 	}
+}
+
+func isWriterWorkflowSession(ctx context.Context, db *gorm.DB, sessionID string) bool {
+	var session orm.WorkflowSession
+	return db.WithContext(ctx).
+		Select("plugin_id").
+		Where("id = ?", sessionID).
+		First(&session).Error == nil && session.WorkflowID == "writer-workflow"
 }
 
 func writerWriteBackState(

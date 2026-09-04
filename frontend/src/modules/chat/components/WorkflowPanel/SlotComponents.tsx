@@ -4119,6 +4119,9 @@ function SlotMarkdownFile({
   const allowDownload = useContext(SlotDownloadContext);
   const raw = slot.artifact_value;
   const name: string = raw?.filename ?? raw?.name ?? slotId ?? slot.slot;
+  const resolvedSlotId = slotId ?? slot.slot;
+  const usesWriterMarkdownSourceProfile =
+    slot.editor_profile === 'writer-markdown-source' && resolvedSlotId === 'source_document';
   const [reloadToken, setReloadToken] = useState(0);
   const { url, resolving, hasSource } = useArtifactFileUrl(raw, `${slot.revision}:${reloadToken}`);
   const originalRaw = originalFileSlot?.artifact_value;
@@ -4139,7 +4142,48 @@ function SlotMarkdownFile({
     preview: RewriteSelectionPreview;
   } | null>(null);
   const [renderedSelection, setRenderedSelection] = useState<MarkdownSelection | null>(null);
+  const [sourceMediaURLs, setSourceMediaURLs] = useState<Record<string, string>>();
+  const [sourceMediaResolving, setSourceMediaResolving] = useState(
+    usesWriterMarkdownSourceProfile,
+  );
   const markdownPreviewRef = useRef<HTMLDivElement>(null);
+  const resolveSourceMarkdownImage = useCallback<MarkdownImageResolver>(
+    (imageURL) => resolveMarkdownImageUrlFromMap(imageURL, sourceMediaURLs),
+    [sourceMediaURLs],
+  );
+
+  useEffect(() => {
+    if (!usesWriterMarkdownSourceProfile || !sessionId) {
+      setSourceMediaURLs(undefined);
+      setSourceMediaResolving(false);
+      return;
+    }
+    let active = true;
+    const controller = new AbortController();
+    setSourceMediaResolving(true);
+    WorkflowSessionApi().renderWriterDocument(
+      sessionId,
+      'source_document',
+      { signal: controller.signal, silentError: true } as never,
+    ).then((response) => {
+      if (!active) return;
+      const result = response?.data?.data;
+      setSourceMediaURLs(
+        response?.data?.code === 0 && isRenderedWriterDocument(result)
+          ? result.media_urls
+          : undefined,
+      );
+      setSourceMediaResolving(false);
+    }).catch(() => {
+      if (!active || controller.signal.aborted) return;
+      setSourceMediaURLs(undefined);
+      setSourceMediaResolving(false);
+    });
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [sessionId, slot.revision, usesWriterMarkdownSourceProfile]);
 
   useEffect(() => {
     if (!hasSource) {
@@ -4197,7 +4241,6 @@ function SlotMarkdownFile({
   const displayRevisionCount = localRevisionCount ?? revisionCount;
   const showVersionBadge =
     displayRevisionCount !== undefined && displayRevisionCount > 0 && Boolean(sessionId && slotId);
-  const resolvedSlotId = slotId ?? slot.slot;
   const initialDelivery = slot.write_back_state === 'initial_delivery';
   const canWriteBack = isWriterWriteBackSlot(resolvedSlotId)
     && Boolean(sessionId)
@@ -4252,9 +4295,20 @@ function SlotMarkdownFile({
     setDownloadMarkdownContent(markdown);
   }, []);
 
-  const saveMarkdown = useCallback(async (markdown: string, baseRevision: number) => {
+  const saveMarkdown = useCallback(async (
+    markdown: string,
+    baseRevision: number,
+    mode: MarkdownSaveMode = 'checkpoint',
+  ) => {
     if (!sessionId || !slotId || readOnly) {
       throw new Error(tr('chat.writerMarkdown.saveFailed'));
+    }
+    if (
+      usesWriterMarkdownSourceProfile
+      && mode === 'draft'
+      && markdown === content
+    ) {
+      return { markdown, revision: baseRevision };
     }
     const filename = markdownFilename;
     const file = new File([markdown], filename, { type: 'text/markdown;charset=utf-8' });
@@ -4274,9 +4328,11 @@ function SlotMarkdownFile({
       apiListIndex,
       nextValue,
       'file',
-      ['draft_document', 'flat_draft_document'].includes(resolvedSlotId)
-        ? 'draft'
-        : 'checkpoint',
+      usesWriterMarkdownSourceProfile
+        ? mode
+        : ['draft_document', 'flat_draft_document'].includes(resolvedSlotId)
+          ? 'draft'
+          : 'checkpoint',
       baseRevision,
     );
     setContent(markdown);
@@ -4286,7 +4342,7 @@ function SlotMarkdownFile({
       setLocalRevisionCount((previous) => Math.max(previous ?? 0, revisionCount ?? 0, revision));
     }
     return { markdown, revision };
-  }, [apiListIndex, markdownFilename, patchSlotItemValue, raw, readOnly, resolvedSlotId, revisionCount, sessionId, slotId]);
+  }, [apiListIndex, content, markdownFilename, patchSlotItemValue, raw, readOnly, resolvedSlotId, revisionCount, sessionId, slotId, usesWriterMarkdownSourceProfile]);
 
   const refreshMarkdown = useCallback(() => {
     setReloadToken((value) => value + 1);
@@ -4369,7 +4425,7 @@ function SlotMarkdownFile({
     );
   }
 
-  if (loading || resolving) {
+  if (loading || resolving || sourceMediaResolving) {
     return (
       <div className='workflow-slot workflow-slot--artifact workflow-slot--pending'>
         <span className='workflow-slot__placeholder'>{tr('common.loading')}</span>
@@ -4426,6 +4482,9 @@ function SlotMarkdownFile({
         {canEditMarkdown ? (
           <MarkdownArtifactEditor
             markdown={content}
+            resolveImageUrl={
+              usesWriterMarkdownSourceProfile ? resolveSourceMarkdownImage : undefined
+            }
             sourceRevision={displayRevision}
             editingKey={markdownEditingKey}
             onSave={saveMarkdown}
@@ -4459,7 +4518,13 @@ function SlotMarkdownFile({
               <WriterArtifactContent slotId='writing_output' data={{ content }} hideDownload />
             ) : (
               <div className='writer-artifact__markdown'>
-                <MarkdownViewer>{content}</MarkdownViewer>
+                <MarkdownViewer
+                  resolveImageUrl={
+                    usesWriterMarkdownSourceProfile ? resolveSourceMarkdownImage : undefined
+                  }
+                >
+                  {content}
+                </MarkdownViewer>
               </div>
             )}
           </div>
