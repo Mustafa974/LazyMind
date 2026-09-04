@@ -67,13 +67,24 @@ function buildDocumentFooterItems(footerActions: Map<string, SlotFooterAction>):
     if (action.statusText) {
       statusMessages.push({ key: `${key}:status`, text: action.statusText, tone: action.statusTone });
     }
-    if (action.statusLink) {
+    if (action.statusLink?.href) {
       actionItems.push({
         kind: 'link',
         key: `${key}:link`,
         order: DOCUMENT_FOOTER_LINK_ORDER,
         href: action.statusLink.href,
         label: action.statusLink.label,
+      });
+    } else if (action.statusLink?.onClick) {
+      actionItems.push({
+        kind: 'button',
+        key: `${key}:link`,
+        order: DOCUMENT_FOOTER_LINK_ORDER,
+        action: {
+          label: action.statusLink.label,
+          onClick: action.statusLink.onClick,
+          tone: 'secondary',
+        },
       });
     }
     actionItems.push({

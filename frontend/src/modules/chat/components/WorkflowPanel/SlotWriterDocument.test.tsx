@@ -25,26 +25,36 @@ vi.mock('./MarkdownArtifactEditor', () => ({
   MarkdownArtifactEditor: ({
     markdown,
     onSave,
+    onEditingChange,
     sourceRevision,
     maxHeight,
     editingKey,
   }: {
     markdown: string;
     onSave: (markdown: string, revision: number, mode: 'draft') => Promise<unknown>;
+    onEditingChange?: (editing: boolean) => void;
     sourceRevision: number;
     maxHeight?: number;
     editingKey?: string;
   }) => (
-    <button
-      type='button'
-      data-markdown={markdown}
-      data-source-revision={sourceRevision}
-      data-max-height={maxHeight}
-      data-editing-key={editingKey}
-      onClick={() => void onSave('# Edited draft', sourceRevision, 'draft')}
-    >
-      save markdown draft
-    </button>
+    <>
+      <button
+        type='button'
+        data-markdown={markdown}
+        data-source-revision={sourceRevision}
+        data-max-height={maxHeight}
+        data-editing-key={editingKey}
+        onClick={() => void onSave('# Edited draft', sourceRevision, 'draft')}
+      >
+        save markdown draft
+      </button>
+      <button type='button' onClick={() => onEditingChange?.(true)}>
+        mark markdown dirty
+      </button>
+      <button type='button' onClick={() => onEditingChange?.(false)}>
+        clear markdown dirty
+      </button>
+    </>
   ),
 }));
 
@@ -56,7 +66,7 @@ vi.mock('./WriterDownloadFormat', () => ({
   writerMarkdownTitle: () => '',
 }));
 
-import { resolveSnapshotDiffText, SlotRenderer, SlotVersionPopover } from './SlotComponents';
+import { resolveSnapshotDiffText, SlotEditingContext, SlotRenderer, SlotVersionPopover } from './SlotComponents';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -144,6 +154,87 @@ describe('SlotWriterDocument render refresh', () => {
     await waitFor(() => {
       expect(document.querySelector('.workflow-slot__writer-writeback-summary')).toHaveTextContent('草稿');
       expect(document.querySelector('.workflow-slot__writer-writeback-summary')).not.toHaveTextContent('v3');
+    });
+  });
+
+  it('enables write-back for unsaved Markdown changes without changing server sync state', async () => {
+    workflowApi.renderWriterDocument.mockResolvedValue(renderedMarkdown('# Synced draft'));
+    let footerAction: { disabled?: boolean } | null = null;
+    const slot: SlotRevision = {
+      ...writerSlot(1),
+      provider: 'obsidian',
+      write_back_ready: true,
+      write_back_state: 'synced_clean',
+      last_synced_revision: 1,
+      last_synced_version: 1,
+    };
+
+    render(
+      <SlotEditingContext.Provider value={{
+        setEditing: vi.fn(),
+        registerFlush: () => () => undefined,
+        registerFooterAction: (_key, action) => {
+          footerAction = action;
+          return () => undefined;
+        },
+      }}>
+        <SlotRenderer
+          slot={slot}
+          widget={{ widgetType: 'writer-document' }}
+          sessionId='writer-session'
+          slotId='draft_document'
+        />
+      </SlotEditingContext.Provider>,
+    );
+
+    await waitFor(() => expect(footerAction).toMatchObject({ disabled: true }));
+    fireEvent.click(await screen.findByRole('button', { name: 'mark markdown dirty' }));
+
+    await waitFor(() => {
+      expect(document.querySelector('.workflow-slot__writer-writeback-summary')).toHaveTextContent('有未保存修改');
+      expect(footerAction).toMatchObject({ disabled: false });
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'clear markdown dirty' }));
+    await waitFor(() => {
+      expect(document.querySelector('.workflow-slot__writer-writeback-summary')).toHaveTextContent('已同步');
+      expect(footerAction).toMatchObject({ disabled: true });
+    });
+  });
+
+  it('shows automatic Obsidian write-back status without an open action', async () => {
+    workflowApi.renderWriterDocument.mockResolvedValue(renderedMarkdown('# Synced draft'));
+    let footerAction: { statusText?: string; statusLink?: unknown } | null = null;
+    const slot: SlotRevision = {
+      ...writerSlot(1),
+      provider: 'obsidian',
+      write_back_ready: true,
+      write_back_state: 'synced_clean',
+      last_synced_revision: 1,
+      last_synced_version: 1,
+    };
+
+    render(
+      <SlotEditingContext.Provider value={{
+        setEditing: vi.fn(),
+        registerFlush: () => () => undefined,
+        registerFooterAction: (_key, action) => {
+          footerAction = action;
+          return () => undefined;
+        },
+      }}>
+        <SlotRenderer
+          slot={slot}
+          widget={{ widgetType: 'writer-document' }}
+          sessionId='writer-session'
+          slotId='draft_document'
+        />
+      </SlotEditingContext.Provider>,
+    );
+
+    await waitFor(() => {
+      expect(footerAction?.statusText).toContain('已自动写回 Obsidian');
+      expect(footerAction?.statusLink).toBeUndefined();
     });
   });
 

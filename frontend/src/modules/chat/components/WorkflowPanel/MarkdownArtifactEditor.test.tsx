@@ -37,6 +37,10 @@ vi.mock('@mdxeditor/editor', async () => {
         });
       }
     }, [props.onError, renderedMarkdown]);
+    const onChange = props.onChange as ((markdown: string, initialMarkdownNormalize?: boolean) => void) | undefined;
+    React.useEffect(() => {
+      onChange?.(`${markdownRef.current}\nnormalized`, true);
+    }, [onChange]);
     return (
       <div
         className={String(props.className ?? '')}
@@ -52,7 +56,7 @@ vi.mock('@mdxeditor/editor', async () => {
             onInput={(event) => {
               const nextMarkdown = event.currentTarget.textContent ?? '';
               markdownRef.current = nextMarkdown;
-              (props.onChange as ((markdown: string) => void) | undefined)?.(nextMarkdown);
+              onChange?.(nextMarkdown);
             }}
           >
             <p>
@@ -412,6 +416,67 @@ describe('MarkdownArtifactEditor rewrite selection highlight', () => {
     );
     expect(container.querySelector<HTMLElement>('.writer-markdown-editor__surface')?.dataset.markdown)
       .toBe('$\\mathcal\\{D}=\\{(x_i,y_i)\\}_\\{i=1}^\\{N}$ and $y_\\{\\<t}$');
+  });
+
+  it('does not autosave MDXEditor escaping of Obsidian syntax, but restores it on a real edit', async () => {
+    vi.useFakeTimers();
+    const onSave = vi.fn(async () => 2);
+    const markdown = [
+      '> [!tip]- Tip',
+      '> Callout body',
+      '',
+      'See [[Reference|reference note]].',
+      '![[Embedded Note]]',
+    ].join('\n');
+    const editorMarkdown = [
+      '> \\[!tip]- Tip',
+      '> Callout body',
+      '',
+      'See \\[\\[Reference|reference note]].',
+      '!\\[\\[Embedded Note]]',
+    ].join('\n');
+    const { container } = render(
+      <MarkdownArtifactEditor
+        markdown={markdown}
+        sourceRevision={1}
+        obsidianSyntax
+        onSave={onSave}
+      />,
+    );
+    const surface = container.querySelector<HTMLElement>('.writer-markdown-editor__surface');
+    const editable = screen.getByTestId('markdown-editable');
+
+    expect(surface?.dataset.markdown).toBe(editorMarkdown);
+    editable.textContent = editorMarkdown;
+    fireEvent.input(editable);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_001); });
+    expect(onSave).not.toHaveBeenCalled();
+
+    editable.textContent = `${editorMarkdown}\nEdited paragraph.`;
+    fireEvent.input(editable);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_001); });
+    expect(onSave).toHaveBeenCalledWith(`${markdown}\nEdited paragraph.`, 1, 'draft', undefined);
+    vi.useRealTimers();
+  });
+
+  it('does not save an initial MDXEditor normalization as a human edit', async () => {
+    vi.useFakeTimers();
+    try {
+      const onSave = vi.fn(async () => 2);
+      render(
+        <MarkdownArtifactEditor
+          markdown='Initial draft'
+          sourceRevision={1}
+          onSave={onSave}
+        />,
+      );
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_001); });
+
+      expect(onSave).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('navigates internal references without opening the link editor', () => {

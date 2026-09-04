@@ -401,7 +401,42 @@ function escapeMdxPlainTextInLine(line: string): string {
   return result;
 }
 
-function normalizeMarkdownForMdxEditor(markdown: string): string {
+function escapeObsidianSyntaxForMdxEditor(line: string): string {
+  const callout = line.replace(
+    /^(\s*>\s*)\[!([A-Za-z][A-Za-z0-9_-]*)([+-]?\])/,
+    '$1\\[!$2$3',
+  );
+  return callout.replace(
+    /(^|[^\\])(!?)\[\[([^\]\r\n]+)\]\]/g,
+    '$1$2\\[\\[$3]]',
+  );
+}
+
+function restoreObsidianSyntaxFromMdxEditor(markdown: string): string {
+  let fenceCharacter = '';
+  let fenceLength = 0;
+
+  return markdown.split('\n').map((line) => {
+    const fence = line.match(/^\s*(`{3,}|~{3,})/);
+    if (fence) {
+      const marker = fence[1];
+      if (!fenceCharacter) {
+        fenceCharacter = marker[0];
+        fenceLength = marker.length;
+      } else if (marker[0] === fenceCharacter && marker.length >= fenceLength) {
+        fenceCharacter = '';
+        fenceLength = 0;
+      }
+      return line;
+    }
+    if (fenceCharacter) return line;
+    return line
+      .replace(/^(\s*>\s*)\\\[!([A-Za-z][A-Za-z0-9_-]*)([+-]?\])/, '$1[!$2$3')
+      .replace(/(^|[^\\])(!?)\\\[\\\[([^\]\r\n]+)\]\]/g, '$1$2[[$3]]');
+  }).join('\n');
+}
+
+function normalizeMarkdownForMdxEditor(markdown: string, obsidianSyntax = false): string {
   let fenceCharacter = '';
   let fenceLength = 0;
 
@@ -418,13 +453,17 @@ function normalizeMarkdownForMdxEditor(markdown: string): string {
       }
       return line;
     }
-    return fenceCharacter ? line : escapeMdxPlainTextInLine(line);
+    if (fenceCharacter) return line;
+    const normalized = escapeMdxPlainTextInLine(line);
+    return obsidianSyntax ? escapeObsidianSyntaxForMdxEditor(normalized) : normalized;
   }).join('\n');
 }
 
 const MARKDOWN_CODE_LANGUAGES = {
   bash: 'Shell',
   css: 'CSS',
+  dataview: 'Dataview',
+  dataviewjs: 'DataviewJS',
   html: 'HTML',
   javascript: 'JavaScript',
   json: 'JSON',
@@ -468,6 +507,8 @@ interface MarkdownArtifactEditorProps {
   numbering?: WriterNumberingState;
   sourceRevision: number;
   maxHeight?: number;
+  /** Preserve Obsidian-only Markdown syntax through MDXEditor's Markdown round trip. */
+  obsidianSyntax?: boolean;
   /** Compact chat presentation hides Workflow-only document chrome. */
   presentation?: 'workflow' | 'chat';
   readOnly?: boolean;
@@ -483,6 +524,8 @@ interface MarkdownArtifactEditorProps {
   onDownload?: () => void;
   /** Reports the current draft so the write-back action can compare it with its Feishu baseline. */
   onContentChange?: (markdown: string) => void;
+  /** Reports whether the editor has unsaved persistable changes. */
+  onEditingChange?: (editing: boolean) => void;
   /** Chat-only action that sends the current selection to the composer as a citation. */
   onCiteSelection?: (text: string) => void;
   /** Chat-only action that opens the source represented by an inline citation. */
@@ -538,6 +581,7 @@ export function MarkdownArtifactEditor({
   numbering,
   sourceRevision,
   maxHeight,
+  obsidianSyntax = false,
   presentation = 'workflow',
   readOnly = false,
   editingKey,
@@ -545,6 +589,7 @@ export function MarkdownArtifactEditor({
   onRefresh,
   onDownload,
   onContentChange,
+  onEditingChange,
   onCiteSelection,
   onOpenSourceReference,
   sourceReferences = [],
@@ -559,8 +604,8 @@ export function MarkdownArtifactEditor({
   const tabActive = useContext(WorkflowPanelTabActiveContext);
   const { setEditing, registerFlush, registerFooterAction } = useContext(SlotEditingContext);
   const chatPresentation = presentation === 'chat';
-  const [baseMarkdown, setBaseMarkdown] = useState(() => normalizeMarkdownForMdxEditor(markdown));
-  const [draftMarkdown, setDraftMarkdown] = useState(() => normalizeMarkdownForMdxEditor(markdown));
+  const [baseMarkdown, setBaseMarkdown] = useState(() => normalizeMarkdownForMdxEditor(markdown, obsidianSyntax));
+  const [draftMarkdown, setDraftMarkdown] = useState(() => normalizeMarkdownForMdxEditor(markdown, obsidianSyntax));
   const [anchorSourceMarkdown, setAnchorSourceMarkdown] = useState(markdown);
   const [baseRevision, setBaseRevision] = useState(sourceRevision);
   const [saving, setSaving] = useState(false);
@@ -667,6 +712,14 @@ export function MarkdownArtifactEditor({
         : anchorSourceMarkdown,
     );
   }, [anchorSourceMarkdown, dirty, materializedDraftMarkdown, onContentChange]);
+
+  useEffect(() => {
+    onEditingChange?.(!readOnly && dirty);
+  }, [dirty, onEditingChange, readOnly]);
+
+  useEffect(() => () => {
+    onEditingChange?.(false);
+  }, [onEditingChange]);
 
   useLayoutEffect(() => {
     const root = rootRef.current;
@@ -1081,7 +1134,7 @@ export function MarkdownArtifactEditor({
       return;
     }
 
-    const normalizedMarkdown = normalizeMarkdownForMdxEditor(markdown);
+    const normalizedMarkdown = normalizeMarkdownForMdxEditor(markdown, obsidianSyntax);
     if (normalizedMarkdown !== draftMarkdownRef.current) {
       replaceMarkdownSilently(normalizedMarkdown);
     }
@@ -1094,7 +1147,7 @@ export function MarkdownArtifactEditor({
     setRenderErrorSource(undefined);
     setConflict(false);
     pendingSourceRef.current = undefined;
-  }, [dirty, markdown, replaceMarkdownSilently, sourceRevision]);
+  }, [dirty, markdown, obsidianSyntax, replaceMarkdownSilently, sourceRevision]);
 
   const persistMarkdown = useCallback(async (
     nextDraft: string,
@@ -1116,14 +1169,17 @@ export function MarkdownArtifactEditor({
         ? sourceBeforeSave.markdown
         : protectWriterMarkdownAnchors(sourceBeforeSave.markdown, nextDraft);
       const savedMarkdown = writerMarkdownForSave(protectedDraft);
-      const result = await onSave(savedMarkdown, revisionBeforeSave, mode, numberingUpdate);
+      const markdownForSave = obsidianSyntax
+        ? restoreObsidianSyntaxFromMdxEditor(savedMarkdown)
+        : savedMarkdown;
+      const result = await onSave(markdownForSave, revisionBeforeSave, mode, numberingUpdate);
       const savedRevision = typeof result === 'number'
         ? result
         : result?.revision ?? revisionBeforeSave;
       const persistedMarkdown = typeof result === 'object'
         ? result.markdown
-        : savedMarkdown;
-      const backendMarkdown = normalizeMarkdownForMdxEditor(persistedMarkdown);
+        : markdownForSave;
+      const backendMarkdown = normalizeMarkdownForMdxEditor(persistedMarkdown, obsidianSyntax);
       const hasNewerDraft = draftMarkdownRef.current !== nextDraft;
       setBaseMarkdown(backendMarkdown);
       if (!hasNewerDraft) {
@@ -1156,7 +1212,7 @@ export function MarkdownArtifactEditor({
       savingRef.current = false;
       setSaving(false);
     }
-  }, [onSave, readOnly, replaceMarkdownSilently, t]);
+  }, [obsidianSyntax, onSave, readOnly, replaceMarkdownSilently, t]);
 
   const saveChanges = useCallback(async (mode: MarkdownSaveMode = 'draft'): Promise<boolean> => {
     if (!dirty || savingRef.current || readOnly) return false;
@@ -1210,7 +1266,8 @@ export function MarkdownArtifactEditor({
     };
   }, [conflict, dirty, draftMarkdown, readOnly, saveError, saving]);
 
-  const handleMarkdownChange = useCallback((nextDraft: string) => {
+  const handleMarkdownChange = useCallback((nextDraft: string, initialMarkdownNormalize: boolean) => {
+    if (initialMarkdownNormalize) return;
     draftMarkdownRef.current = nextDraft;
     setDraftMarkdown(nextDraft);
     if (!conflictRef.current) setSaveError(undefined);

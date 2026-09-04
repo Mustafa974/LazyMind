@@ -21,8 +21,9 @@ export interface SlotFooterAction {
   statusText?: string;
   statusTone?: 'success' | 'error';
   statusLink?: {
-    href: string;
     label: string;
+    href?: string;
+    onClick?: () => void;
   };
 }
 
