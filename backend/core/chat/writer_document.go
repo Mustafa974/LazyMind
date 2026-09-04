@@ -471,8 +471,12 @@ func SaveWriterDocument(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "marshal writerdocument artifact failed", http.StatusInternalServerError)
 		return
 	}
+	unchangedGitHubSync := mode == "draft" && len(body.NumberingUpdate) == 0 &&
+		writerGitHubSyncedMarkdownUnchanged(draft, sourceValue)
 	var revision *orm.WorkflowSlotRevision
-	if mode == "draft" {
+	if unchangedGitHubSync {
+		revision = &draft.Revision
+	} else if mode == "draft" {
 		updated, updatedInPlace, updateErr := workflow.UpdateSelectedHumanArtifactValue(
 			ctx, db, sessionID, draft.Revision.SlotID, nil,
 			"json", artifact, nil, &body.BaseRevision,
@@ -508,10 +512,12 @@ func SaveWriterDocument(w http.ResponseWriter, r *http.Request) {
 		}, http.StatusInternalServerError)
 		return
 	}
-	workflow.NotifyWorkflowArtifactUpdated(
-		ctx, db, sessionID, revision.StepID, revision.SlotID, revision.Slot,
-		revision.Revision, revision.ListIndex, "human",
-	)
+	if !unchangedGitHubSync {
+		workflow.NotifyWorkflowArtifactUpdated(
+			ctx, db, sessionID, revision.StepID, revision.SlotID, revision.Slot,
+			revision.Revision, revision.ListIndex, "human",
+		)
+	}
 	reply := map[string]any{
 		"revision":       revision.Revision,
 		"title":          result["title"],
@@ -865,6 +871,14 @@ type writerMediaAsset struct {
 	LocalPath    string `json:"local_path"`
 	Meta         struct {
 		SourceReference string `json:"source_reference"`
+		SHA256          string `json:"sha256"`
+	} `json:"meta"`
+}
+
+type writerTargetMediaAliases struct {
+	Adapter string `json:"adapter"`
+	Meta    struct {
+		GitHub map[string]string `json:"github_writer_media_aliases"`
 	} `json:"meta"`
 }
 
@@ -898,6 +912,8 @@ func writerDocumentMediaURLs(
 	}
 
 	urls := map[string]string{}
+	assetURLs := map[string]string{}
+	materializedURLs := map[string]string{}
 	for _, mediaSlot := range mediaSlots {
 		artifact, err := loadSelectedWriterArtifact(ctx, db, sessionID, mediaSlot)
 		if err != nil {
@@ -915,8 +931,24 @@ func writerDocumentMediaURLs(
 			if previewURL == "" {
 				continue
 			}
-			references := []string{strings.TrimSpace(asset.Meta.SourceReference)}
 			if assetID = strings.TrimSpace(assetID); assetID != "" {
+				assetURLs[assetID] = previewURL
+			}
+			if mediaAssetID := strings.TrimSpace(asset.MediaAssetID); mediaAssetID != "" {
+				assetURLs[mediaAssetID] = previewURL
+			}
+			digest := strings.ToLower(strings.TrimSpace(asset.Meta.SHA256))
+			suffix := strings.ToLower(filepath.Ext(asset.LocalPath))
+			if suffix == "" {
+				suffix = strings.ToLower(filepath.Ext(asset.URI))
+			}
+			if len(digest) == 64 && suffix != "" {
+				path := "assets/" + digest[:2] + "/" + digest + suffix
+				materializedURLs[path] = previewURL
+				materializedURLs["_"+path] = previewURL
+			}
+			references := []string{strings.TrimSpace(asset.Meta.SourceReference)}
+			if assetID != "" {
 				references = append(references, "asset://"+assetID)
 			}
 			if mediaAssetID := strings.TrimSpace(asset.MediaAssetID); mediaAssetID != "" {
@@ -932,7 +964,39 @@ func writerDocumentMediaURLs(
 			}
 		}
 	}
+	if documentSlot == "draft_document" || documentSlot == "flat_draft_document" {
+		if target, err := loadSelectedWriterArtifact(ctx, db, sessionID, "target_document"); err == nil {
+			if data, dataErr := writerArtifactData(target.Value, false); dataErr == nil {
+				addWriterGitHubMediaAliases(data, urls, assetURLs, materializedURLs)
+			}
+		}
+	}
 	return urls
+}
+
+func addWriterGitHubMediaAliases(
+	target json.RawMessage,
+	urls, assetURLs, materializedURLs map[string]string,
+) {
+	var aliases writerTargetMediaAliases
+	if json.Unmarshal(target, &aliases) != nil || canonicalWriterProvider(aliases.Adapter) != "github" {
+		return
+	}
+	for reference, previewURL := range materializedURLs {
+		if _, exists := urls[reference]; !exists {
+			urls[reference] = previewURL
+		}
+	}
+	for reference, assetID := range aliases.Meta.GitHub {
+		reference = strings.TrimSpace(reference)
+		previewURL := assetURLs[strings.TrimSpace(assetID)]
+		if reference == "" || previewURL == "" {
+			continue
+		}
+		if _, exists := urls[reference]; !exists {
+			urls[reference] = previewURL
+		}
+	}
 }
 
 func writerMediaAssets(data json.RawMessage) map[string]writerMediaAsset {
@@ -1225,6 +1289,31 @@ func writerArtifactRevisionSynced(artifact *selectedWriterArtifact) bool {
 	}
 	return (artifact.Revision.ChangeSource == "ai" || artifact.Revision.ChangeSource == "host") &&
 		writerArtifactEnvelopeProviderSynced(artifact.Value)
+}
+
+func writerGitHubSyncedMarkdownUnchanged(artifact *selectedWriterArtifact, value any) bool {
+	markdown, ok := value.(string)
+	if !ok || artifact == nil || artifact.Revision.ChangeSource != "provider_sync" ||
+		writerArtifactEnvelopeSyncProvider(artifact.Value) != "github" {
+		return false
+	}
+	current, err := loadWriterWriteBackArtifact(artifact.Value)
+	return err == nil && current.Format == "markdown" && current.Markdown == markdown
+}
+
+func writerArtifactEnvelopeSyncProvider(value json.RawMessage) string {
+	var record struct {
+		Meta struct {
+			Sync struct {
+				Confirmed bool   `json:"confirmed"`
+				Provider  string `json:"provider"`
+			} `json:"lazymind_provider_sync"`
+		} `json:"meta"`
+	}
+	if json.Unmarshal(value, &record) != nil || !record.Meta.Sync.Confirmed {
+		return ""
+	}
+	return canonicalWriterProvider(record.Meta.Sync.Provider)
 }
 
 func writerArtifactEnvelopeProviderSynced(value json.RawMessage) bool {

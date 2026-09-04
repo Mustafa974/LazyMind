@@ -90,6 +90,30 @@ func TestWriterProviderSelectionSupportsGitHubTarget(t *testing.T) {
 	}
 }
 
+func TestAddWriterGitHubMediaAliases(t *testing.T) {
+	urls := map[string]string{"asset://generated-1": "/static-files/generated.png"}
+	addWriterGitHubMediaAliases(json.RawMessage(`{
+		"adapter":"github",
+		"meta":{"github_writer_media_aliases":{"assets/aa/image.png":"generated-1"}}
+	}`), urls, map[string]string{"generated-1": "/static-files/generated.png"}, map[string]string{
+		"assets/bb/legacy.png": "/static-files/legacy.png",
+	})
+
+	if urls["assets/aa/image.png"] != "/static-files/generated.png" {
+		t.Fatalf("GitHub write-back alias was not resolved: %#v", urls)
+	}
+	if urls["assets/bb/legacy.png"] != "/static-files/legacy.png" {
+		t.Fatalf("legacy GitHub write-back alias was not resolved: %#v", urls)
+	}
+	notionURLs := map[string]string{}
+	addWriterGitHubMediaAliases(
+		json.RawMessage(`{"adapter":"notion"}`), notionURLs, nil, map[string]string{"assets/x.png": "url"},
+	)
+	if len(notionURLs) != 0 {
+		t.Fatalf("non-GitHub target received media aliases: %#v", notionURLs)
+	}
+}
+
 func TestRenderWriterDocumentReturnsSessionAuthorizedMediaURLs(t *testing.T) {
 	uploadRoot := t.TempDir()
 	imagePath := filepath.Join(uploadRoot, "session", "diagram.png")
@@ -578,6 +602,27 @@ func TestLoadWriterWriteBackArtifact_InlineMarkdown(t *testing.T) {
 	}
 	if artifact.Format != "markdown" || artifact.Markdown != "# Draft\n" || artifact.Title != "Draft" {
 		t.Fatalf("unexpected inline Markdown artifact: %+v", artifact)
+	}
+}
+
+func TestWriterGitHubSyncedMarkdownUnchanged(t *testing.T) {
+	artifact := &selectedWriterArtifact{
+		Revision: orm.WorkflowSlotRevision{ChangeSource: "provider_sync"},
+		Value: json.RawMessage(`{
+			"schema":"text/markdown",
+			"data":"# Draft\n",
+			"meta":{"lazymind_provider_sync":{"confirmed":true,"provider":"github"}}
+		}`),
+	}
+	if !writerGitHubSyncedMarkdownUnchanged(artifact, "# Draft\n") {
+		t.Fatal("identical GitHub provider-sync Markdown should be a no-op")
+	}
+	if writerGitHubSyncedMarkdownUnchanged(artifact, "# Changed\n") {
+		t.Fatal("edited GitHub provider-sync Markdown must be saved")
+	}
+	artifact.Value = json.RawMessage(`{"meta":{"lazymind_provider_sync":{"confirmed":true,"provider":"feishu"}}}`)
+	if writerGitHubSyncedMarkdownUnchanged(artifact, "# Draft\n") {
+		t.Fatal("non-GitHub provider-sync Markdown must keep its existing save behavior")
 	}
 }
 
