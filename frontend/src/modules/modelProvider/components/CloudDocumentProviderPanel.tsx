@@ -171,10 +171,6 @@ export default function CloudDocumentProviderPanel({ vm }: { vm: CloudDocumentPr
             <h3>{getProviderTitle("local", t)}</h3>
             <p>{getProviderDescription("local", t, vm)}</p>
           </div>
-          <div className="model-provider-cloud-doc-resource-count">
-            <strong>{vm.localSourceCount}</strong>
-            {t("modelProvider.cloudDocuments.directoryUnit")}
-          </div>
           <div className="model-provider-cloud-doc-resource-controls">
             <button
               type="button"
@@ -207,9 +203,7 @@ export default function CloudDocumentProviderPanel({ vm }: { vm: CloudDocumentPr
         const isProviderLocked = !isGoogleDrive && !isAuthValid && !isSetupReady;
         const authStatusText = isAuthValid
           ? t("modelProvider.cloudDocuments.authValid")
-          : isProviderLocked
-            ? t("modelProvider.cloudDocuments.credentialMissing")
-            : t("modelProvider.cloudDocuments.authPending");
+          : t("modelProvider.cloudDocuments.credentialMissing");
 
         const handleManage = () => {
           if (isFeishu) {
@@ -239,9 +233,7 @@ export default function CloudDocumentProviderPanel({ vm }: { vm: CloudDocumentPr
             </div>
             <Tag
               className="model-provider-cloud-doc-resource-status"
-              color={
-                isAuthValid ? "success" : isProviderLocked ? "default" : "processing"
-              }
+              color={isAuthValid ? "success" : "default"}
             >
               {authStatusText}
             </Tag>
@@ -276,7 +268,7 @@ export default function CloudDocumentProviderPanel({ vm }: { vm: CloudDocumentPr
         >
           {isMailConnected
             ? t("modelProvider.cloudDocuments.authValid")
-            : t("modelProvider.cloudDocuments.authPending")}
+            : t("modelProvider.cloudDocuments.credentialMissing")}
         </Tag>
         <div className="model-provider-cloud-doc-resource-controls">
           <button

@@ -237,6 +237,7 @@ const ImageComponent = (props: any) => {
     (resolveImageUrl ?? resolveMarkdownImageUrlAsync)(rawSrc)
       .then((url) => {
         if (!cancelled && url) {
+          setImageLoadError(false);
           setResolvedSrc(url);
         }
       })
