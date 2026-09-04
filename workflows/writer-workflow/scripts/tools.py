@@ -878,9 +878,11 @@ def writer_load_document(user_input: str, stage: str = 'final') -> dict:
 
 
 def _writer_resolve_create_target(parent_uri: str) -> str:
-    """Resolve and save a future target without exposing a Writer tool API."""
+    """Resolve and save a future GitHub target without exposing a Writer tool API."""
     root = _run_root('resolve-create-target')
-    provider = match_writer_provider(parent_uri)
+    if not _GITHUB_CREATE_PARENT.fullmatch(str(parent_uri or '').strip()):
+        raise ValueError('The provider locator is not a GitHub document creation target.')
+    provider = GitHubWriterProvider()
     resolve_create_target = getattr(provider, '_resolve_create_target', None)
     if not callable(resolve_create_target):
         raise ValueError(

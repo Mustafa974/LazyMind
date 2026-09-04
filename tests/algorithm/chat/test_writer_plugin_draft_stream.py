@@ -747,32 +747,32 @@ def test_prepare_new_document_plans_github_target_without_writing(
     assert planned_calls == [destination]
 
 
-def test_resolve_create_target_uses_matched_provider(monkeypatch, tmp_path):
+def test_resolve_create_target_uses_github_creation_provider(monkeypatch, tmp_path):
     tools = _load_tools_module()
     context = SimpleNamespace(
         workspace_path=str(tmp_path),
         params={'step_id': 'prepare'},
     )
 
-    class FakeProvider:
-        provider = 'example'
+    class FakeGitHubProvider:
+        provider = 'github'
 
         def _resolve_create_target(self, parent_uri):
             return tools.TargetDocument(
-                adapter='example',
-                uri=f'example:{parent_uri}',
+                adapter='github',
+                uri=f'planned:{parent_uri}',
                 meta={'create_pending': True},
             )
 
     monkeypatch.setattr(tools, 'require_context', lambda: context)
-    monkeypatch.setattr(tools, 'match_writer_provider', lambda _uri: FakeProvider())
+    monkeypatch.setattr(tools, 'GitHubWriterProvider', FakeGitHubProvider)
 
-    target_path = tools._writer_resolve_create_target('/documents')
+    target_path = tools._writer_resolve_create_target('https://github.com/acme/docs')
 
     assert tools._read_json_file(target_path) == {
         'doc_id': None,
-        'uri': 'example:/documents',
-        'adapter': 'example',
+        'uri': 'planned:https://github.com/acme/docs',
+        'adapter': 'github',
         'title': None,
         'meta': {'create_pending': True},
     }
