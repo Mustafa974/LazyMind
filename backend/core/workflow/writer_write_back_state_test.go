@@ -72,6 +72,34 @@ func TestEnrichWriterWriteBackSlots_MarkdownInitialDelivery(t *testing.T) {
 	}
 }
 
+func TestEnrichWriterWriteBackSlots_UsesSavedMarkdownTarget(t *testing.T) {
+	db := newTestDB(t)
+	target := writerRevision("target", "session", "target_document", 1, "provider_sync", json.RawMessage(
+		`{"schema":"lazyllm.tools.writer.data_models.task.TargetDocument","data":{"adapter":"obsidian","doc_id":"vlt_test:note.md","uri":"obsidian://vlt_test/note.md"}}`,
+	))
+	synced := writerRevision("synced", "session", "draft_document", 1, "provider_sync", json.RawMessage(
+		`{"schema":"text/markdown","data":"# Synced"}`,
+	))
+	synced.Selected = false
+	draft := writerRevision("draft", "session", "draft_document", 2, "human", json.RawMessage(
+		`{"schema":"text/markdown","data":"# Edited"}`,
+	))
+	for _, revision := range []*orm.WorkflowSlotRevision{&target, &synced, &draft} {
+		mustCreateWriterRecord(t, db.DB.Create(revision).Error)
+	}
+
+	slots := []slotDTO{toSlotDTO(&target), toSlotDTO(&draft)}
+	enrichSlots(context.Background(), db.DB, "session", slots)
+	got := slots[1]
+	if !got.WriteBackReady || !got.WriteBackDirty || got.WriteBackState != writerWriteBackSyncedDirty ||
+		got.Provider != "obsidian" || got.ProviderDocumentID != "vlt_test:note.md" {
+		t.Fatalf("unexpected Markdown target state: %+v", got)
+	}
+	if got.LastSyncedRevision == nil || *got.LastSyncedRevision != 1 {
+		t.Fatalf("last_synced_revision = %v, want 1", got.LastSyncedRevision)
+	}
+}
+
 func TestEnrichWriterWriteBackSlots_InlineMarkdownInitialDelivery(t *testing.T) {
 	db := newTestDB(t)
 	draft := writerRevision("draft", "session", "flat_draft_document", 1, "human", json.RawMessage(
