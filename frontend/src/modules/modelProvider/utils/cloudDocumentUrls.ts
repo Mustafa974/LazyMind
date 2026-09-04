@@ -3,7 +3,7 @@ function getBaseName() {
 }
 
 export function getCloudDocumentsUrl(
-  provider?: "feishu" | "notion" | "github" | "local" | "googledrive",
+  provider?: "feishu" | "notion" | "github" | "local" | "googledrive" | "gmail",
 ) {
   const baseName = getBaseName().replace(/\/$/, "");
   if (provider === "feishu") {
@@ -14,6 +14,9 @@ export function getCloudDocumentsUrl(
   }
   if (provider === "googledrive") {
     return `${window.location.origin}${baseName}/cloud-documents/google-drive`;
+  }
+  if (provider === "gmail") {
+    return `${window.location.origin}${baseName}/cloud-documents/mail`;
   }
   return `${window.location.origin}${baseName}/cloud-documents`;
 }
@@ -29,3 +32,4 @@ export const CLOUD_DOCUMENTS_NOTION_SETUP_PATH =
   "/cloud-documents/docs/notion-setup";
 export const CLOUD_DOCUMENTS_GOOGLE_DRIVE_SETUP_PATH =
   "/cloud-documents/docs/google-drive-setup";
+export const CLOUD_DOCUMENTS_MAIL_PATH = "/cloud-documents/mail";
