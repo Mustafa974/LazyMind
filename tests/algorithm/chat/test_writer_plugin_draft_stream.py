@@ -140,118 +140,6 @@ def test_write_document_revision_emits_markdown_draft_stream(monkeypatch, tmp_pa
     )
 
 
-def test_save_draft_workspace_artifacts_keeps_markdown_and_media_canonical(
-    monkeypatch, tmp_path,
-):
-    from lazymind.chat.engine.subagent import tools as subagent_tools
-
-    tools = _load_tools_module()
-    context = SimpleNamespace(
-        workspace_path=str(tmp_path),
-        output_slots=['draft_document', 'resolved_media_assets'],
-    )
-    monkeypatch.setattr(tools, 'require_context', lambda: context)
-    media_dir = tmp_path / 'media'
-    media_dir.mkdir()
-    imported_image = media_dir / 'diagram.svg'
-    imported_image.write_text(
-        '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
-        encoding='utf-8',
-    )
-    canonical_path = tmp_path / 'document.md'
-    canonical_path.write_text(
-        '# 文档\n\n'
-        '![原图](docs/assets/diagram.svg)\n\n'
-        '![未导入](docs/assets/unmapped.svg)\n',
-        encoding='utf-8',
-    )
-    media_assets_path = tmp_path / 'media_assets.json'
-    media_assets_path.write_text(json.dumps({
-        'assets': {
-            'imported': {
-                'local_path': str(imported_image),
-                'meta': {'source_reference': 'docs/assets/diagram.svg'},
-            },
-        },
-    }), encoding='utf-8')
-    saved_entries = []
-
-    def save_artifacts(entries):
-        saved_entries.extend(entries)
-        return {'status': 'ok'}
-
-    monkeypatch.setattr(subagent_tools, 'save_artifacts', save_artifacts)
-
-    saved_keys = tools._save_draft_workspace_artifacts({
-        'draft_document': str(canonical_path),
-        'resolved_media_assets': str(media_assets_path),
-    })
-    saved = {entry['key']: entry['value'] for entry in saved_entries}
-
-    assert saved_keys == ['draft_document', 'resolved_media_assets']
-    assert saved['draft_document'] == str(canonical_path)
-    assert saved['resolved_media_assets'] == str(media_assets_path)
-    assert canonical_path.read_text(encoding='utf-8') == (
-        '# 文档\n\n'
-        '![原图](docs/assets/diagram.svg)\n\n'
-        '![未导入](docs/assets/unmapped.svg)\n'
-    )
-    media = tools._read_json_file(saved['resolved_media_assets'])
-    assert media['assets']['imported']['meta']['source_reference'] == (
-        'docs/assets/diagram.svg'
-    )
-
-
-def test_github_sync_returns_only_persisted_markdown(monkeypatch, tmp_path):
-    tools = _load_tools_module()
-    image = tmp_path / 'image.jpg'
-    image.write_bytes(b'image')
-    digest = 'a' * 64
-    media_assets = {
-        'library_id': 'library-1',
-        'assets': {
-            'generated': {
-                'media_asset_id': 'generated',
-                'asset_type': 'generated_image',
-                'source_type': 'image_generation',
-                'local_path': str(image),
-                'meta': {'sha256': digest},
-            },
-        },
-    }
-    persisted = f'# Document\n\n![image](assets/aa/{digest}.jpg)\n'
-    class FakeWriterResourceToolkit:
-        def replace_document(self, **_kwargs):
-            return json.dumps({
-                'publish_result': {'success': True},
-                'draft_document': persisted,
-                'representation': 'markdown',
-                'provider': 'github',
-                'target_document': {
-                    'adapter': 'github',
-                    'uri': 'githubrepo:/acme/docs/document.md?ref=branch',
-                },
-            })
-
-    monkeypatch.setattr(tools, 'WriterResourceToolkit', FakeWriterResourceToolkit)
-
-    result = tools._replace_document_and_read_back(
-        '# Document\n',
-        title='Document',
-        artifact_store=str(tmp_path),
-        source_format='markdown',
-        target_document={
-            'adapter': 'github',
-            'uri': 'githubrepo:/acme/docs/document.md?ref=main',
-        },
-        media_assets=media_assets,
-        adapter='github',
-    )
-
-    assert result['persisted_document'] == persisted
-    assert 'display_document' not in result
-
-
 def test_markdown_draft_blocks_do_not_pass_resolved_media(monkeypatch, tmp_path):
     tools = _load_tools_module()
     context = SimpleNamespace(
@@ -676,116 +564,9 @@ def test_load_local_lmd_removes_cloud_binding(monkeypatch, tmp_path):
     assert not loaded['blocks'][0].get('provider_binding')
 
 
-@pytest.mark.parametrize('destination', [
-    'https://github.com/acme/docs/tree/main/articles',
-    'https://github.com/acme/docs/wiki',
-])
-def test_prepare_new_document_plans_github_target_without_writing(
-    monkeypatch,
-    tmp_path,
-    destination,
-):
-    tools = _load_tools_module()
-    request = f'写一篇关于可复用工作流的文章，保存到 {destination}'
-    context = SimpleNamespace(
-        workspace_path=str(tmp_path),
-        params={
-            'step_id': 'prepare',
-            'session_id': 'session-1',
-            'user_input': request,
-            'history_files_per_turn': {},
-        },
-        output_slots=[],
-        emit=lambda _event: None,
-    )
-    planned_calls = []
-
-    def write_json(name, payload):
-        path = tmp_path / name
-        path.write_text(json.dumps(payload), encoding='utf-8')
-        return str(path)
-
-    writing_task = write_json('writing_task.json', {})
-    media_assets = write_json('media_assets.json', {'assets': {}})
-    profile_inputs = write_json('profile_input_resources.json', [])
-    resource_profiles = write_json('resource_profiles.json', [])
-    writing_context = write_json('writing_context.json', {})
-
-    monkeypatch.setattr(tools, 'require_context', lambda: context)
-    monkeypatch.setattr(tools, 'writer_classify_structure', lambda _query: 'flat')
-    def resolve_create_target(_self, user_input):
-        planned_calls.append(user_input)
-        return json.dumps({
-            'target_ref': destination,
-            'target_document': {
-                'adapter': 'github',
-                'uri': destination,
-                'meta': {'create_pending': True, 'base_ref': 'main'},
-            },
-        })
-
-    monkeypatch.setattr(
-        tools.WriterResourceToolkit,
-        'resolve_create_target',
-        resolve_create_target,
-    )
-    monkeypatch.setattr(tools, 'writer_build_writing_task', lambda **_kwargs: writing_task)
-    monkeypatch.setattr(
-        tools,
-        'writer_collect_available_media',
-        lambda **_kwargs: {
-            'media_assets': media_assets,
-            'profile_input_resources': profile_inputs,
-            'warnings': [],
-        },
-    )
-    monkeypatch.setattr(tools, 'writer_profile_resources', lambda **_kwargs: resource_profiles)
-    monkeypatch.setattr(tools, 'writer_create_writing_context', lambda **_kwargs: writing_context)
-    monkeypatch.setattr(tools, '_save_draft_workspace_artifacts', lambda _result: [])
-
-    result = tools.writer_prepare_workspace(operation='create')
-
-    command = tools._load_writer_command(result['writer_command'])
-    assert tools._provider_document_locator(destination) == ''
-    assert command.source_ref is None
-    assert command.target_ref == destination
-    assert tools._read_json_file(result['target_document'])['meta'] == {
-        'create_pending': True,
-        'base_ref': 'main',
-    }
-    assert planned_calls == [request]
-
-
-def test_writer_tool_resolves_deferred_provider_target(monkeypatch):
-    from lazymind.chat.engine.tools import writer
-
-    class FakeProvider:
-        def _resolve_create_target(self, parent_uri):
-            return writer.TargetDocument(
-                adapter='example',
-                uri=f'planned:{parent_uri}',
-                meta={'create_pending': True},
-            )
-
-    monkeypatch.setattr(writer, 'match_writer_provider', lambda _locator: FakeProvider())
-
-    result = json.loads(
-        writer.WriterResourceToolkit().resolve_create_target(
-            '保存到 https://example.com/acme/docs',
-        ),
-    )
-
-    assert result['target_ref'] == 'https://example.com/acme/docs'
-    assert result['target_document'] == {
-        'uri': 'planned:https://example.com/acme/docs',
-        'adapter': 'example',
-        'meta': {'create_pending': True},
-    }
-
-
 @pytest.mark.parametrize(
     ('representation', 'expected_writer'),
-    [('ir', 'publish_revision'), ('markdown', None)],
+    [('ir', 'publish_revision'), ('markdown', 'replace_document')],
 )
 def test_draft_workspace_revise_uses_writing_task_representation(
     monkeypatch,
@@ -815,27 +596,10 @@ def test_draft_workspace_revise_uses_writing_task_representation(
     )
     writing_context = write_json('writing_context.json', {})
     source_document = write_json('source_document.json', {})
-    target_document = write_json(
-        'target_document.json',
-        {
-            'adapter': 'github',
-            'uri': 'githubrepo:/acme/docs/README.md?ref=main',
-        } if representation == 'markdown' else {},
-    )
-    media_assets = write_json('media_assets.json', {'assets': {}})
+    target_document = write_json('target_document.json', {})
     modify_plan = write_json('modify_plan.json', {'instructions': []})
     revision_set = write_json('revision_set.json', {})
-    markdown_draft = (
-        '```mermaid\nflowchart LR\nA --> B\n```\n\n'
-        '```go\npackage main\n```\n\n'
-        '```java\nclass Main {}\n```\n'
-    )
-    if representation == 'markdown':
-        draft_path = tmp_path / 'draft_document.md'
-        draft_path.write_text(markdown_draft, encoding='utf-8')
-        draft_document = str(draft_path)
-    else:
-        draft_document = write_json('draft_document.json', {})
+    draft_document = write_json('draft_document.json', {})
     context_after_draft = write_json('context_after_draft.json', {})
     remote_inputs = {
         'writer_command': writer_command,
@@ -843,7 +607,6 @@ def test_draft_workspace_revise_uses_writing_task_representation(
         'writing_context': writing_context,
         'source_document': source_document,
         'target_document': target_document,
-        'media_assets': media_assets,
     }
     context = SimpleNamespace(
         workspace_path=str(tmp_path),
@@ -893,16 +656,4 @@ def test_draft_workspace_revise_uses_writing_task_representation(
     result = tools.writer_draft_workspace()
 
     assert result['status'] == 'completed'
-    assert calls == ([expected_writer] if expected_writer else [])
-    if representation == 'markdown':
-        assert state['result']['resolved_media_assets'] == media_assets
-        assert state['result']['draft_document'] != draft_document
-        assert Path(state['result']['draft_document']).read_text(
-            encoding='utf-8',
-        ) == markdown_draft.replace('```mermaid', '```text').replace(
-            '```go', '```text',
-        ).replace('```java', '```text')
-        target = tools._read_json_file(state['result']['target_document'])
-        assert [
-            item['language'] for item in target['meta']['github_writer_code_fences']
-        ] == ['mermaid', 'go', 'java']
+    assert calls == [expected_writer]

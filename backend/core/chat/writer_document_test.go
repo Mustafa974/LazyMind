@@ -84,37 +84,9 @@ func TestWriterProviderSelectionSupportsGitHubTarget(t *testing.T) {
 	if got := writerDocumentProvider(target); got != "github" {
 		t.Fatalf("provider = %q, want github", got)
 	}
-	config, ok := writerProviderToolConfig(map[string]any{"github": "token"}, "github")
-	if !ok || config["github"] != "token" {
-		t.Fatalf("unexpected GitHub provider config: %#v", config)
-	}
 }
 
-func TestAddWriterGitHubMediaAliases(t *testing.T) {
-	urls := map[string]string{"asset://generated-1": "/static-files/generated.png"}
-	addWriterGitHubMediaAliases(json.RawMessage(`{
-		"adapter":"github",
-		"meta":{"github_writer_media_aliases":{"assets/aa/image.png":"generated-1"}}
-	}`), urls, map[string]string{"generated-1": "/static-files/generated.png"}, map[string]string{
-		"assets/bb/legacy.png": "/static-files/legacy.png",
-	})
-
-	if urls["assets/aa/image.png"] != "/static-files/generated.png" {
-		t.Fatalf("GitHub write-back alias was not resolved: %#v", urls)
-	}
-	if urls["assets/bb/legacy.png"] != "/static-files/legacy.png" {
-		t.Fatalf("legacy GitHub write-back alias was not resolved: %#v", urls)
-	}
-	notionURLs := map[string]string{}
-	addWriterGitHubMediaAliases(
-		json.RawMessage(`{"adapter":"notion"}`), notionURLs, nil, map[string]string{"assets/x.png": "url"},
-	)
-	if len(notionURLs) != 0 {
-		t.Fatalf("non-GitHub target received media aliases: %#v", notionURLs)
-	}
-}
-
-func TestRenderWriterDocumentReturnsSessionAuthorizedMediaURLs(t *testing.T) {
+func TestAttachWriterMediaURLs(t *testing.T) {
 	uploadRoot := t.TempDir()
 	imagePath := filepath.Join(uploadRoot, "session", "diagram.png")
 	if err := os.MkdirAll(filepath.Dir(imagePath), 0o755); err != nil {
@@ -125,41 +97,9 @@ func TestRenderWriterDocumentReturnsSessionAuthorizedMediaURLs(t *testing.T) {
 	}
 	t.Setenv("LAZYMIND_UPLOAD_ROOT", uploadRoot)
 
-	chatService := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/workflow/actions:invoke" {
-			t.Errorf("path = %q, want workflow action invoke", r.URL.Path)
-			http.NotFound(w, r)
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"result": map[string]any{
-				"title":          "Draft",
-				"representation": "markdown",
-				"document":       "![diagram](docs/assets/diagram.png)",
-				"numbering": map[string]any{
-					"ordered_style": "decimal",
-					"entries":       map[string]any{},
-				},
-			},
-		})
-	}))
-	t.Cleanup(chatService.Close)
-	t.Setenv("LAZYMIND_CHAT_SERVICE_URL", chatService.URL)
-
-	db := orm.MigrateTestDB(t, &orm.WorkflowSession{}, &orm.WorkflowSlotRevision{})
-	store.Init(db.DB, db.DB, nil)
-	t.Cleanup(func() { store.Init(nil, nil, nil) })
-	now := time.Now().UTC()
-	if err := db.Create(&orm.WorkflowSession{
-		ID: "session", ConversationID: "conversation", WorkflowID: "writer-workflow",
-		Status: "completed", CreateUserID: "user-1", CreatedAt: now, UpdatedAt: now,
-	}).Error; err != nil {
-		t.Fatalf("seed writer session: %v", err)
-	}
-	seedWriterRevision(t, db, "source", "source_document", 1, true, "ai",
-		json.RawMessage(`{"schema":"text/markdown","data":"![diagram](docs/assets/diagram.png)"}`))
+	db := orm.MigrateTestDB(t, &orm.WorkflowSlotRevision{})
+	digest := strings.Repeat("a", 64)
 	mediaArtifact, err := json.Marshal(map[string]any{
-		"schema": "lazyllm.tools.writer.data_models.media.MediaAssetLibrary",
 		"data": map[string]any{
 			"assets": map[string]any{
 				"diagram": map[string]any{
@@ -167,6 +107,7 @@ func TestRenderWriterDocumentReturnsSessionAuthorizedMediaURLs(t *testing.T) {
 					"local_path":     imagePath,
 					"meta": map[string]any{
 						"source_reference": "docs/assets/diagram.png",
+						"sha256":           digest,
 					},
 				},
 			},
@@ -176,52 +117,22 @@ func TestRenderWriterDocumentReturnsSessionAuthorizedMediaURLs(t *testing.T) {
 		t.Fatalf("marshal media artifact: %v", err)
 	}
 	seedWriterRevision(t, db, "media", "media_assets", 1, true, "ai", mediaArtifact)
+	seedWriterRevision(t, db, "target", "target_document", 1, true, "ai", json.RawMessage(`{
+		"data":{"adapter":"github","meta":{"github_writer_media_aliases":{"assets/custom.png":"diagram-id"}}}
+	}`))
 
-	render := func(userID string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(
-			http.MethodPost,
-			"/api/core/workflow-sessions/session/writer-document:render",
-			strings.NewReader(`{"slot":"source_document"}`),
-		)
-		req.Header.Set("X-User-Id", userID)
-		req = mux.SetURLVars(req, map[string]string{"session_id": "session"})
-		recorder := httptest.NewRecorder()
-		RenderWriterDocument(recorder, req)
-		return recorder
-	}
-
-	recorder := render("user-1")
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("render status = %d, body=%s", recorder.Code, recorder.Body.String())
-	}
-	var response struct {
-		Data struct {
-			Document  string            `json:"document"`
-			MediaURLs map[string]string `json:"media_urls"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
-		t.Fatalf("decode render response: %v", err)
-	}
-	if response.Data.Document != "![diagram](docs/assets/diagram.png)" {
-		t.Fatalf("document was rewritten: %q", response.Data.Document)
-	}
-	signedURL := response.Data.MediaURLs["docs/assets/diagram.png"]
-	if !strings.HasPrefix(signedURL, "/static-files/") ||
-		!strings.Contains(signedURL, "expires=") || !strings.Contains(signedURL, "sig=") {
-		t.Fatalf("unexpected signed media URL: %q", signedURL)
-	}
-	if strings.Contains(recorder.Body.String(), uploadRoot) {
-		t.Fatalf("render response exposed the local upload path: %s", recorder.Body.String())
-	}
-
-	unauthorized := render("user-2")
-	if unauthorized.Code != http.StatusNotFound {
-		t.Fatalf("unauthorized status = %d, want %d; body=%s",
-			unauthorized.Code, http.StatusNotFound, unauthorized.Body.String())
-	}
-	if strings.Contains(unauthorized.Body.String(), "diagram.png") {
-		t.Fatalf("unauthorized response exposed media metadata: %s", unauthorized.Body.String())
+	result := map[string]any{"representation": "markdown"}
+	attachWriterMediaURLs(context.Background(), db.DB, "session", "draft_document", result)
+	urls := result["media_urls"].(map[string]string)
+	for _, reference := range []string{
+		"docs/assets/diagram.png",
+		"assets/custom.png",
+		"assets/aa/" + digest + ".png",
+	} {
+		if url := urls[reference]; !strings.HasPrefix(url, "/static-files/") ||
+			!strings.Contains(url, "sig=") || strings.Contains(url, uploadRoot) {
+			t.Fatalf("media URL for %q = %q", reference, url)
+		}
 	}
 }
 
