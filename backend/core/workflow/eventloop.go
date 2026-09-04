@@ -1167,6 +1167,85 @@ func OnSubAgentDoneSnapshot(
 			fmt.Printf("[Workflow] OnSubAgentDoneSnapshot: backfill artifact_seq rev=%s: %v\n", rev.ID, err)
 		}
 	}
+	markAutoPublishedWriterDraftSynced(ctx, db, pctx, step)
+}
+
+// markAutoPublishedWriterDraftSynced records the existing Writer fact that a
+// successful automatic publish made the generated draft the provider baseline.
+func markAutoPublishedWriterDraftSynced(
+	ctx context.Context,
+	db *gorm.DB,
+	pctx *WorkflowChatContext,
+	step *orm.WorkflowSessionStep,
+) {
+	if pctx.StepID != "write_document" {
+		return
+	}
+	revisions, err := LoadSelectedSlots(ctx, db, pctx.SessionID)
+	if err != nil {
+		fmt.Printf("[Workflow] mark writer provider sync: load slots: %v\n", err)
+		return
+	}
+
+	var draft, writeResult *orm.WorkflowSlotRevision
+	for i := range revisions {
+		revision := &revisions[i]
+		if revision.StepID != pctx.StepID || revision.Attempt != step.Attempt || revision.ListIndex != nil {
+			continue
+		}
+		switch revision.SlotID {
+		case "draft_document":
+			if revision.ChangeSource == "ai" || revision.ChangeSource == "host" {
+				draft = revision
+			}
+		case "document_write_result":
+			writeResult = revision
+		}
+	}
+	if draft == nil || writeResult == nil {
+		return
+	}
+
+	value, err := LoadSlotRevisionValue(ctx, db, *writeResult)
+	if err != nil {
+		return
+	}
+	resolved, ok := resolveWriterArtifact(value)
+	if !ok {
+		return
+	}
+	var result struct {
+		Data struct {
+			Success        bool            `json:"success"`
+			TargetDocument json.RawMessage `json:"target_document"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(resolved, &result) != nil || !result.Data.Success {
+		return
+	}
+
+	update := db.WithContext(ctx).Model(&orm.WorkflowSlotRevision{}).
+		Where("id = ? AND change_source IN ?", draft.ID, []string{"ai", "host"}).
+		Update("change_source", "provider_sync")
+	if update.Error != nil {
+		fmt.Printf("[Workflow] mark writer provider sync rev=%s: %v\n", draft.ID, update.Error)
+		return
+	}
+	if update.RowsAffected == 0 {
+		return
+	}
+	NotifyWorkflowArtifactUpdated(
+		ctx, db, pctx.SessionID, draft.StepID, draft.SlotID, draft.Slot,
+		draft.Revision, draft.ListIndex, "provider_sync",
+	)
+	if len(result.Data.TargetDocument) == 0 {
+		return
+	}
+	if _, err := SaveWriterTargetDocument(
+		ctx, db, pctx.SessionID, draft.StepID, draft.Attempt, "", result.Data.TargetDocument,
+	); err != nil {
+		fmt.Printf("[Workflow] save writer target document: %v\n", err)
+	}
 }
 
 // extractListIndex reads the most recent artifact value for the given (taskID, slot)
