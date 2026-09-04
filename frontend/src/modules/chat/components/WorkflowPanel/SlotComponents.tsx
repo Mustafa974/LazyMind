@@ -54,7 +54,7 @@ import { SlotJsonSlide } from './ppt/SlotJsonSlide';
 import { isSlideSpecArtifact } from './ppt/slideSchema';
 import type { TaskArtifactStream } from '@/modules/chat/store/taskCenter';
 import { Modal, Radio, type RadioChangeEvent } from 'antd';
-import { WechatOutlined } from '@ant-design/icons';
+import { FolderOpenOutlined, WechatOutlined } from '@ant-design/icons';
 import { cloudProviderOptions } from '@/modules/modelProvider/constants/cloudProviderOptions';
 import { isVideoArtifactValue } from './artifactMedia';
 
@@ -2567,10 +2567,12 @@ function WriterWriteBackSummary({
   slot,
   revision,
   currentChangeSource = slot.change_source,
+  locallyEditing = false,
 }: {
   slot: SlotRevision;
   revision: number;
   currentChangeSource?: SlotRevision['change_source'];
+  locallyEditing?: boolean;
 }) {
   if (!isWriterWriteBackSlot(slot.slot_id) || !Number.isFinite(revision) || revision <= 0) {
     return null;
@@ -2587,6 +2589,9 @@ function WriterWriteBackSummary({
     synced_clean: 'chat.writerIR.syncedClean',
     synced_dirty: 'chat.writerIR.syncedDirty',
   }[state] ?? 'chat.writerIR.writeBackBlocked';
+  const displayedStateKey = locallyEditing && state === 'synced_clean'
+    ? 'chat.writerMarkdown.unsaved'
+    : stateKey;
 
   return (
     <div className={`workflow-slot__writer-writeback-summary workflow-slot__writer-writeback-summary--${state}`} role='status' aria-live='polite'>
@@ -2596,7 +2601,7 @@ function WriterWriteBackSummary({
       {typeof slot.last_synced_version === 'number' && (
         <span>{tr('chat.writerIR.syncedToVersion', { version: slot.last_synced_version })}</span>
       )}
-      <span>{tr(stateKey)}</span>
+      <span>{tr(displayedStateKey)}</span>
       {slot.write_back_url && (
         <a href={slot.write_back_url} target='_blank' rel='noreferrer'>
           {tr('chat.writerIR.openCloudDocument')}
@@ -2625,20 +2630,40 @@ function isWriterWriteBackDisabled(
   );
 }
 
-type WriterWriteBackProvider = 'feishu' | 'notion';
+type WriterWriteBackProvider = 'feishu' | 'notion' | 'obsidian';
 
+const writerWriteBackProviders = ['feishu', 'notion'] as const;
 const futureWriterProviders = ['yuque', 'obsidian', 'githubWiki', 'wechatOfficialAccount'] as const;
+const OBSIDIAN_LOGO_URL = 'https://obsidian.md/images/obsidian-logo-gradient.svg';
+
+function defaultWriterWriteBackProvider(
+  provider?: string,
+  allowObsidian = false,
+): WriterWriteBackProvider {
+  if (provider === 'notion') return 'notion';
+  if (allowObsidian && provider === 'obsidian') return 'obsidian';
+  return 'feishu';
+}
 
 function WriterProviderChoice({
   initialProvider,
+  allowObsidian = false,
   onChange,
 }: {
   initialProvider: WriterWriteBackProvider;
+  allowObsidian?: boolean;
   onChange: (provider: WriterWriteBackProvider) => void;
 }) {
   const [value, setValue] = useState<WriterWriteBackProvider>(initialProvider);
   const option = (provider: WriterWriteBackProvider) =>
     cloudProviderOptions.find((item) => item.type === provider);
+  const obsidianAvailable = allowObsidian;
+  const availableProviders: readonly WriterWriteBackProvider[] = obsidianAvailable
+    ? [...writerWriteBackProviders, 'obsidian']
+    : writerWriteBackProviders;
+  const unavailableProviders = obsidianAvailable
+    ? futureWriterProviders.filter((item) => item !== 'obsidian')
+    : futureWriterProviders;
   return (
     <div className='workflow-writer-provider-picker'>
       <div className='workflow-writer-provider-picker__hint'>
@@ -2653,18 +2678,21 @@ function WriterProviderChoice({
         }}
         className='workflow-writer-provider-picker__options'
       >
-        {(['feishu', 'notion'] as const).map((item) => {
+        {availableProviders.map((item) => {
           const config = option(item);
+          const logoUrl = item === 'obsidian' ? OBSIDIAN_LOGO_URL : config?.logoUrl;
           return (
             <Radio key={item} value={item}>
               <span className='workflow-writer-provider-picker__option'>
-                {config?.logoUrl ? <img src={config.logoUrl} alt='' aria-hidden='true' /> : config?.icon}
+                {logoUrl
+                  ? <img src={logoUrl} alt='' aria-hidden='true' />
+                  : config?.icon ?? <FolderOpenOutlined />}
                 <span>{tr(`chat.writerIR.providers.${item}`)}</span>
               </span>
             </Radio>
           );
         })}
-        {futureWriterProviders.map((item) => (
+        {unavailableProviders.map((item) => (
           <Radio key={item} value={item} disabled>
             <span className='workflow-writer-provider-picker__option'>
               <span className='workflow-writer-provider-picker__fallback-icon' aria-hidden='true'>
@@ -2692,8 +2720,10 @@ function useRegisterWriterWriteBack({
   getLatestRevision,
   writeBackUrl: serverWriteBackUrl,
   provider,
+  allowObsidian,
   disabled,
   onSuccess,
+  onObsidianSuccess,
   onConflict,
 }: {
   enabled: boolean;
@@ -2707,8 +2737,10 @@ function useRegisterWriterWriteBack({
   getLatestRevision?: () => number;
   writeBackUrl?: string;
   provider?: string;
+  allowObsidian?: boolean;
   disabled?: boolean;
   onSuccess?: (revision: number, document: WriterDocument) => void;
+  onObsidianSuccess?: (revision: number) => void;
   onConflict?: () => void;
 }) {
   const tabActive = useContext(WorkflowPanelTabActiveContext);
@@ -2716,19 +2748,25 @@ function useRegisterWriterWriteBack({
   const [status, setStatus] = useState<
     'idle' | 'loading' | 'success' | 'error' | 'conflict' | 'provider-configuration-required'
   >('idle');
+  const [obsidianSourceChanged, setObsidianSourceChanged] = useState(false);
+  const [obsidianLocalPath, setObsidianLocalPath] = useState('');
   const writeBackUrl = serverWriteBackUrl;
 
   const [selectedProvider, setSelectedProvider] = useState<WriterWriteBackProvider>(
-    provider === 'notion' ? 'notion' : 'feishu',
+    defaultWriterWriteBackProvider(provider, allowObsidian),
   );
 
   useEffect(() => {
-    setSelectedProvider(provider === 'notion' ? 'notion' : 'feishu');
-  }, [provider]);
+    setSelectedProvider(defaultWriterWriteBackProvider(provider, allowObsidian));
+  }, [provider, allowObsidian]);
 
   const writeBack = useCallback(async (targetProvider: WriterWriteBackProvider) => {
     if (!sessionId) return;
     setStatus('loading');
+    if (targetProvider === 'obsidian') {
+      setObsidianSourceChanged(false);
+      setObsidianLocalPath('');
+    }
     try {
       const currentRevision = getLatestRevision?.() ?? revision;
       const response = await WorkflowSessionApi().writeBackWriterDocument(
@@ -2741,6 +2779,28 @@ function useRegisterWriterWriteBack({
         { silentError: true } as never,
       );
       const result = response?.data?.data;
+      if (targetProvider === 'obsidian') {
+        const document = result?.document as unknown;
+        if (
+          response?.data?.code !== 0
+          || result?.status !== 'synced'
+          || result.provider_synced !== true
+          || result.artifact_saved !== true
+          || typeof result.revision !== 'number'
+          || result.patch_result?.success !== true
+          || typeof document !== 'string'
+        ) {
+          throw new Error(tr('chat.writerIR.writeBackFailed'));
+        }
+        const writeResult = result?.patch_result?.meta?.write_result as Record<string, unknown> | undefined;
+        const warnings = writeResult?.warnings;
+        const localPath = writeResult?.local_path;
+        setObsidianSourceChanged(Array.isArray(warnings) && warnings.length > 0);
+        setObsidianLocalPath(typeof localPath === 'string' ? localPath : '');
+        setStatus('success');
+        onObsidianSuccess?.(result.revision);
+        return;
+      }
       if (
         response?.data?.code !== 0
         || result?.status !== 'synced'
@@ -2770,7 +2830,7 @@ function useRegisterWriterWriteBack({
         setStatus('error');
       }
     }
-  }, [getLatestRevision, onConflict, onSuccess, revision, sessionId, slotId]);
+  }, [getLatestRevision, onConflict, onObsidianSuccess, onSuccess, revision, sessionId, slotId]);
   const writeBackRef = useRef(writeBack);
   writeBackRef.current = writeBack;
 
@@ -2787,12 +2847,16 @@ function useRegisterWriterWriteBack({
       flushBeforeAction: true,
       flushKey,
       onClick: () => {
-        let chosen = provider === 'notion' ? 'notion' : selectedProvider;
+        const boundObsidian = allowObsidian && provider === 'obsidian';
+        let chosen = provider === 'notion' || boundObsidian
+          ? defaultWriterWriteBackProvider(provider, allowObsidian)
+          : selectedProvider;
         Modal.confirm({
           title: tr('chat.writerIR.providerPickerTitle'),
           content: (
             <WriterProviderChoice
               initialProvider={chosen}
+              allowObsidian={allowObsidian}
               onChange={(next) => { chosen = next; }}
             />
           ),
@@ -2805,7 +2869,13 @@ function useRegisterWriterWriteBack({
         });
       },
       statusText: status === 'success' || (synced && status === 'idle')
-        ? tr('chat.writerIR.writeBackSuccess')
+        ? tr(selectedProvider === 'obsidian'
+          ? status === 'idle' && synced
+            ? 'chat.writerIR.obsidianAutoWriteBackSuccess'
+            : obsidianSourceChanged
+            ? 'chat.writerIR.obsidianWriteBackOverwroteChangedSource'
+            : 'chat.writerIR.obsidianWriteBackSuccess'
+          : 'chat.writerIR.writeBackSuccess')
         : status === 'provider-configuration-required'
           ? tr('chat.writerIR.providerConfigurationRequired', { provider: tr(`chat.writerIR.providers.${selectedProvider}`) })
           : status === 'error'
@@ -2820,12 +2890,23 @@ function useRegisterWriterWriteBack({
           || status === 'provider-configuration-required'
           ? 'error'
           : undefined,
-      statusLink: writeBackUrl
-        ? { href: writeBackUrl, label: tr('chat.writerIR.openCloudDocument') }
-        : undefined,
+      statusLink: selectedProvider === 'obsidian'
+        ? status === 'success' && obsidianLocalPath
+          ? {
+            label: tr('chat.writerIR.openCloudDocument'),
+            onClick: () => Modal.info({
+              title: tr('chat.writerIR.openCloudDocument'),
+              content: obsidianLocalPath,
+            }),
+          }
+          : undefined
+        : writeBackUrl
+          ? { href: writeBackUrl, label: tr('chat.writerIR.openCloudDocument') }
+          : undefined,
     });
   }, [
     actionKey,
+    allowObsidian,
     disabled,
     enabled,
     flushKey,
@@ -2834,6 +2915,7 @@ function useRegisterWriterWriteBack({
     registerFooterAction,
     sessionId,
     selectedProvider,
+    obsidianLocalPath,
     status,
     synced,
     tabActive,
@@ -3119,6 +3201,10 @@ function SlotWriterDocument({
     notifyEditing(editingKey, editing);
   }, [editingKey, notifyEditing]);
 
+  const handleMarkdownEditingChange = useCallback((editing: boolean) => {
+    setWriterEditing(editing);
+  }, []);
+
   const openIRRewrite = useCallback((selection: {
     nodeId: string;
     selectedText: string;
@@ -3186,9 +3272,11 @@ function SlotWriterDocument({
     getLatestRevision,
     writeBackUrl: slot.write_back_url,
     provider: slot.provider,
+    allowObsidian: true,
     disabled: writeBackDisabled,
     synced: slot.write_back_state === 'synced_clean',
     onSuccess: handleWriteBackSuccess,
+    onObsidianSuccess: handleWriteBackSuccess,
     onConflict: refreshDocument,
   });
 
@@ -3262,8 +3350,10 @@ function SlotWriterDocument({
             markdown={markdown}
             numbering={rendered.numbering}
             sourceRevision={displayRevision}
+            obsidianSyntax={slot.provider === 'obsidian'}
             editingKey={editingKey}
             onSave={saveMarkdown}
+            onEditingChange={handleMarkdownEditingChange}
             onRefresh={refreshDocument}
             onDownload={allowDownload ? () => setDownloadFormatOpen(true) : undefined}
             onRewriteSelection={rewriteSelection || rewritePreview ? undefined : openMarkdownRewrite}
@@ -3310,6 +3400,7 @@ function SlotWriterDocument({
         slot={slot}
         revision={displayRevision}
         currentChangeSource={localChangeSource}
+        locallyEditing={writerEditing}
       />
       <div className='workflow-slot__artifact-footer'>
         <div className='workflow-slot__artifact-footer-left'>
@@ -4244,6 +4335,7 @@ function SlotMarkdownFile({
     preview: RewriteSelectionPreview;
   } | null>(null);
   const [renderedSelection, setRenderedSelection] = useState<MarkdownSelection | null>(null);
+  const [writerEditing, setWriterEditing] = useState(false);
   const markdownPreviewRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -4312,7 +4404,12 @@ function SlotMarkdownFile({
     && typeof displayRevision === 'number'
     && displayRevision > 0
     && (initialDelivery || slot.write_back_state === 'synced_clean' || slot.write_back_state === 'synced_dirty');
-  const writeBackDisabled = isWriterWriteBackDisabled(slot, canWriteBack, displayRevision);
+  const writeBackDisabled = isWriterWriteBackDisabled(
+    slot,
+    canWriteBack,
+    displayRevision,
+    writerEditing,
+  );
 
   const canRewriteMarkdown = Boolean(sessionId && slotId)
     && !readOnly
@@ -4355,6 +4452,10 @@ function SlotMarkdownFile({
   const canUseOriginalLmd = Boolean(originalUrl && downloadMarkdownContent === content);
   const handleEditorContentChange = useCallback((markdown: string) => {
     setDownloadMarkdownContent(markdown);
+  }, []);
+
+  const handleMarkdownEditingChange = useCallback((editing: boolean) => {
+    setWriterEditing(editing);
   }, []);
 
   const saveMarkdown = useCallback(async (markdown: string, baseRevision: number) => {
@@ -4460,9 +4561,11 @@ function SlotMarkdownFile({
     revision: displayRevision,
     writeBackUrl: slot.write_back_url,
     provider: slot.provider,
+    allowObsidian: slot.provider === 'obsidian',
     disabled: writeBackDisabled,
     synced: slot.write_back_state === 'synced_clean',
     onSuccess: handleMarkdownWriteBackSuccess,
+    onObsidianSuccess: handleMarkdownWriteBackSuccess,
     onConflict: onRefresh,
   });
 
@@ -4537,6 +4640,7 @@ function SlotMarkdownFile({
             onRefresh={refreshMarkdown}
             onDownload={allowDownload ? downloadMarkdown : undefined}
             onContentChange={handleEditorContentChange}
+            onEditingChange={handleMarkdownEditingChange}
             onRewriteSelection={rewriteSelection || rewritePreview ? undefined : openMarkdownRewrite}
             rewriteUnavailableReason={rewriteSelection || rewritePreview || canRewriteMarkdown
               ? undefined
