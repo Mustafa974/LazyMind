@@ -53,7 +53,11 @@ from lazyllm.tools.writer.numbering import (
     compute_numbering,
     materialize_markdown,
 )
-from lazyllm.tools.writer.provider import get_writer_provider, match_writer_provider
+from lazyllm.tools.writer.provider import (
+    get_writer_provider,
+    match_writer_provider,
+    resolve_writer_create_target,
+)
 from lazyllm.tools.writer.utils import (
     render_block_markdown,
     save_artifact_json,
@@ -583,14 +587,7 @@ def _provider_create_target(user_input: str) -> tuple[str, TargetDocument] | Non
     for match in _PROVIDER_LOCATOR_RE.finditer(user_input or ''):
         locator = match.group(0).rstrip(').,;!?]}，。；！？】》」』')
         try:
-            provider = match_writer_provider(locator)
-        except ValueError:
-            continue
-        resolver = getattr(provider, '_resolve_create_target', None)
-        if not callable(resolver):
-            continue
-        try:
-            target = resolver(locator)
+            target = resolve_writer_create_target(locator)
         except ValueError:
             continue
         if target.meta.get('create_pending'):
