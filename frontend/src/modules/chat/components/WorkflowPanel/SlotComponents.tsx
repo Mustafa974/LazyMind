@@ -2788,8 +2788,10 @@ function SlotWriterDocument({
   readOnly,
 }: SlotWriterDocumentProps) {
   const allowDownload = useContext(SlotDownloadContext);
+  const tabActive = useContext(WorkflowPanelTabActiveContext);
   const mediaLibrary = useWriterMediaLibrary(sessionId);
   const { setEditing: notifyEditing } = useContext(SlotEditingContext);
+  const [markdownTabActivated, setMarkdownTabActivated] = useState(tabActive);
   const [rendered, setRendered] = useState<RenderWriterDocumentResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -2814,6 +2816,10 @@ function SlotWriterDocument({
     (url) => resolveMarkdownImageUrlFromMap(url, rendered?.media_urls),
     [rendered?.media_urls],
   );
+
+  useEffect(() => {
+    if (tabActive) setMarkdownTabActivated(true);
+  }, [tabActive]);
 
   const applySavedRevision = useCallback((
     revision?: number,
@@ -3121,6 +3127,8 @@ function SlotWriterDocument({
       </div>
     );
   }
+
+  if (rendered.representation === 'markdown' && !markdownTabActivated) return null;
 
   return (
     <div className='workflow-slot workflow-slot--artifact'>
