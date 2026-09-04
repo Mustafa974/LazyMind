@@ -964,7 +964,11 @@ func writerDocumentMediaURLs(
 				materializedURLs[path] = previewURL
 				materializedURLs["_"+path] = previewURL
 			}
-			references := []string{strings.TrimSpace(asset.Meta.SourceReference)}
+			references := []string{
+				strings.TrimSpace(asset.Meta.SourceReference),
+				strings.TrimSpace(asset.LocalPath),
+				strings.TrimSpace(asset.URI),
+			}
 			if assetID != "" {
 				references = append(references, "asset://"+assetID)
 			}

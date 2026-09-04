@@ -99,11 +99,13 @@ func TestAttachWriterMediaURLs(t *testing.T) {
 
 	db := orm.MigrateTestDB(t, &orm.WorkflowSlotRevision{})
 	digest := strings.Repeat("a", 64)
+	sourceURI := "https://example.test/diagram.png"
 	mediaArtifact, err := json.Marshal(map[string]any{
 		"data": map[string]any{
 			"assets": map[string]any{
 				"diagram": map[string]any{
 					"media_asset_id": "diagram-id",
+					"uri":            sourceURI,
 					"local_path":     imagePath,
 					"meta": map[string]any{
 						"source_reference": "docs/assets/diagram.png",
@@ -126,6 +128,8 @@ func TestAttachWriterMediaURLs(t *testing.T) {
 	urls := result["media_urls"].(map[string]string)
 	for _, reference := range []string{
 		"docs/assets/diagram.png",
+		imagePath,
+		sourceURI,
 		"assets/custom.png",
 		"assets/aa/" + digest + ".png",
 	} {
