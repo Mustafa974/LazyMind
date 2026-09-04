@@ -705,11 +705,6 @@ def test_prepare_new_document_plans_github_target_without_writing(
         path.write_text(json.dumps(payload), encoding='utf-8')
         return str(path)
 
-    target_path = write_json('target_document.json', {
-        'adapter': 'github',
-        'uri': destination,
-        'meta': {'create_pending': True, 'base_ref': 'main'},
-    })
     writing_task = write_json('writing_task.json', {})
     media_assets = write_json('media_assets.json', {'assets': {}})
     profile_inputs = write_json('profile_input_resources.json', [])
@@ -718,10 +713,21 @@ def test_prepare_new_document_plans_github_target_without_writing(
 
     monkeypatch.setattr(tools, 'require_context', lambda: context)
     monkeypatch.setattr(tools, 'writer_classify_structure', lambda _query: 'flat')
+    def resolve_create_target(_self, user_input):
+        planned_calls.append(user_input)
+        return json.dumps({
+            'target_ref': destination,
+            'target_document': {
+                'adapter': 'github',
+                'uri': destination,
+                'meta': {'create_pending': True, 'base_ref': 'main'},
+            },
+        })
+
     monkeypatch.setattr(
-        tools,
-        '_writer_resolve_create_target',
-        lambda parent_uri: planned_calls.append(parent_uri) or target_path,
+        tools.WriterResourceToolkit,
+        'resolve_create_target',
+        resolve_create_target,
     )
     monkeypatch.setattr(tools, 'writer_build_writing_task', lambda **_kwargs: writing_task)
     monkeypatch.setattr(
@@ -743,37 +749,36 @@ def test_prepare_new_document_plans_github_target_without_writing(
     assert tools._provider_document_locator(destination) == ''
     assert command.source_ref is None
     assert command.target_ref == destination
-    assert result['target_document'] == target_path
-    assert planned_calls == [destination]
+    assert tools._read_json_file(result['target_document'])['meta'] == {
+        'create_pending': True,
+        'base_ref': 'main',
+    }
+    assert planned_calls == [request]
 
 
-def test_resolve_create_target_uses_github_creation_provider(monkeypatch, tmp_path):
-    tools = _load_tools_module()
-    context = SimpleNamespace(
-        workspace_path=str(tmp_path),
-        params={'step_id': 'prepare'},
-    )
+def test_writer_tool_resolves_deferred_provider_target(monkeypatch):
+    from lazymind.chat.engine.tools import writer
 
-    class FakeGitHubProvider:
-        provider = 'github'
-
+    class FakeProvider:
         def _resolve_create_target(self, parent_uri):
-            return tools.TargetDocument(
-                adapter='github',
+            return writer.TargetDocument(
+                adapter='example',
                 uri=f'planned:{parent_uri}',
                 meta={'create_pending': True},
             )
 
-    monkeypatch.setattr(tools, 'require_context', lambda: context)
-    monkeypatch.setattr(tools, 'GitHubWriterProvider', FakeGitHubProvider)
+    monkeypatch.setattr(writer, 'match_writer_provider', lambda _locator: FakeProvider())
 
-    target_path = tools._writer_resolve_create_target('https://github.com/acme/docs')
+    result = json.loads(
+        writer.WriterResourceToolkit().resolve_create_target(
+            '保存到 https://example.com/acme/docs',
+        ),
+    )
 
-    assert tools._read_json_file(target_path) == {
-        'doc_id': None,
-        'uri': 'planned:https://github.com/acme/docs',
-        'adapter': 'github',
-        'title': None,
+    assert result['target_ref'] == 'https://example.com/acme/docs'
+    assert result['target_document'] == {
+        'uri': 'planned:https://example.com/acme/docs',
+        'adapter': 'example',
         'meta': {'create_pending': True},
     }
 

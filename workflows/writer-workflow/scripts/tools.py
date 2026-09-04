@@ -46,7 +46,6 @@ from lazyllm.tools.writer.numbering import (
     materialize_markdown,
 )
 from lazyllm.tools.writer.provider import match_writer_provider
-from lazyllm.tools.writer.provider.github import GitHubWriterProvider
 from lazyllm.tools.writer.tools import (
     WriterDraftingTools,
     WriterPlanningTools,
@@ -401,11 +400,6 @@ _PROVIDER_DOCUMENT_LOCATOR = re.compile(
     r"(?:https?://|[a-z][a-z0-9+.-]*:(?://)?)[^\s<>\"'，。；！？、（）【】《》「」『』]+",
     re.IGNORECASE,
 )
-_GITHUB_CREATE_PARENT = re.compile(
-    r'^https?://(?:www\.)?github\.com/[^/\s]+/[^/\s]+'
-    r'(?:/wiki|/tree/[^?#\s]+)?/?(?:[?#].*)?$',
-    re.IGNORECASE,
-)
 _LOCAL_WRITER_DOCUMENT_SUFFIXES = {'.md', '.markdown', '.txt', '.lmd'}
 _CHINESE_CHAR_LIMIT_RE = re.compile(
     r'(?P<prefix>不超过|至多|最多|约|大约|大概)?\s*'
@@ -436,14 +430,6 @@ def _provider_document_locator(value: str) -> str:
         except ValueError:
             continue
         return locator
-    return ''
-
-
-def _github_create_target_locator(value: str) -> str:
-    for match in _PROVIDER_DOCUMENT_LOCATOR.finditer(value or ''):
-        locator = match.group(0).rstrip(').,;!?]}，。；！？】》」』')
-        if _GITHUB_CREATE_PARENT.fullmatch(locator):
-            return locator
     return ''
 
 
@@ -877,28 +863,6 @@ def writer_load_document(user_input: str, stage: str = 'final') -> dict:
     }
 
 
-def _writer_resolve_create_target(parent_uri: str) -> str:
-    """Resolve and save a future GitHub target without exposing a Writer tool API."""
-    root = _run_root('resolve-create-target')
-    if not _GITHUB_CREATE_PARENT.fullmatch(str(parent_uri or '').strip()):
-        raise ValueError('The provider locator is not a GitHub document creation target.')
-    provider = GitHubWriterProvider()
-    resolve_create_target = getattr(provider, '_resolve_create_target', None)
-    if not callable(resolve_create_target):
-        raise ValueError(
-            f'Provider {provider.provider!r} does not support deferred document creation.',
-        )
-    target = resolve_create_target(parent_uri)
-    if not target.meta.get('create_pending'):
-        raise ValueError('The provider locator is not a document creation target.')
-    return _save_json_artifact(
-        'target_document',
-        json.dumps(target.model_dump(), ensure_ascii=False),
-        writer_schema('task.TargetDocument'),
-        directory=root,
-    )
-
-
 def writer_profile_resources(
     writing_task_path: str,
     user_input: str,
@@ -958,20 +922,12 @@ def writer_collect_available_media(
     resources = _json_loads(
         toolkit.build_resources(
             file_paths_json=json.dumps(file_paths, ensure_ascii=False),
+            input_resources_json=(
+                _read_json_string(input_resources_path) if input_resources_path else '[]'
+            ),
         ),
         [],
     )
-    if input_resources_path:
-        provider_resources = _read_json_file(input_resources_path)
-        if isinstance(provider_resources, list):
-            existing_uris = {
-                str(item.get('uri') or '')
-                for item in resources if isinstance(item, dict)
-            }
-            resources.extend(
-                item for item in provider_resources
-                if isinstance(item, dict) and str(item.get('uri') or '') not in existing_uris
-            )
     writing_task_json = _read_json_string(writing_task_path)
     writing_task_value = _json_loads(writing_task_json, {})
     visual_policy = (writing_task_value.get('constraints') or {}).get('visual_policy') or {}
@@ -1086,7 +1042,6 @@ def writer_prepare_workspace(
     source_filename = str(source_filename or '').strip()
     cloud_source_locator = _provider_document_locator(user_input or '')
     has_cloud_source = bool(cloud_source_locator)
-    create_target_locator = _github_create_target_locator(user_input or '')
 
     # Models occasionally copy a provider locator into both fields.
     # Treat that as one cloud source, never as a local filename override.
@@ -1133,6 +1088,10 @@ def writer_prepare_workspace(
             has_cloud_source or source_filename or local_candidates
         ),
     )
+    create_target = (
+        _json_loads(WriterResourceToolkit().resolve_create_target(user_input), {})
+        if operation == 'create' else {}
+    )
 
     command_action = {
         'create': 'create',
@@ -1154,7 +1113,7 @@ def writer_prepare_workspace(
         source_role=source_role,
         target_stage=target_stage,
         source_ref=source_ref,
-        target_ref=create_target_locator if operation == 'create' else '',
+        target_ref=str(create_target.get('target_ref') or ''),
     )
     command = _load_writer_command(writer_command)
 
@@ -1163,8 +1122,13 @@ def writer_prepare_workspace(
     provider_input_resources = ''
     provider_warnings: list[str] = []
     representation = 'markdown'
-    if operation == 'create' and command.target_ref:
-        target_document = _writer_resolve_create_target(command.target_ref)
+    if create_target.get('target_document'):
+        target_document = _save_json_artifact(
+            'target_document',
+            json.dumps(create_target['target_document'], ensure_ascii=False),
+            writer_schema('task.TargetDocument'),
+            directory=_run_root('resolve-create-target'),
+        )
     if operation != 'create':
         if source_kind == 'local':
             source_document = writer_load_local_document(source_filename)
@@ -2721,14 +2685,10 @@ def _sync_markdown_document(
         raise ValueError('Markdown draft is empty.')
     heading = re.search(r'^#\s+(.+?)\s*$', markdown, flags=re.MULTILINE)
     document_title = (heading.group(1).strip() if heading else title.strip()) or '未命名文档'
-    resolved_target = dict(target_document or {})
-    target_meta = resolved_target.get('meta')
-    if isinstance(target_meta, Mapping) and target_meta.get('create_pending'):
-        resolved_target['title'] = str(resolved_target.get('title') or document_title)
     return _replace_document_and_read_back(
         markdown_content,
         title=document_title,
-        target_document=resolved_target or None,
+        target_document=target_document,
         media_assets=media_assets,
         artifact_store=artifact_store,
         source_format='markdown',
@@ -2773,6 +2733,7 @@ def _replace_document_and_read_back(
         content_json=serialized_content,
         source_document_json=serialized_content,
         target_document_json=json.dumps(target.model_dump(), ensure_ascii=False),
+        target_title=title,
         media_assets_json=(
             json.dumps(media_library.model_dump(), ensure_ascii=False)
             if media_library is not None else ''
@@ -3118,35 +3079,35 @@ def _modify_plan_needs_media(path: str) -> bool:
     )
 
 
-def _prepare_github_markdown_code_fences(
+def writer_prepare_markdown_for_editor(
     document_path: str,
     target_document_path: str,
 ) -> tuple[str, str]:
-    """Create GitHub-only editor copies and return an updated target when needed."""
+    """Save the editor document and target returned by the Writer resource tool."""
     source = Path(str(document_path or ''))
     if source.suffix.lower() not in {'.md', '.markdown'} or not source.is_file() \
             or not target_document_path:
         return str(document_path), ''
-    target = TargetDocument.model_validate(_read_json_file(target_document_path))
-    if not str(target.adapter or '').lower().startswith('github'):
-        return str(document_path), ''
     markdown = source.read_text(encoding='utf-8')
-    target_before = target.model_dump()
-    normalized = GitHubWriterProvider.normalize_code_fences_for_writer(
-        markdown, target,
-    )
-    if normalized == markdown and target.model_dump() == target_before:
+    payload = _json_loads(WriterResourceToolkit().prepare_markdown_for_editor(
+        markdown=markdown,
+        target_document_json=_read_json_string(target_document_path),
+    ), {})
+    prepared = str(payload.get('markdown') or '')
+    updated_target = payload.get('target_document')
+    if prepared == markdown and not updated_target:
         return str(document_path), ''
-    root = _run_root('github-code-fences')
-    normalized_path = root / source.name
-    normalized_path.write_text(normalized, encoding='utf-8')
-    updated_target_path = _save_json_artifact(
-        'target_document',
-        json.dumps(target.model_dump(), ensure_ascii=False),
-        writer_schema('task.TargetDocument'),
-        directory=root,
+    root = _run_root('prepare-markdown-for-editor')
+    prepared_path = root / source.name
+    prepared_path.write_text(prepared, encoding='utf-8')
+    target_path = (
+        _save_json_artifact(
+            'target_document', json.dumps(updated_target, ensure_ascii=False),
+            writer_schema('task.TargetDocument'), directory=root,
+        )
+        if updated_target else ''
     )
-    return str(normalized_path), updated_target_path
+    return str(prepared_path), target_path
 
 
 def _save_draft_workspace_artifacts(result: Mapping[str, Any]) -> list[str]:
@@ -3511,14 +3472,14 @@ def writer_draft_workspace() -> dict:
             result['resolved_media_assets'] = resolved_media or media_assets_path
     if representation == 'markdown' and target_document_path \
             and result.get('draft_document') \
-            and not result.get('github_code_fences_prepared'):
-        prepared_draft, updated_target = _prepare_github_markdown_code_fences(
+            and not result.get('markdown_editor_prepared'):
+        prepared_draft, updated_target = writer_prepare_markdown_for_editor(
             str(result['draft_document']), target_document_path,
         )
         result['draft_document'] = prepared_draft
         if updated_target:
             result['target_document'] = updated_target
-        result['github_code_fences_prepared'] = True
+        result['markdown_editor_prepared'] = True
         state['result'] = result
         _persist_draft_workspace_state(state, checkpoint_path)
     if not result.get('writing_context_after_draft'):
@@ -3678,14 +3639,14 @@ def writer_flat_draft_workspace() -> dict:
         if media_assets_path and not result.get('resolved_media_assets'):
             result['resolved_media_assets'] = resolved_media or media_assets_path
     if representation == 'markdown' and target_document_path \
-            and not result.get('github_code_fences_prepared'):
-        prepared_draft, updated_target = _prepare_github_markdown_code_fences(
+            and not result.get('markdown_editor_prepared'):
+        prepared_draft, updated_target = writer_prepare_markdown_for_editor(
             str(result['draft_document']), target_document_path,
         )
         result['draft_document'] = prepared_draft
         if updated_target:
             result['target_document'] = updated_target
-        result['github_code_fences_prepared'] = True
+        result['markdown_editor_prepared'] = True
         state['result'] = result
         _persist_draft_workspace_state(state, checkpoint_path)
     if not result.get('writing_context_after_draft'):
