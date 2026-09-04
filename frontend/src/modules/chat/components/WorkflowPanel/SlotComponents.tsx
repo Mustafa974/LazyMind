@@ -2788,10 +2788,8 @@ function SlotWriterDocument({
   readOnly,
 }: SlotWriterDocumentProps) {
   const allowDownload = useContext(SlotDownloadContext);
-  const tabActive = useContext(WorkflowPanelTabActiveContext);
   const mediaLibrary = useWriterMediaLibrary(sessionId);
   const { setEditing: notifyEditing } = useContext(SlotEditingContext);
-  const [markdownTabActivated, setMarkdownTabActivated] = useState(tabActive);
   const [rendered, setRendered] = useState<RenderWriterDocumentResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -2808,18 +2806,47 @@ function SlotWriterDocument({
     preview: RewriteSelectionPreview;
   } | null>(null);
   const [renderedSelection, setRenderedSelection] = useState<MarkdownSelection | null>(null);
+  const [, setMediaPreviewRevision] = useState(0);
   const markdownPreviewRef = useRef<HTMLDivElement>(null);
   const latestRevisionRef = useRef(slot.revision);
+  const writerMediaURLsRef = useRef(rendered?.media_urls);
+  const observedMediaURLsRef = useRef(new Set<string>());
+  const mediaPreviewRefreshTimerRef = useRef<number | undefined>(undefined);
+  const writerDocumentMountedRef = useRef(true);
+  writerMediaURLsRef.current = rendered?.media_urls;
   const apiListIndex = -1;
   const editingKey = `${sessionId}:${slotId}:${apiListIndex}:writer-document`;
-  const resolveWriterMarkdownImage = useCallback<MarkdownImageResolver>(
-    (url) => resolveMarkdownImageUrlFromMap(url, rendered?.media_urls),
-    [rendered?.media_urls],
-  );
+  const resolveWriterMarkdownImage = useCallback<MarkdownImageResolver>(async (url) => {
+    const resolved = await resolveMarkdownImageUrlFromMap(url, writerMediaURLsRef.current);
+    if (!resolved || observedMediaURLsRef.current.has(resolved)) return resolved;
+    observedMediaURLsRef.current.add(resolved);
+    const image = new Image();
+    const refresh = () => {
+      image.onload = null;
+      image.onerror = null;
+      if (!writerDocumentMountedRef.current || mediaPreviewRefreshTimerRef.current !== undefined) return;
+      mediaPreviewRefreshTimerRef.current = window.setTimeout(() => {
+        mediaPreviewRefreshTimerRef.current = undefined;
+        if (writerDocumentMountedRef.current) setMediaPreviewRevision((value) => value + 1);
+      }, 0);
+    };
+    image.onload = refresh;
+    image.onerror = refresh;
+    image.src = resolved;
+    if (image.complete) refresh();
+    return resolved;
+  }, []);
 
   useEffect(() => {
-    if (tabActive) setMarkdownTabActivated(true);
-  }, [tabActive]);
+    writerDocumentMountedRef.current = true;
+    return () => {
+      writerDocumentMountedRef.current = false;
+      if (mediaPreviewRefreshTimerRef.current !== undefined) {
+        window.clearTimeout(mediaPreviewRefreshTimerRef.current);
+        mediaPreviewRefreshTimerRef.current = undefined;
+      }
+    };
+  }, []);
 
   const applySavedRevision = useCallback((
     revision?: number,
@@ -2900,6 +2927,7 @@ function SlotWriterDocument({
   const markdown = rendered?.representation === 'markdown' && typeof rendered.document === 'string'
     ? rendered.document
     : '';
+  const hasWriterMediaURLs = Object.keys(rendered?.media_urls ?? {}).length > 0;
   const currentDraftSnapshot = rendered?.document ?? slot.artifact_value;
   const displayRevision = localRevision;
   const displayRevisionCount = localRevisionCount ?? revisionCount;
@@ -3128,14 +3156,6 @@ function SlotWriterDocument({
     );
   }
 
-  // Keep ordinary Writer documents on the visible-tab mount path. Eagerly
-  // mount generated Markdown only when this task is bound to GitHub.
-  if (
-    (slotId === 'source_document' || slot.provider !== 'github')
-    && rendered.representation === 'markdown'
-    && !markdownTabActivated
-  ) return null;
-
   return (
     <div className='workflow-slot workflow-slot--artifact'>
       <div className={`workflow-slot__artifact-body${rendered.representation === 'markdown' ? ' workflow-slot__artifact-body--markdown' : ''}`}>
@@ -3164,7 +3184,7 @@ function SlotWriterDocument({
         ) : canEdit ? (
           <MarkdownArtifactEditor
             markdown={markdown}
-            resolveImageUrl={resolveWriterMarkdownImage}
+            resolveImageUrl={hasWriterMediaURLs ? resolveWriterMarkdownImage : undefined}
             numbering={rendered.numbering}
             sourceRevision={displayRevision}
             editingKey={editingKey}
@@ -3195,7 +3215,7 @@ function SlotWriterDocument({
             tabIndex={canRewrite ? 0 : undefined}
           >
             <div className='writer-artifact__markdown'>
-              <MarkdownViewer resolveImageUrl={resolveWriterMarkdownImage}>
+              <MarkdownViewer resolveImageUrl={hasWriterMediaURLs ? resolveWriterMarkdownImage : undefined}>
                 {rendered.export_document ?? markdown}
               </MarkdownViewer>
             </div>
