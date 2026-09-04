@@ -284,6 +284,7 @@ steps:
       document_write_result must report success and draft_document must be the
       provider-confirmed document. Every cloud-bound IR full-document rewrite also requires
       one successful document_write_result and a provider-confirmed draft_document,
-      regardless of whether a previous draft existed. Markdown rewrite remains local and
-      does not require document_write_result. Later targeted revisions must not mutate the
-      cloud document automatically.
+      regardless of whether a previous draft existed. An unbound Markdown rewrite remains
+      local. A provider-bound Markdown rewrite, including Obsidian, may write back automatically
+      and must report one successful document_write_result. Later targeted revisions with an
+      existing draft must not mutate the provider document automatically.
