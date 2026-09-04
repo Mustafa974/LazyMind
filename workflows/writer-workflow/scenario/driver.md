@@ -40,8 +40,10 @@ value is merely a local path string does not satisfy an output and must be RETRY
   source_document, document_write_result must report success and draft_document must be
   the provider-confirmed document returned by the write-back.
 - Every cloud-bound IR full-document rewrite must likewise report one successful
-  document_write_result and return the provider-confirmed draft_document. A Markdown
-  full-document rewrite remains local and does not require document_write_result.
+  document_write_result and return the provider-confirmed draft_document. An unbound
+  Markdown full-document rewrite remains local. A provider-bound Markdown full-document
+  rewrite, including Obsidian, may write back automatically and must report one successful
+  document_write_result.
 - Once draft_document already existed at execution start, a cloud-bound body revision
   must remain local in this step.
 - If the initial provider write contains images, resolved_media_assets must be passed to
