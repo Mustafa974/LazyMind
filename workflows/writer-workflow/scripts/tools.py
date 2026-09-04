@@ -2706,7 +2706,7 @@ def _replace_document_and_read_back(
     media_assets: Mapping[str, Any] | None = None,
     adapter: str = 'feishu',
 ) -> dict:
-    """Replace a provider document and return its confirmed representation."""
+    """Replace a provider document and return its synchronized representation."""
     if target_document:
         target = TargetDocument.model_validate(target_document)
     else:
@@ -2747,7 +2747,11 @@ def _replace_document_and_read_back(
         persisted = persisted_document.model_dump()
     result = PatchResult(
         success=True,
-        message='Document written to provider and read back successfully.',
+        message=(
+            'Document written to GitHub successfully.'
+            if payload.get('provider') == 'github'
+            else 'Document written to provider and read back successfully.'
+        ),
         meta={
             'mode': 'replace',
             'source_format': source_format,

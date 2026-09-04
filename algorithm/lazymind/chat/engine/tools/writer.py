@@ -2563,6 +2563,24 @@ class WriterToolkitBase:
             if mode == 'replace'
             else resource.append_to_document(publish_document, target, media_assets)
         )
+        if str(target.adapter or '').strip().lower() == 'github':
+            published_result = _primary_data(write_result)
+            if published_result.get('success') is not True:
+                raise ToolExecutionError('GitHub did not confirm that the document was written.')
+            return _json_dumps({
+                'publish_result': published_result,
+                'draft_document': (
+                    publish_document.model_dump(exclude_defaults=True)
+                    if isinstance(publish_document, WriterDocument)
+                    else publish_document
+                ),
+                'representation': (
+                    'ir' if isinstance(publish_document, WriterDocument) else 'markdown'
+                ),
+                'provider': 'github',
+                'published_link': _published_link(target),
+                'target_document': target.model_dump(exclude_defaults=True),
+            })
         refreshed = resource.load_document(TargetDocument(
             **target.model_dump(exclude={'meta'}),
             meta={**target.meta, 'stage': 'final'},
