@@ -2806,7 +2806,7 @@ function SlotWriterDocument({
     preview: RewriteSelectionPreview;
   } | null>(null);
   const [renderedSelection, setRenderedSelection] = useState<MarkdownSelection | null>(null);
-  const [, setMediaPreviewRevision] = useState(0);
+  const [mediaPreviewRevision, setMediaPreviewRevision] = useState(0);
   const markdownPreviewRef = useRef<HTMLDivElement>(null);
   const latestRevisionRef = useRef(slot.revision);
   const writerMediaURLsRef = useRef(rendered?.media_urls);
@@ -2835,7 +2835,7 @@ function SlotWriterDocument({
     image.src = resolved;
     if (image.complete) refresh();
     return resolved;
-  }, []);
+  }, [mediaPreviewRevision]);
 
   useEffect(() => {
     writerDocumentMountedRef.current = true;
