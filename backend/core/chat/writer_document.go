@@ -108,6 +108,15 @@ func writerProviderToolConfig(toolConfig map[string]any, provider string) (map[s
 	return map[string]any{provider: credential}, true
 }
 
+func writerProviderRequiresToolConfig(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "feishu", "notion":
+		return true
+	default:
+		return false
+	}
+}
+
 func writerDocumentSlot(slot string) (string, bool) {
 	if slot == "" {
 		return "draft_document", true
@@ -725,7 +734,7 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 		syncRequest.TargetDocument = nil
 	}
 	syncRequest.Adapter = provider
-	if provider != "obsidian" {
+	if writerProviderRequiresToolConfig(provider) {
 		toolConfig, configErr := loadChatToolConfig(ctx, db, userID)
 		if configErr != nil {
 			common.ReplyErr(w, "load cloud document authorization failed", http.StatusBadGateway)
