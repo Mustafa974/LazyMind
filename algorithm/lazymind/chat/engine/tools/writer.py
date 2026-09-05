@@ -544,14 +544,19 @@ def sync_writer_documents(
         )
     candidate = _merge_provider_state(revised, persisted)
     candidate.ui_editable = True
-    return {
+    response = {
         'success': result.success,
         'changed': changed,
         'provider_synced': result.success,
         'patch_set': patch.model_dump(),
         'patch_result': result.model_dump(),
         'persisted_document': candidate.model_dump(),
+        'representation': 'ir',
     }
+    target = _target_from_document(candidate)
+    if target is not None:
+        response['target_document'] = target.model_dump(exclude_defaults=True)
+    return response
 
 
 def _provider_targets(user_input: str, *, stage: str | None = None) -> list[TargetDocument]:
@@ -654,12 +659,6 @@ def _published_link(target: TargetDocument) -> str:
         target.meta.get('browser_url')
         or (target.uri if target.uri.startswith(('http://', 'https://')) else '')
     ).strip()
-    if target.adapter == 'obsidian':
-        return ''
-    if not link:
-        raise ToolExecutionError(
-            'Provider write succeeded but no browser URL was returned.'
-        )
     return link
 
 
@@ -2454,6 +2453,7 @@ class WriterToolkitBase:
             'draft_document': published.model_dump(exclude_defaults=True),
             'provider': str(target.adapter or ''),
             'representation': 'ir',
+            'target_document': target.model_dump(exclude_defaults=True),
             'published_link': _published_link(target),
         })
 
@@ -2526,65 +2526,30 @@ class WriterToolkitBase:
         if not isinstance(publish_document, (WriterDocument, str)):
             raise ToolExecutionError('content_json must contain Writer IR or Markdown.')
         media_assets = _json_loads(media_assets_json, {}) if media_assets_json.strip() else None
-        if target.adapter == 'obsidian' and isinstance(publish_document, WriterDocument):
-            # Obsidian persists Markdown. Keep the Writer workflow in IR until
-            # this provider-specific publication boundary.
-            media_library = MediaAssetLibrary.model_validate(media_assets) if media_assets else None
-            publish_document = publish_document.model_copy(deep=True)
-            for block in publish_document.iter_blocks():
-                if block.type != 'image':
-                    continue
-                reference = next(
-                    (
-                        item for item in block.references
-                        if item.get('type') == 'media_asset' and item.get('id')
-                    ),
-                    None,
-                )
-                asset = (
-                    media_library.assets.get(str(reference['id']))
-                    if reference is not None and media_library is not None
-                    else None
-                )
-                if asset is not None and asset.local_path:
-                    reference['path'] = asset.local_path
-            publish_document = writer_document_to_markdown(publish_document)
         resource = WriterResourceTools(llm=None, artifact_store=str(root))
         write_result = (
             resource.replace_document(publish_document, target, media_assets)
             if mode == 'replace'
             else resource.append_to_document(publish_document, target, media_assets)
         )
-        if target.adapter == 'obsidian':
-            # Obsidian bridge metadata retains frontmatter and original image
-            # references. Keep the exact Markdown after write-back for later edits.
-            published = publish_document
-            representation = 'markdown'
+        refreshed = resource.load_document(TargetDocument(
+            **target.model_dump(exclude={'meta'}),
+            meta={**target.meta, 'stage': 'final'},
+        ))
+        published_value = _primary_data(refreshed)
+        if refreshed.get('representation') == 'ir':
+            persisted = WriterDocument.model_validate(published_value)
+            published = (
+                _merge_provider_state(publish_document, persisted)
+                if mode == 'replace' and isinstance(publish_document, WriterDocument)
+                else persisted
+            )
+            published = _set_document_editable(published, stage='final')
         else:
-            refreshed = resource.load_document(TargetDocument(
-                **target.model_dump(exclude={'meta'}),
-                meta={**target.meta, 'stage': 'final'},
-            ))
-            published_value = _primary_data(refreshed)
-            if refreshed.get('representation') == 'ir':
-                persisted = WriterDocument.model_validate(published_value)
-                published = (
-                    _merge_provider_state(publish_document, persisted)
-                    if mode == 'replace' and isinstance(publish_document, WriterDocument)
-                    else persisted
-                )
-                published = _set_document_editable(published, stage='final')
-            else:
-                published = published_value
-            representation = refreshed.get('representation')
+            published = published_value
+        representation = refreshed.get('representation')
+        resolved_target = TargetDocument.model_validate(_result_data(refreshed, 'target_document'))
         publish_result = _primary_data(write_result)
-        if target.adapter == 'obsidian':
-            local_path = str(target.meta.pop('_obsidian_display_path', '')).strip()
-            if local_path and isinstance(publish_result, dict):
-                publish_result = {**publish_result, 'local_path': local_path}
-            warnings = list((write_result.get('metadata') or {}).get('warnings') or [])
-            if warnings:
-                publish_result = {**publish_result, 'warnings': warnings}
         response = {
             'publish_result': publish_result,
             'draft_document': (
@@ -2593,11 +2558,10 @@ class WriterToolkitBase:
                 else published
             ),
             'representation': representation,
-            'provider': str(target.adapter or ''),
-            'published_link': _published_link(target),
+            'provider': str(resolved_target.adapter or target.adapter or ''),
+            'target_document': resolved_target.model_dump(exclude_defaults=True),
+            'published_link': _published_link(resolved_target),
         }
-        if target.adapter == 'obsidian':
-            response['target_document'] = target.model_dump(exclude_defaults=True)
         return _json_dumps(response)
 
 

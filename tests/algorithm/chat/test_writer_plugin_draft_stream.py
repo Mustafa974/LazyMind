@@ -60,8 +60,7 @@ def test_writer_retrieve_uses_configured_search_provider(monkeypatch):
     assert result == [{'title': 'evidence'}]
 
 
-def test_obsidian_ir_publish_materializes_media_asset_path(monkeypatch):
-    from lazyllm.tools.writer.data_models.multimodal import MediaAsset
+def test_write_document_reloads_provider_target(monkeypatch):
     from lazymind.chat.engine.tools import writer
 
     document = writer.WriterDocument(
@@ -75,16 +74,13 @@ def test_obsidian_ir_publish_materializes_media_asset_path(monkeypatch):
             references=[{'type': 'media_asset', 'id': 'asset-1'}],
         )],
     )
-    media_assets = writer.MediaAssetLibrary(
-        library_id='library-1',
-        assets={'asset-1': MediaAsset(
-            media_asset_id='asset-1',
-            asset_type='image',
-            source_type='input_resource',
-            local_path='/tmp/architecture.png',
-        )},
-    )
     captured = {}
+    refreshed_target = {
+        'doc_id': 'note-1',
+        'uri': 'local-markdown://vault/note.md',
+        'adapter': 'local-markdown',
+        'meta': {'source_hash': 'fresh'},
+    }
 
     class FakeResourceTools:
         def __init__(self, **_kwargs):
@@ -93,24 +89,40 @@ def test_obsidian_ir_publish_materializes_media_asset_path(monkeypatch):
         def replace_document(self, content, _target, assets):
             captured['content'] = content
             captured['assets'] = assets
-            return {'data': {'success': True}}
+            return {'data': {
+                'doc_id': 'note-1',
+                'local_path': '/tmp/vault/note.md',
+                'warnings': ['source changed'],
+            }}
+
+        def load_document(self, target):
+            captured['reload_target'] = target
+            return {
+                'data': '# Saved\n',
+                'target_document': refreshed_target,
+                'representation': 'markdown',
+            }
 
     monkeypatch.setattr(writer, 'WriterResourceTools', FakeResourceTools)
     monkeypatch.setattr(writer, '_primary_data', lambda result: result['data'])
+    monkeypatch.setattr(writer, '_result_data', lambda result, key: result[key])
 
-    writer.WriterResourceToolkit().replace_document(
+    payload = json.loads(writer.WriterResourceToolkit().replace_document(
         content_json=json.dumps(document.model_dump()),
         source_document_json='',
         target_document_json=json.dumps({
-            'uri': 'obsidian://vault/report.md',
-            'adapter': 'obsidian',
+            'uri': 'local-markdown://vault/note.md',
+            'adapter': 'local-markdown',
         }),
-        media_assets_json=json.dumps(media_assets.model_dump()),
-    )
+    ))
 
-    assert '](/tmp/architecture.png)' in captured['content']
-    assert captured['assets']['assets']['asset-1']['local_path'] == '/tmp/architecture.png'
-    assert document.blocks[0].references == [{'type': 'media_asset', 'id': 'asset-1'}]
+    assert isinstance(captured['content'], writer.WriterDocument)
+    assert captured['assets'] is None
+    assert captured['reload_target'].meta['stage'] == 'final'
+    assert payload['draft_document'] == '# Saved\n'
+    assert payload['target_document'] == refreshed_target
+    assert payload['publish_result']['local_path'] == '/tmp/vault/note.md'
+    assert payload['publish_result']['warnings'] == ['source changed']
 
 
 @pytest.mark.parametrize(
@@ -895,7 +907,7 @@ def test_draft_workspace_revise_uses_writing_task_representation(
     assert calls == [expected_writer]
 
 
-def test_save_publish_payload_persists_updated_obsidian_target(tmp_path):
+def test_save_publish_payload_persists_updated_provider_target(tmp_path):
     tools = _load_tools_module()
     target = {
         'doc_id': 'vault:note.md',
@@ -905,10 +917,10 @@ def test_save_publish_payload_persists_updated_obsidian_target(tmp_path):
     }
 
     saved = tools._save_publish_payload({
-        'provider': 'obsidian',
+        'provider': 'local-markdown',
         'publish_result': {'success': True},
         'draft_document': '# Note\n',
         'target_document': target,
     }, tmp_path)
 
-    assert tools._read_json_file(saved['target_document']) == target
+    assert tools._read_json_file(saved['publish_result'])['target_document'] == target

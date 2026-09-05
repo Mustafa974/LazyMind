@@ -657,17 +657,21 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 			common.ReplyErr(w, "load resolved_media_assets failed", http.StatusInternalServerError)
 			return
 		}
-		if writerDocumentIsUnbound(revisedDocument) || requestedProvider == "obsidian" {
-			// A local Obsidian export does not need a provider baseline from the
-			// original IR source. It is converted to Markdown at the Obsidian
-			// publication boundary below.
+		boundProvider := writerDocumentProvider(revisedDocument)
+		provider := requestedProvider
+		if provider == "" {
+			provider = boundProvider
+		}
+		if writerDocumentIsUnbound(revisedDocument) || provider != boundProvider {
+			// A first publish or cross-provider publish must not carry the
+			// original provider's block-level baseline to the destination.
 			syncRequest.RevisedDocument = revisedDocument
 		} else {
 			baseline, baselineErr := loadWriterWriteBackBaseline(
 				ctx, db, sessionID, slot, draft.Revision.Revision,
 			)
 			if baselineErr != nil {
-				common.ReplyErrWithData(w, "initial Feishu write-back has not completed", map[string]any{
+				common.ReplyErrWithData(w, "initial provider write-back has not completed", map[string]any{
 					"status": "baseline_not_found", "current_revision": draft.Revision.Revision,
 				}, http.StatusConflict)
 				return
@@ -748,7 +752,7 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "writer document write-back failed", http.StatusBadGateway)
 		return
 	}
-	if (provider != boundProvider || provider == "obsidian") && len(result.TargetDocument) > 0 {
+	if len(result.TargetDocument) > 0 {
 		if _, err := workflow.SaveWriterTargetDocument(
 			ctx, db, sessionID, draft.Revision.StepID, draft.Revision.Attempt, provider, result.TargetDocument,
 		); err != nil {
@@ -760,9 +764,16 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	schema := "lazyllm.tools.writer.data_models.writer_ir.WriterDocument"
-	if provider == "obsidian" {
+	representation := strings.ToLower(strings.TrimSpace(result.Representation))
+	schema := ""
+	switch representation {
+	case "ir":
+		schema = "lazyllm.tools.writer.data_models.writer_ir.WriterDocument"
+	case "markdown":
 		schema = "text/markdown"
+	default:
+		common.ReplyErr(w, "writer returned unsupported persisted document representation", http.StatusBadGateway)
+		return
 	}
 	artifact, err := json.Marshal(map[string]any{
 		"schema":         schema,
@@ -771,11 +782,6 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 		"meta": map[string]any{
 			"created_by": "writer-write-back-api",
 			"created_at": time.Now().UTC().Format(time.RFC3339Nano),
-			"lazymind_provider_sync": map[string]any{
-				"confirmed": true,
-				"provider":  provider,
-				"source":    "manual",
-			},
 		},
 	})
 	if err != nil {

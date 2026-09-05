@@ -750,8 +750,7 @@ def _save_publish_payload(payload: dict, root: Path) -> dict:
             **publish_result,
             'success': bool(publish_result.get('success', draft_document)),
         }
-    if str(payload.get('provider') or '').strip().lower() == 'obsidian' \
-            and isinstance(target_document, dict):
+    if isinstance(target_document, dict):
         publish_result = {
             **publish_result,
             'target_document': target_document,
@@ -768,13 +767,6 @@ def _save_publish_payload(payload: dict, root: Path) -> dict:
             draft_document,
             editable=True,
             directory=root,
-            extra_meta={
-                'lazymind_provider_sync': {
-                    'confirmed': True,
-                    'provider': str(payload.get('provider') or ''),
-                    'source': 'initial_auto',
-                },
-            },
         ),
         'published_link': str(payload.get('published_link') or ''),
     }
@@ -2773,15 +2765,8 @@ def _replace_document_and_read_back(
         'representation': payload.get('representation'),
         'provider': payload.get('provider'),
     }
-    if response['representation'] == 'markdown':
-        # Markdown cannot carry a Writer IR provider binding. Return the
-        # resolved target so Core can retain the existing target slot.
-        response['target_document'] = (
-            payload.get('target_document')
-            if str(payload.get('provider') or '').strip().lower() == 'obsidian'
-            and isinstance(payload.get('target_document'), dict)
-            else target.model_dump(exclude_defaults=True)
-        )
+    if isinstance(payload.get('target_document'), dict):
+        response['target_document'] = payload['target_document']
     return response
 
 

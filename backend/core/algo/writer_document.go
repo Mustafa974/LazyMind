@@ -28,6 +28,7 @@ type WriterDocumentSyncResponse struct {
 	PatchResult       json.RawMessage `json:"patch_result"`
 	PersistedDocument json.RawMessage `json:"persisted_document"`
 	TargetDocument    json.RawMessage `json:"target_document"`
+	Representation    string          `json:"representation"`
 }
 
 func SyncWriterDocument(
