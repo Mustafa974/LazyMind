@@ -18,7 +18,7 @@ func TestEnrichWriterWriteBackSlots_UsesSourceAndLatestSync(t *testing.T) {
 	sourcePath := filepath.Join(root, "source_document.lmd")
 	syncedPath := filepath.Join(root, "draft_document.lmd")
 	mustWriteWriterArtifact(t, sourcePath, `{"data":{"document_id":"draft-1","provider_binding":{"provider":"feishu","document_id":"doc-1","uri":"https://tenant.feishu.cn/docx/doc-1"}}}`)
-	mustWriteWriterArtifact(t, syncedPath, `{"data":{"document_id":"draft-1"},"meta":{"lazymind_provider_sync":{"confirmed":true}}}`)
+	mustWriteWriterArtifact(t, syncedPath, `{"data":{"document_id":"draft-1"}}`)
 
 	now := time.Now().UTC()
 	for _, step := range []orm.WorkflowSessionStep{
@@ -37,7 +37,7 @@ func TestEnrichWriterWriteBackSlots_UsesSourceAndLatestSync(t *testing.T) {
 	seq := 1
 	source := writerRevision("source-rev", "session", "source_document", 1, "ai", nil)
 	source.ArtifactSeq, source.StepID = &seq, "prepare"
-	synced := writerRevision("synced-rev", "session", "draft_document", 1, "host", nil)
+	synced := writerRevision("synced-rev", "session", "draft_document", 1, "provider_sync", nil)
 	synced.Selected, synced.ArtifactSeq = false, &seq
 	human := writerRevision("human-rev", "session", "draft_document", 2, "human", json.RawMessage(`{"data":{"document_id":"draft-1"}}`))
 	for _, revision := range []*orm.WorkflowSlotRevision{&source, &synced, &human} {

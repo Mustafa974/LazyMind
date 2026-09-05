@@ -220,23 +220,29 @@ export interface SyncWriterDocumentPatchResult {
   meta?: Record<string, unknown>;
 }
 
-export interface SyncWriterDocumentResult {
+interface WriterDocumentSyncResultBase {
   status: "synced" | "no_change";
   revision: number;
   provider_synced: boolean;
   artifact_saved: boolean;
   patch_result: SyncWriterDocumentPatchResult;
-  document: Record<string, unknown>;
 }
 
-export interface WriteBackWriterDocumentResult {
+type WriterDocumentSyncContent =
+  | {
+      representation: 'ir';
+      document: Record<string, unknown>;
+    }
+  | {
+      representation: 'markdown';
+      document: string;
+    };
+
+export type SyncWriterDocumentResult = WriterDocumentSyncResultBase & WriterDocumentSyncContent;
+
+export type WriteBackWriterDocumentResult = Omit<WriterDocumentSyncResultBase, 'status'> & {
   status: "synced";
-  revision: number;
-  provider_synced: boolean;
-  artifact_saved: boolean;
-  patch_result: SyncWriterDocumentPatchResult;
-  document: Record<string, unknown>;
-}
+} & WriterDocumentSyncContent;
 
 export interface WriteBackWriterDocumentRequest {
   base_revision: number;

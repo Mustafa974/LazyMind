@@ -119,7 +119,7 @@ func writerWriteBackState(
 		applyWriterProviderBinding(&info, binding)
 	}
 
-	if writerSlotRevisionSynced(draft.ChangeSource, draftValue) {
+	if writerSlotRevisionSynced(draft.ChangeSource) {
 		if !hasBinding {
 			return info
 		}
@@ -137,7 +137,7 @@ func writerWriteBackState(
 	}
 	for _, revision := range revisions {
 		value, err := LoadSlotRevisionValue(ctx, db, revision)
-		if err == nil && writerSlotRevisionSynced(revision.ChangeSource, value) {
+		if err == nil && writerSlotRevisionSynced(revision.ChangeSource) {
 			if !hasBinding {
 				binding, hasBinding = writerProviderBindingFromArtifact(value)
 				if hasBinding {
@@ -180,25 +180,8 @@ func loadWriterSlotDTOValue(ctx context.Context, db *gorm.DB, sessionID string, 
 	})
 }
 
-func writerSlotRevisionSynced(changeSource string, value json.RawMessage) bool {
-	if changeSource == "provider_sync" {
-		return true
-	}
-	if changeSource != "ai" && changeSource != "host" {
-		return false
-	}
-	resolved, ok := resolveWriterArtifact(value)
-	if !ok {
-		return false
-	}
-	var envelope struct {
-		Meta struct {
-			ProviderSync struct {
-				Confirmed bool `json:"confirmed"`
-			} `json:"lazymind_provider_sync"`
-		} `json:"meta"`
-	}
-	return json.Unmarshal(resolved, &envelope) == nil && envelope.Meta.ProviderSync.Confirmed
+func writerSlotRevisionSynced(changeSource string) bool {
+	return changeSource == "provider_sync"
 }
 
 func writerProviderBindingFromArtifact(value json.RawMessage) (writerProviderBinding, bool) {
