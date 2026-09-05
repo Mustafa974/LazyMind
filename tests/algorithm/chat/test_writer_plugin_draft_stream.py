@@ -60,6 +60,30 @@ def test_writer_retrieve_uses_configured_search_provider(monkeypatch):
     assert result == [{'title': 'evidence'}]
 
 
+def test_sync_writer_documents_returns_representation_and_target():
+    from lazymind.chat.engine.tools import writer
+
+    document = writer.WriterDocument(
+        document_id='doc-1',
+        stage='final',
+        title='Report',
+        provider_binding={
+            'provider': 'feishu',
+            'document_id': 'doc-1',
+            'uri': 'https://example.feishu.cn/docx/doc-1',
+        },
+    )
+
+    result = writer.sync_writer_documents(document.model_dump(), document.model_dump())
+
+    assert result['representation'] == 'ir'
+    assert result['target_document'] == {
+        'doc_id': 'doc-1',
+        'uri': 'https://example.feishu.cn/docx/doc-1',
+        'adapter': 'feishu',
+    }
+
+
 def test_write_document_reloads_provider_target(monkeypatch):
     from lazymind.chat.engine.tools import writer
 
