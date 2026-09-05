@@ -2721,8 +2721,8 @@ function useRegisterWriterWriteBack({
   provider,
   allowObsidian,
   disabled,
-  onSuccess,
-  onObsidianSuccess,
+  onIRSuccess,
+  onMarkdownSuccess,
   onConflict,
 }: {
   enabled: boolean;
@@ -2738,8 +2738,8 @@ function useRegisterWriterWriteBack({
   provider?: string;
   allowObsidian?: boolean;
   disabled?: boolean;
-  onSuccess?: (revision: number, document: WriterDocument) => void;
-  onObsidianSuccess?: (revision: number) => void;
+  onIRSuccess?: (revision: number, document: WriterDocument) => void;
+  onMarkdownSuccess?: (revision: number, document: string) => void;
   onConflict?: () => void;
 }) {
   const tabActive = useContext(WorkflowPanelTabActiveContext);
@@ -2778,41 +2778,37 @@ function useRegisterWriterWriteBack({
         { silentError: true } as never,
       );
       const result = response?.data?.data;
-      if (targetProvider === 'obsidian') {
-        const document = result?.document as unknown;
-        if (
-          response?.data?.code !== 0
-          || result?.status !== 'synced'
-          || result.provider_synced !== true
-          || result.artifact_saved !== true
-          || typeof result.revision !== 'number'
-          || result.patch_result?.success !== true
-          || typeof document !== 'string'
-        ) {
-          throw new Error(tr('chat.writerIR.writeBackFailed'));
-        }
-        const writeResult = result?.patch_result?.meta?.write_result as Record<string, unknown> | undefined;
-        const warnings = writeResult?.warnings;
-        const localPath = writeResult?.local_path;
-        setObsidianSourceChanged(Array.isArray(warnings) && warnings.length > 0);
-        setObsidianLocalPath(typeof localPath === 'string' ? localPath : '');
-        setStatus('success');
-        onObsidianSuccess?.(result.revision);
-        return;
-      }
       if (
         response?.data?.code !== 0
+        || !result
         || result?.status !== 'synced'
         || result.provider_synced !== true
         || result.artifact_saved !== true
         || typeof result.revision !== 'number'
         || result.patch_result?.success !== true
-        || !isWriterDocument(result.document)
       ) {
         throw new Error(tr('chat.writerIR.writeBackFailed'));
       }
+      if (targetProvider === 'obsidian') {
+        const writeResult = result?.patch_result?.meta?.write_result as Record<string, unknown> | undefined;
+        const warnings = writeResult?.warnings;
+        const localPath = writeResult?.local_path;
+        setObsidianSourceChanged(Array.isArray(warnings) && warnings.length > 0);
+        setObsidianLocalPath(typeof localPath === 'string' ? localPath : '');
+      }
+      if (result.representation === 'markdown') {
+        if (typeof result.document !== 'string') {
+          throw new Error(tr('chat.writerIR.writeBackFailed'));
+        }
+        setStatus('success');
+        onMarkdownSuccess?.(result.revision, result.document);
+        return;
+      }
+      if (result.representation !== 'ir' || !isWriterDocument(result.document)) {
+        throw new Error(tr('chat.writerIR.writeBackFailed'));
+      }
       setStatus('success');
-      onSuccess?.(result.revision, result.document);
+      onIRSuccess?.(result.revision, result.document);
     } catch (error) {
       const errorResponse = (error as {
         response?: {
@@ -2829,7 +2825,7 @@ function useRegisterWriterWriteBack({
         setStatus('error');
       }
     }
-  }, [getLatestRevision, onConflict, onObsidianSuccess, onSuccess, revision, sessionId, slotId]);
+  }, [getLatestRevision, onConflict, onIRSuccess, onMarkdownSuccess, revision, sessionId, slotId]);
   const writeBackRef = useRef(writeBack);
   writeBackRef.current = writeBack;
 
@@ -3274,8 +3270,8 @@ function SlotWriterDocument({
     allowObsidian: true,
     disabled: writeBackDisabled,
     synced: slot.write_back_state === 'synced_clean',
-    onSuccess: handleWriteBackSuccess,
-    onObsidianSuccess: handleWriteBackSuccess,
+    onIRSuccess: handleWriteBackSuccess,
+    onMarkdownSuccess: handleWriteBackSuccess,
     onConflict: refreshDocument,
   });
 
@@ -3785,7 +3781,7 @@ function SlotJsonFile({
     provider: slot.provider,
     disabled: writeBackDisabled,
     synced: slot.write_back_state === 'synced_clean',
-    onSuccess: handleWriteBackSuccess,
+    onIRSuccess: handleWriteBackSuccess,
     onConflict: onRefresh,
   });
 
@@ -4130,7 +4126,7 @@ function SlotInlineStructured({
     provider: slot.provider,
     disabled: writeBackDisabled,
     synced: slot.write_back_state === 'synced_clean',
-    onSuccess: handleWriteBackSuccess,
+    onIRSuccess: handleWriteBackSuccess,
     onConflict: onRefresh,
   });
 
@@ -4563,8 +4559,8 @@ function SlotMarkdownFile({
     allowObsidian: slot.provider === 'obsidian',
     disabled: writeBackDisabled,
     synced: slot.write_back_state === 'synced_clean',
-    onSuccess: handleMarkdownWriteBackSuccess,
-    onObsidianSuccess: handleMarkdownWriteBackSuccess,
+    onIRSuccess: handleMarkdownWriteBackSuccess,
+    onMarkdownSuccess: handleMarkdownWriteBackSuccess,
     onConflict: onRefresh,
   });
 

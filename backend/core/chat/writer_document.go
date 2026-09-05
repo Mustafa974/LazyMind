@@ -197,18 +197,22 @@ func SyncWriterDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	toolConfig, err := loadChatToolConfig(ctx, db, userID)
-	if err != nil {
-		common.ReplyErr(w, "load cloud document authorization failed", http.StatusBadGateway)
-		return
-	}
 	provider := writerDocumentProvider(body.SourceDocument, body.RevisedDocument)
-	providerConfig, ok := writerProviderToolConfig(toolConfig, provider)
-	if !ok {
-		common.ReplyErrWithData(w, "cloud document authorization required", map[string]any{
-			"status": provider + "_configuration_required", "provider": provider,
-		}, http.StatusUnauthorized)
-		return
+	var providerConfig map[string]any
+	if writerProviderRequiresToolConfig(provider) {
+		toolConfig, err := loadChatToolConfig(ctx, db, userID)
+		if err != nil {
+			common.ReplyErr(w, "load cloud document authorization failed", http.StatusBadGateway)
+			return
+		}
+		var ok bool
+		providerConfig, ok = writerProviderToolConfig(toolConfig, provider)
+		if !ok {
+			common.ReplyErrWithData(w, "cloud document authorization required", map[string]any{
+				"status": provider + "_configuration_required", "provider": provider,
+			}, http.StatusUnauthorized)
+			return
+		}
 	}
 	result, status, err := algo.SyncWriterDocument(ctx, algo.WriterDocumentSyncRequest{
 		WorkflowID: session.WorkflowID, RevisionID: session.WorkflowRevisionID,
@@ -826,8 +830,9 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 	common.ReplyOK(w, map[string]any{
 		"status": "synced", "revision": revision.Revision,
 		"provider_synced": true, "artifact_saved": true,
-		"patch_result": result.PatchResult,
-		"document":     result.PersistedDocument,
+		"patch_result":   result.PatchResult,
+		"document":       result.PersistedDocument,
+		"representation": representation,
 	})
 }
 
@@ -1104,41 +1109,7 @@ func normalizeWriterBlockForSync(value any) {
 }
 
 func writerArtifactRevisionSynced(artifact *selectedWriterArtifact) bool {
-	if artifact == nil {
-		return false
-	}
-	if artifact.Revision.ChangeSource == "provider_sync" {
-		return true
-	}
-	return (artifact.Revision.ChangeSource == "ai" || artifact.Revision.ChangeSource == "host") &&
-		writerArtifactEnvelopeProviderSynced(artifact.Value)
-}
-
-func writerArtifactEnvelopeProviderSynced(value json.RawMessage) bool {
-	var record map[string]json.RawMessage
-	if json.Unmarshal(value, &record) != nil {
-		return false
-	}
-	var metadata map[string]json.RawMessage
-	if json.Unmarshal(record["meta"], &metadata) == nil {
-		var marker struct {
-			Confirmed bool `json:"confirmed"`
-		}
-		if json.Unmarshal(metadata["lazymind_provider_sync"], &marker) == nil && marker.Confirmed {
-			return true
-		}
-	}
-	var path string
-	_ = json.Unmarshal(record["path"], &path)
-	if path == "" || strings.ToLower(filepath.Ext(path)) != ".lmd" {
-		return false
-	}
-	cleanPath := filepath.Clean(path)
-	if !writerArtifactPathAllowed(cleanPath) {
-		return false
-	}
-	content, err := os.ReadFile(cleanPath)
-	return err == nil && writerArtifactEnvelopeProviderSynced(content)
+	return artifact != nil && artifact.Revision.ChangeSource == "provider_sync"
 }
 
 func writerArtifactData(value json.RawMessage, requireLMD bool) (json.RawMessage, error) {
@@ -1271,7 +1242,7 @@ func writerSyncReply(
 	common.ReplyOK(w, map[string]any{
 		"status": status, "revision": revision, "provider_synced": true,
 		"artifact_saved": artifactSaved, "patch_result": result.PatchResult,
-		"document": result.PersistedDocument,
+		"document": result.PersistedDocument, "representation": result.Representation,
 	})
 }
 
