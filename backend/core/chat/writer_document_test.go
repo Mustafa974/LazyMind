@@ -73,6 +73,15 @@ func TestWriterProviderSelection(t *testing.T) {
 	if !ok || len(config) != 1 || config["notion"] != "notion-token" {
 		t.Fatalf("unexpected provider config: %#v, %v", config, ok)
 	}
+	for provider, want := range map[string]bool{
+		"feishu":   true,
+		"notion":   true,
+		"obsidian": false,
+	} {
+		if got := writerProviderRequiresToolConfig(provider); got != want {
+			t.Fatalf("writerProviderRequiresToolConfig(%q) = %v, want %v", provider, got, want)
+		}
+	}
 }
 
 func TestWriteBackWriterDocumentRequiresFeishuConfiguration(t *testing.T) {
