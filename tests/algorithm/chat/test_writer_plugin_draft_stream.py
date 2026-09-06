@@ -5,7 +5,6 @@ import json
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-
 import pytest
 
 
@@ -59,6 +58,95 @@ def test_writer_retrieve_uses_configured_search_provider(monkeypatch):
     assert result == [{'title': 'evidence'}]
 
 
+def test_sync_writer_documents_returns_representation_and_target():
+    from lazymind.chat.engine.tools import writer
+
+    document = writer.WriterDocument(
+        document_id='doc-1',
+        stage='final',
+        title='Report',
+        provider_binding={
+            'provider': 'feishu',
+            'document_id': 'doc-1',
+            'uri': 'https://example.feishu.cn/docx/doc-1',
+        },
+    )
+
+    result = writer.sync_writer_documents(document.model_dump(), document.model_dump())
+
+    assert result['representation'] == 'ir'
+    assert result['target_document'] == {
+        'doc_id': 'doc-1',
+        'uri': 'https://example.feishu.cn/docx/doc-1',
+        'adapter': 'feishu',
+    }
+
+
+def test_write_document_reloads_provider_target(monkeypatch):
+    from lazymind.chat.engine.tools import writer
+
+    document = writer.WriterDocument(
+        document_id='writer-doc',
+        stage='final',
+        title='Report',
+        blocks=[writer.WriterBlock(
+            node_id='image-1',
+            type='image',
+            content='Architecture',
+            references=[{'type': 'media_asset', 'id': 'asset-1'}],
+        )],
+    )
+    captured = {}
+    refreshed_target = {
+        'doc_id': 'note-1',
+        'uri': 'local-markdown://vault/note.md',
+        'adapter': 'local-markdown',
+        'meta': {'source_hash': 'fresh'},
+    }
+
+    class FakeResourceTools:
+        def __init__(self, **_kwargs):
+            pass
+
+        def replace_document(self, content, _target, assets):
+            captured['content'] = content
+            captured['assets'] = assets
+            return {'data': {
+                'doc_id': 'note-1',
+                'local_path': '/tmp/vault/note.md',
+                'warnings': ['source changed'],
+            }}
+
+        def load_document(self, target):
+            captured['reload_target'] = target
+            return {
+                'data': '# Saved\n',
+                'target_document': refreshed_target,
+                'representation': 'markdown',
+            }
+
+    monkeypatch.setattr(writer, 'WriterResourceTools', FakeResourceTools)
+    monkeypatch.setattr(writer, '_primary_data', lambda result: result['data'])
+    monkeypatch.setattr(writer, '_result_data', lambda result, key: result[key])
+
+    payload = json.loads(writer.WriterResourceToolkit().replace_document(
+        content_json=json.dumps(document.model_dump()),
+        source_document_json='',
+        target_document_json=json.dumps({
+            'uri': 'local-markdown://vault/note.md',
+            'adapter': 'local-markdown',
+        }),
+    ))
+
+    assert isinstance(captured['content'], writer.WriterDocument)
+    assert captured['assets'] is None
+    assert captured['reload_target'].meta['stage'] == 'final'
+    assert payload['draft_document'] == '# Saved\n'
+    assert payload['target_document'] == refreshed_target
+    assert payload['publish_result']['local_path'] == '/tmp/vault/note.md'
+    assert payload['publish_result']['warnings'] == ['source changed']
+
+
 @pytest.mark.parametrize(
     ('query', 'suggested_operation', 'expected_operation'),
     [
@@ -88,6 +176,192 @@ def test_prepare_control_distinguishes_reference_from_edit_source(
     )
 
     assert (operation, target_stage) == (expected_operation, 'document')
+
+
+def _prepare_with_document_locator(
+    monkeypatch,
+    user_input,
+    provider_locator,
+    absolute_locator,
+    *,
+    source_filename='',
+    history_files_per_turn=None,
+):
+    tools = _load_tools_module()
+    captured = {}
+    context = SimpleNamespace(
+        workspace_path='/tmp',
+        params={
+            'history_files_per_turn': history_files_per_turn or {},
+            'session_id': 'writer-session',
+        },
+        emit=lambda _event: None,
+    )
+    monkeypatch.setattr(tools, '_authoritative_writer_user_input', lambda _default: user_input)
+    monkeypatch.setattr(tools, '_verified_knowledge_text', lambda value: value)
+    monkeypatch.setattr(tools, 'require_context', lambda: context)
+    monkeypatch.setattr(tools, '_provider_document_locator', lambda _value: provider_locator)
+    monkeypatch.setattr(
+        tools,
+        '_resolve_prepare_control',
+        lambda *_args, **_kwargs: ('rewrite_document', 'document'),
+    )
+    monkeypatch.setattr(tools, 'writer_resolve_command', lambda **_kwargs: 'writer-command')
+    monkeypatch.setattr(
+        tools,
+        '_load_writer_command',
+        lambda _path: SimpleNamespace(structure_mode='flat', next_step='write_document'),
+    )
+
+    def load_document(*, user_input, stage):
+        captured['load_input'] = user_input
+        captured['load_stage'] = stage
+        return {
+            'source_document': 'source.md',
+            'target_document': 'target.json',
+            'representation': 'markdown',
+        }
+
+    monkeypatch.setattr(tools, 'writer_load_document', load_document)
+    monkeypatch.setattr(tools, 'writer_build_writing_task', lambda **_kwargs: 'task.json')
+    monkeypatch.setattr(
+        tools,
+        'writer_collect_available_media',
+        lambda **_kwargs: {
+            'media_assets': 'media.json',
+            'profile_input_resources': 'profiles.json',
+            'warnings': [],
+        },
+    )
+    monkeypatch.setattr(tools, 'writer_prepare_loaded_document', lambda *args: args[0])
+    monkeypatch.setattr(tools, 'writer_profile_resources', lambda **_kwargs: 'resources.json')
+    monkeypatch.setattr(tools, 'writer_create_writing_context', lambda **_kwargs: 'context.json')
+    monkeypatch.setattr(tools, '_save_draft_workspace_artifacts', lambda _result: [])
+
+    tools.writer_prepare_workspace(
+        operation='rewrite_document',
+        source_filename=source_filename,
+    )
+    return captured
+
+
+@pytest.mark.parametrize(
+    'user_input',
+    [
+        '使用写作工作流，改写 https://example.feishu.cn/docx/abc',
+        '使用写作工作流，改写 https://www.notion.so/page-abc',
+    ],
+)
+def test_prepare_does_not_call_obsidian_fallback_for_existing_provider_locator(monkeypatch, user_input):
+    captured = _prepare_with_document_locator(
+        monkeypatch,
+        user_input,
+        user_input.split()[-1],
+        'obsidian://vlt_test/note.md',
+    )
+
+    assert captured['load_input'] == user_input
+    assert captured['load_stage'] == 'draft'
+
+
+def test_prepare_loads_a_resolved_obsidian_absolute_path_through_the_generic_locator(monkeypatch):
+    user_input = '使用写作工作流，改写 /Users/test/Documents/obs/note.md'
+    canonical_uri = 'obsidian://vlt_test/note.md'
+    captured = _prepare_with_document_locator(
+        monkeypatch,
+        user_input,
+        canonical_uri,
+        canonical_uri,
+    )
+
+    assert captured['load_input'] == user_input
+    assert captured['load_stage'] == 'draft'
+
+
+@pytest.mark.parametrize(
+    ('user_input', 'provider_locator', 'absolute_locator', 'expected_load_input'),
+    [
+        (
+            '使用写作工作流，改写 https://example.feishu.cn/docx/abc',
+            'https://example.feishu.cn/docx/abc',
+            '',
+            '使用写作工作流，改写 https://example.feishu.cn/docx/abc',
+        ),
+        (
+            '使用写作工作流，改写 /Users/test/Documents/obs/note.md',
+            'obsidian://vlt_test/note.md',
+            'obsidian://vlt_test/note.md',
+            '使用写作工作流，改写 /Users/test/Documents/obs/note.md',
+        ),
+    ],
+)
+def test_prepare_ignores_unbacked_source_filename_for_provider_document(
+    monkeypatch,
+    user_input,
+    provider_locator,
+    absolute_locator,
+    expected_load_input,
+):
+    captured = _prepare_with_document_locator(
+        monkeypatch,
+        user_input,
+        provider_locator,
+        absolute_locator,
+        source_filename='note.md',
+    )
+
+    assert captured['load_input'] == expected_load_input
+
+
+def test_prepare_rejects_uploaded_source_filename_alongside_provider_document(monkeypatch):
+    tools = _load_tools_module()
+    context = SimpleNamespace(
+        workspace_path='/tmp',
+        params={
+            'history_files_per_turn': {'1': ['/tmp/note.md']},
+            'session_id': 'writer-session',
+        },
+        emit=lambda _event: None,
+    )
+    monkeypatch.setattr(
+        tools,
+        '_authoritative_writer_user_input',
+        lambda _default: '使用写作工作流，改写 https://example.feishu.cn/docx/abc',
+    )
+    monkeypatch.setattr(tools, '_verified_knowledge_text', lambda value: value)
+    monkeypatch.setattr(tools, 'require_context', lambda: context)
+    monkeypatch.setattr(
+        tools,
+        '_provider_document_locator',
+        lambda _value: 'https://example.feishu.cn/docx/abc',
+    )
+
+    with pytest.raises(ValueError, match='both a provider document locator'):
+        tools.writer_prepare_workspace(
+            operation='rewrite_document',
+            source_filename='note.md',
+        )
+
+
+def test_prepare_keeps_the_existing_input_for_a_non_vault_absolute_path(monkeypatch):
+    user_input = '使用写作工作流，改写 /Users/test/Desktop/ordinary.md'
+    captured = _prepare_with_document_locator(monkeypatch, user_input, '', '')
+
+    assert captured['load_input'] == user_input
+
+
+def test_provider_document_locator_uses_registered_provider_extractor(monkeypatch):
+    tools = _load_tools_module()
+    target = SimpleNamespace(uri='obsidian://vlt_test/note.md')
+    provider = SimpleNamespace(
+        extract_locator_from_text=lambda _value: target.uri,
+        resolve=lambda _value: target,
+    )
+    monkeypatch.setattr(tools, 'match_writer_provider', lambda _value: provider)
+
+    assert tools._provider_document_locator(
+        '使用写作工作流，改写 /Users/test/Documents/obs/note.md',
+    ) == target.uri
 
 
 def test_write_document_revision_emits_markdown_draft_stream(monkeypatch, tmp_path):
@@ -657,3 +931,22 @@ def test_draft_workspace_revise_uses_writing_task_representation(
 
     assert result['status'] == 'completed'
     assert calls == [expected_writer]
+
+
+def test_save_publish_payload_persists_updated_provider_target(tmp_path):
+    tools = _load_tools_module()
+    target = {
+        'doc_id': 'vault:note.md',
+        'uri': 'obsidian://vault/note.md',
+        'adapter': 'obsidian',
+        'meta': {'obsidian_bridge': {'source_hash': 'published-hash'}},
+    }
+
+    saved = tools._save_publish_payload({
+        'provider': 'local-markdown',
+        'publish_result': {'success': True},
+        'draft_document': '# Note\n',
+        'target_document': target,
+    }, tmp_path)
+
+    assert tools._read_json_file(saved['publish_result'])['target_document'] == target

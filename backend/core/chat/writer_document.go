@@ -93,7 +93,7 @@ func writerDocumentProvider(values ...json.RawMessage) string {
 		if provider == "" {
 			provider = strings.ToLower(strings.TrimSpace(identity.Adapter))
 		}
-		if provider == "feishu" || provider == "notion" {
+		if provider == "feishu" || provider == "notion" || provider == "obsidian" {
 			return provider
 		}
 	}
@@ -106,6 +106,15 @@ func writerProviderToolConfig(toolConfig map[string]any, provider string) (map[s
 		return nil, false
 	}
 	return map[string]any{provider: credential}, true
+}
+
+func writerProviderRequiresToolConfig(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "feishu", "notion":
+		return true
+	default:
+		return false
+	}
 }
 
 func writerDocumentSlot(slot string) (string, bool) {
@@ -188,18 +197,22 @@ func SyncWriterDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	toolConfig, err := loadChatToolConfig(ctx, db, userID)
-	if err != nil {
-		common.ReplyErr(w, "load cloud document authorization failed", http.StatusBadGateway)
-		return
-	}
 	provider := writerDocumentProvider(body.SourceDocument, body.RevisedDocument)
-	providerConfig, ok := writerProviderToolConfig(toolConfig, provider)
-	if !ok {
-		common.ReplyErrWithData(w, "cloud document authorization required", map[string]any{
-			"status": provider + "_configuration_required", "provider": provider,
-		}, http.StatusUnauthorized)
-		return
+	var providerConfig map[string]any
+	if writerProviderRequiresToolConfig(provider) {
+		toolConfig, err := loadChatToolConfig(ctx, db, userID)
+		if err != nil {
+			common.ReplyErr(w, "load cloud document authorization failed", http.StatusBadGateway)
+			return
+		}
+		var ok bool
+		providerConfig, ok = writerProviderToolConfig(toolConfig, provider)
+		if !ok {
+			common.ReplyErrWithData(w, "cloud document authorization required", map[string]any{
+				"status": provider + "_configuration_required", "provider": provider,
+			}, http.StatusUnauthorized)
+			return
+		}
 	}
 	result, status, err := algo.SyncWriterDocument(ctx, algo.WriterDocumentSyncRequest{
 		WorkflowID: session.WorkflowID, RevisionID: session.WorkflowRevisionID,
@@ -541,7 +554,7 @@ func SaveWriterDocument(w http.ResponseWriter, r *http.Request) {
 }
 
 // WriteBackWriterDocument writes the active IR or Markdown draft to the selected
-// cloud-document provider and saves the provider-confirmed IR as a new revision.
+// provider and saves the provider-confirmed document as a new revision.
 func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 	sessionID := common.PathVar(r, "session_id")
 	if sessionID == "" {
@@ -605,6 +618,7 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 		}, http.StatusConflict)
 		return
 	}
+	requestedProvider := strings.ToLower(strings.TrimSpace(body.Provider))
 
 	syncRequest := algo.WriterDocumentSyncRequest{
 		WorkflowID: session.WorkflowID, RevisionID: session.WorkflowRevisionID,
@@ -656,14 +670,21 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 			common.ReplyErr(w, "load resolved_media_assets failed", http.StatusInternalServerError)
 			return
 		}
-		if writerDocumentIsUnbound(revisedDocument) {
+		boundProvider := writerDocumentProvider(revisedDocument)
+		provider := requestedProvider
+		if provider == "" {
+			provider = boundProvider
+		}
+		if writerDocumentIsUnbound(revisedDocument) || provider != boundProvider {
+			// A first publish or cross-provider publish must not carry the
+			// original provider's block-level baseline to the destination.
 			syncRequest.RevisedDocument = revisedDocument
 		} else {
 			baseline, baselineErr := loadWriterWriteBackBaseline(
 				ctx, db, sessionID, slot, draft.Revision.Revision,
 			)
 			if baselineErr != nil {
-				common.ReplyErrWithData(w, "initial Feishu write-back has not completed", map[string]any{
+				common.ReplyErrWithData(w, "initial provider write-back has not completed", map[string]any{
 					"status": "baseline_not_found", "current_revision": draft.Revision.Revision,
 				}, http.StatusConflict)
 				return
@@ -691,21 +712,16 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 			syncRequest.RevisedDocument = revisedDocument
 		}
 	}
-	toolConfig, err := loadChatToolConfig(ctx, db, userID)
-	if err != nil {
-		common.ReplyErr(w, "load cloud document authorization failed", http.StatusBadGateway)
-		return
-	}
 	boundProvider := writerDocumentProvider(
 		syncRequest.SourceDocument,
 		syncRequest.RevisedDocument,
 		syncRequest.TargetDocument,
 	)
-	provider := strings.ToLower(strings.TrimSpace(body.Provider))
+	provider := requestedProvider
 	if provider == "" {
 		provider = boundProvider
 	}
-	if provider != "feishu" && provider != "notion" {
+	if provider != "feishu" && provider != "notion" && provider != "obsidian" {
 		common.ReplyErr(w, "unsupported writer document provider", http.StatusBadRequest)
 		return
 	}
@@ -722,14 +738,21 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 		syncRequest.TargetDocument = nil
 	}
 	syncRequest.Adapter = provider
-	providerConfig, ok := writerProviderToolConfig(toolConfig, provider)
-	if !ok {
-		common.ReplyErrWithData(w, "cloud document authorization required", map[string]any{
-			"status": provider + "_configuration_required", "provider": provider,
-		}, http.StatusBadRequest)
-		return
+	if writerProviderRequiresToolConfig(provider) {
+		toolConfig, configErr := loadChatToolConfig(ctx, db, userID)
+		if configErr != nil {
+			common.ReplyErr(w, "load cloud document authorization failed", http.StatusBadGateway)
+			return
+		}
+		providerConfig, ok := writerProviderToolConfig(toolConfig, provider)
+		if !ok {
+			common.ReplyErrWithData(w, "cloud document authorization required", map[string]any{
+				"status": provider + "_configuration_required", "provider": provider,
+			}, http.StatusBadRequest)
+			return
+		}
+		syncRequest.ToolConfig = providerConfig
 	}
-	syncRequest.ToolConfig = providerConfig
 	result, status, err := algo.SyncWriterDocument(ctx, syncRequest)
 	if err != nil {
 		common.ReplyErrWithData(w, "writer document write-back failed", map[string]any{
@@ -742,19 +765,36 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "writer document write-back failed", http.StatusBadGateway)
 		return
 	}
+	if len(result.TargetDocument) > 0 {
+		if _, err := workflow.SaveWriterTargetDocument(
+			ctx, db, sessionID, draft.Revision.StepID, draft.Revision.Attempt, provider, result.TargetDocument,
+		); err != nil {
+			common.ReplyErrWithData(w, "writer target save failed", map[string]any{
+				"status": "artifact_save_failed", "provider_synced": true,
+				"artifact_saved": false,
+			}, http.StatusInternalServerError)
+			return
+		}
+	}
 
+	representation := strings.ToLower(strings.TrimSpace(result.Representation))
+	schema := ""
+	switch representation {
+	case "ir":
+		schema = "lazyllm.tools.writer.data_models.writer_ir.WriterDocument"
+	case "markdown":
+		schema = "text/markdown"
+	default:
+		common.ReplyErr(w, "writer returned unsupported persisted document representation", http.StatusBadGateway)
+		return
+	}
 	artifact, err := json.Marshal(map[string]any{
-		"schema":         "lazyllm.tools.writer.data_models.writer_ir.WriterDocument",
+		"schema":         schema,
 		"schema_version": "0.1",
 		"data":           result.PersistedDocument,
 		"meta": map[string]any{
 			"created_by": "writer-write-back-api",
 			"created_at": time.Now().UTC().Format(time.RFC3339Nano),
-			"lazymind_provider_sync": map[string]any{
-				"confirmed": true,
-				"provider":  provider,
-				"source":    "manual",
-			},
 		},
 	})
 	if err != nil {
@@ -790,8 +830,9 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 	common.ReplyOK(w, map[string]any{
 		"status": "synced", "revision": revision.Revision,
 		"provider_synced": true, "artifact_saved": true,
-		"patch_result": result.PatchResult,
-		"document":     result.PersistedDocument,
+		"patch_result":   result.PatchResult,
+		"document":       result.PersistedDocument,
+		"representation": representation,
 	})
 }
 
@@ -1068,41 +1109,7 @@ func normalizeWriterBlockForSync(value any) {
 }
 
 func writerArtifactRevisionSynced(artifact *selectedWriterArtifact) bool {
-	if artifact == nil {
-		return false
-	}
-	if artifact.Revision.ChangeSource == "provider_sync" {
-		return true
-	}
-	return (artifact.Revision.ChangeSource == "ai" || artifact.Revision.ChangeSource == "host") &&
-		writerArtifactEnvelopeProviderSynced(artifact.Value)
-}
-
-func writerArtifactEnvelopeProviderSynced(value json.RawMessage) bool {
-	var record map[string]json.RawMessage
-	if json.Unmarshal(value, &record) != nil {
-		return false
-	}
-	var metadata map[string]json.RawMessage
-	if json.Unmarshal(record["meta"], &metadata) == nil {
-		var marker struct {
-			Confirmed bool `json:"confirmed"`
-		}
-		if json.Unmarshal(metadata["lazymind_provider_sync"], &marker) == nil && marker.Confirmed {
-			return true
-		}
-	}
-	var path string
-	_ = json.Unmarshal(record["path"], &path)
-	if path == "" || strings.ToLower(filepath.Ext(path)) != ".lmd" {
-		return false
-	}
-	cleanPath := filepath.Clean(path)
-	if !writerArtifactPathAllowed(cleanPath) {
-		return false
-	}
-	content, err := os.ReadFile(cleanPath)
-	return err == nil && writerArtifactEnvelopeProviderSynced(content)
+	return artifact != nil && artifact.Revision.ChangeSource == "provider_sync"
 }
 
 func writerArtifactData(value json.RawMessage, requireLMD bool) (json.RawMessage, error) {
@@ -1235,7 +1242,7 @@ func writerSyncReply(
 	common.ReplyOK(w, map[string]any{
 		"status": status, "revision": revision, "provider_synced": true,
 		"artifact_saved": artifactSaved, "patch_result": result.PatchResult,
-		"document": result.PersistedDocument,
+		"document": result.PersistedDocument, "representation": result.Representation,
 	})
 }
 

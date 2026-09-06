@@ -25,6 +25,7 @@ func TestWriterSyncReplyUsesProviderSynced(t *testing.T) {
 		PersistedDocument: json.RawMessage(
 			`{"document_id":"doc-1","blocks":[]}`,
 		),
+		Representation: "ir",
 	})
 
 	body := recorder.Body.String()
@@ -33,6 +34,9 @@ func TestWriterSyncReplyUsesProviderSynced(t *testing.T) {
 	}
 	if strings.Contains(body, "feishu_synced") {
 		t.Fatalf("legacy sync field leaked into response: %s", body)
+	}
+	if !strings.Contains(body, `"representation":"ir"`) {
+		t.Fatalf("representation missing from response: %s", body)
 	}
 }
 
@@ -72,6 +76,15 @@ func TestWriterProviderSelection(t *testing.T) {
 	}, "notion")
 	if !ok || len(config) != 1 || config["notion"] != "notion-token" {
 		t.Fatalf("unexpected provider config: %#v, %v", config, ok)
+	}
+	for provider, want := range map[string]bool{
+		"feishu":   true,
+		"notion":   true,
+		"obsidian": false,
+	} {
+		if got := writerProviderRequiresToolConfig(provider); got != want {
+			t.Fatalf("writerProviderRequiresToolConfig(%q) = %v, want %v", provider, got, want)
+		}
 	}
 }
 
@@ -520,9 +533,9 @@ func TestLoadWriterWriteBackBaseline_UsesSourceDocumentForInitialSync(t *testing
 func TestLoadWriterWriteBackBaseline_PrefersLatestSyncedDraft(t *testing.T) {
 	db := orm.MigrateTestDB(t, &orm.WorkflowSlotRevision{})
 	source := json.RawMessage(`{"data":{"document_id":"source-doc","provider_binding":{"provider":"feishu","document_id":"source-doc"}}}`)
-	syncedDraft := json.RawMessage(`{"data":{"document_id":"synced-doc","provider_binding":{"provider":"feishu","document_id":"synced-doc"}},"meta":{"lazymind_provider_sync":{"confirmed":true}}}`)
+	syncedDraft := json.RawMessage(`{"data":{"document_id":"synced-doc","provider_binding":{"provider":"feishu","document_id":"synced-doc"}}}`)
 	seedWriterRevision(t, db, "source", "source_document", 1, true, "ai", source)
-	seedWriterRevision(t, db, "draft-1", "flat_draft_document", 1, false, "host", syncedDraft)
+	seedWriterRevision(t, db, "draft-1", "flat_draft_document", 1, false, "provider_sync", syncedDraft)
 	seedWriterRevision(t, db, "draft-2", "flat_draft_document", 2, false, "human", syncedDraft)
 	seedWriterRevision(t, db, "draft-3", "flat_draft_document", 3, true, "human", syncedDraft)
 

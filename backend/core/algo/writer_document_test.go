@@ -12,12 +12,16 @@ func TestWriterDocumentSyncResponseUsesProviderSynced(t *testing.T) {
 		"success":true,
 		"changed":true,
 		"provider_synced":true,
+		"representation":"markdown",
 		"persisted_document":{"document_id":"doc-1"}
 	}`), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
 	if !response.ProviderSynced {
 		t.Fatal("provider_synced was not decoded")
+	}
+	if response.Representation != "markdown" {
+		t.Fatalf("representation = %q, want markdown", response.Representation)
 	}
 
 	encoded, err := json.Marshal(response)

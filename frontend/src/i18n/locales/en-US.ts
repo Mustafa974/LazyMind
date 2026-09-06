@@ -2174,6 +2174,9 @@ const enUS = {
       writeToCloudDocument: "Write to cloud document",
       writingToCloudDocument: "Writing...",
       writeBackSuccess: "Written back to cloud document",
+      obsidianWriteBackSuccess: "Saved to Obsidian",
+      obsidianWriteBackOverwroteChangedSource: "Saved to Obsidian; newer note changes were overwritten",
+      obsidianAutoWriteBackSuccess: "Automatically saved to the original Obsidian file",
       writeBackFailed: "Write-back failed. Please retry.",
       feishuConfigurationRequired:
         "No usable Feishu authorization is available. Your content has been preserved. Check the Feishu configuration and try again.",

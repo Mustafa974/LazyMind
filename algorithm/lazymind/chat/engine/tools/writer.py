@@ -544,14 +544,19 @@ def sync_writer_documents(
         )
     candidate = _merge_provider_state(revised, persisted)
     candidate.ui_editable = True
-    return {
+    response = {
         'success': result.success,
         'changed': changed,
         'provider_synced': result.success,
         'patch_set': patch.model_dump(),
         'patch_result': result.model_dump(),
         'persisted_document': candidate.model_dump(),
+        'representation': 'ir',
     }
+    target = _target_from_document(candidate)
+    if target is not None:
+        response['target_document'] = target.model_dump(exclude_defaults=True)
+    return response
 
 
 def _provider_targets(user_input: str, *, stage: str | None = None) -> list[TargetDocument]:
@@ -569,6 +574,19 @@ def _provider_targets(user_input: str, *, stage: str | None = None) -> list[Targ
         if stage is not None:
             target.meta = {**target.meta, 'stage': stage}
         targets.append(target)
+    if targets:
+        return targets
+    try:
+        provider = match_writer_provider(user_input)
+        locator = str(provider.extract_locator_from_text(user_input) or '').strip()
+        target = provider.resolve(locator or user_input)
+    except ValueError as exc:
+        if str(exc).startswith('No Writer provider matches locator'):
+            return targets
+        raise
+    if stage is not None:
+        target.meta = {**target.meta, 'stage': stage}
+    targets.append(target)
     return targets
 
 
@@ -654,10 +672,6 @@ def _published_link(target: TargetDocument) -> str:
         target.meta.get('browser_url')
         or (target.uri if target.uri.startswith(('http://', 'https://')) else '')
     ).strip()
-    if not link:
-        raise ToolExecutionError(
-            'Provider write succeeded but no browser URL was returned.'
-        )
     return link
 
 
@@ -2397,6 +2411,27 @@ class WriterToolkitBase:
             'representation': result.get('representation'),
         })
 
+    def prepare_loaded_document(
+        self,
+        source_document_json: str,
+        target_document_json: str,
+        media_assets_json: str = '',
+    ) -> str:
+        """Prepare loaded provider content after the shared media library is available."""
+        root = _temp_root()
+        result = WriterResourceTools(
+            llm=None, artifact_store=str(root),
+        ).prepare_loaded_document(
+            source_document=source_document_json,
+            target_document=target_document_json,
+            media_assets=media_assets_json or None,
+        )
+        return _json_dumps({
+            'source_document': _primary_data(result),
+            'target_document': _result_data(result, 'target_document'),
+            'representation': result.get('representation'),
+        })
+
     def create_document(self, title: str, parent_uri: str = '', adapter: str = '') -> str:
         """Create an empty provider document and return its target binding."""
         root = _temp_root()
@@ -2452,6 +2487,7 @@ class WriterToolkitBase:
             'draft_document': published.model_dump(exclude_defaults=True),
             'provider': str(target.adapter or ''),
             'representation': 'ir',
+            'target_document': target.model_dump(exclude_defaults=True),
             'published_link': _published_link(target),
         })
 
@@ -2523,10 +2559,8 @@ class WriterToolkitBase:
         )
         if not isinstance(publish_document, (WriterDocument, str)):
             raise ToolExecutionError('content_json must contain Writer IR or Markdown.')
+        media_assets = _json_loads(media_assets_json, {}) if media_assets_json.strip() else None
         resource = WriterResourceTools(llm=None, artifact_store=str(root))
-        media_assets = (
-            _json_loads(media_assets_json, {}) if media_assets_json.strip() else None
-        )
         write_result = (
             resource.replace_document(publish_document, target, media_assets)
             if mode == 'replace'
@@ -2547,17 +2581,22 @@ class WriterToolkitBase:
             published = _set_document_editable(published, stage='final')
         else:
             published = published_value
-        return _json_dumps({
-            'publish_result': _primary_data(write_result),
+        representation = refreshed.get('representation')
+        resolved_target = TargetDocument.model_validate(_result_data(refreshed, 'target_document'))
+        publish_result = _primary_data(write_result)
+        response = {
+            'publish_result': publish_result,
             'draft_document': (
                 published.model_dump(exclude_defaults=True)
                 if isinstance(published, WriterDocument)
                 else published
             ),
-            'representation': refreshed.get('representation'),
-            'provider': str(target.adapter or ''),
-            'published_link': _published_link(target),
-        })
+            'representation': representation,
+            'provider': str(resolved_target.adapter or target.adapter or ''),
+            'target_document': resolved_target.model_dump(exclude_defaults=True),
+            'published_link': _published_link(resolved_target),
+        }
+        return _json_dumps(response)
 
 
 class WriterCreateToolkit(WriterToolkitBase):
@@ -2601,6 +2640,6 @@ class WriterResourceToolkit(WriterToolkitBase):
     """Load and persist WriterDocuments through provider-neutral resource tools."""
 
     __public_apis__ = [
-        'load_document', 'create_document', 'publish_revision',
+        'load_document', 'prepare_loaded_document', 'create_document', 'publish_revision',
         'replace_document', 'append_document',
     ]

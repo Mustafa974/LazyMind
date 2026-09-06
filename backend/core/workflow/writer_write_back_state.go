@@ -37,14 +37,16 @@ type writerWriteBackInfo struct {
 }
 
 // enrichWriterWriteBackSlots exposes the server-owned delivery state for the
-// selected Writer draft. A source_document remains authoritative when present;
-// ordinary Markdown drafts can create the default provider document on first delivery.
+// selected Writer draft. A saved target remains authoritative for Markdown it
+// has already received; other sources keep their normal binding.
 func enrichWriterWriteBackSlots(ctx context.Context, db *gorm.DB, sessionID string, slots []slotDTO) {
-	var source *slotDTO
+	var source, target *slotDTO
 	for i := range slots {
 		if slots[i].SlotID == "source_document" && slots[i].ListIndex == nil {
 			source = &slots[i]
-			break
+		}
+		if slots[i].SlotID == "target_document" && slots[i].ListIndex == nil {
+			target = &slots[i]
 		}
 	}
 
@@ -53,7 +55,7 @@ func enrichWriterWriteBackSlots(ctx context.Context, db *gorm.DB, sessionID stri
 		if (slot.SlotID != "draft_document" && slot.SlotID != "flat_draft_document") || slot.ListIndex != nil {
 			continue
 		}
-		info := writerWriteBackState(ctx, db, sessionID, *slot, source)
+		info := writerWriteBackState(ctx, db, sessionID, *slot, source, target)
 		slot.WriteBackState = info.State
 		slot.WriteBackReady = info.State != writerWriteBackBlocked
 		slot.WriteBackDirty = info.State == writerWriteBackInitialDelivery || info.State == writerWriteBackSyncedDirty
@@ -70,6 +72,7 @@ func writerWriteBackState(
 	sessionID string,
 	draft slotDTO,
 	source *slotDTO,
+	target *slotDTO,
 ) writerWriteBackInfo {
 	info := writerWriteBackInfo{State: writerWriteBackBlocked}
 	if draft.Revision <= 0 {
@@ -83,7 +86,15 @@ func writerWriteBackState(
 
 	var binding writerProviderBinding
 	hasBinding := false
-	if source != nil {
+	// Markdown does not carry a Writer IR provider binding. Once it has been
+	// published, prefer its saved target over the original source provider.
+	if target != nil && writerArtifactIsMarkdown(draftValue) {
+		targetValue, targetErr := loadWriterSlotDTOValue(ctx, db, sessionID, *target)
+		if targetErr == nil {
+			binding, hasBinding = writerTargetBindingFromArtifact(targetValue)
+		}
+	}
+	if !hasBinding && source != nil {
 		sourceValue, sourceErr := loadWriterSlotDTOValue(ctx, db, sessionID, *source)
 		if sourceErr != nil {
 			return info
@@ -101,14 +112,14 @@ func writerWriteBackState(
 			}
 			return info
 		}
-	} else {
+	} else if !hasBinding {
 		binding, hasBinding = writerProviderBindingFromArtifact(draftValue)
 	}
 	if hasBinding {
 		applyWriterProviderBinding(&info, binding)
 	}
 
-	if writerSlotRevisionSynced(draft.ChangeSource, draftValue) {
+	if writerSlotRevisionSynced(draft.ChangeSource) {
 		if !hasBinding {
 			return info
 		}
@@ -126,7 +137,7 @@ func writerWriteBackState(
 	}
 	for _, revision := range revisions {
 		value, err := LoadSlotRevisionValue(ctx, db, revision)
-		if err == nil && writerSlotRevisionSynced(revision.ChangeSource, value) {
+		if err == nil && writerSlotRevisionSynced(revision.ChangeSource) {
 			if !hasBinding {
 				binding, hasBinding = writerProviderBindingFromArtifact(value)
 				if hasBinding {
@@ -169,25 +180,8 @@ func loadWriterSlotDTOValue(ctx context.Context, db *gorm.DB, sessionID string, 
 	})
 }
 
-func writerSlotRevisionSynced(changeSource string, value json.RawMessage) bool {
-	if changeSource == "provider_sync" {
-		return true
-	}
-	if changeSource != "ai" && changeSource != "host" {
-		return false
-	}
-	resolved, ok := resolveWriterArtifact(value)
-	if !ok {
-		return false
-	}
-	var envelope struct {
-		Meta struct {
-			ProviderSync struct {
-				Confirmed bool `json:"confirmed"`
-			} `json:"lazymind_provider_sync"`
-		} `json:"meta"`
-	}
-	return json.Unmarshal(resolved, &envelope) == nil && envelope.Meta.ProviderSync.Confirmed
+func writerSlotRevisionSynced(changeSource string) bool {
+	return changeSource == "provider_sync"
 }
 
 func writerProviderBindingFromArtifact(value json.RawMessage) (writerProviderBinding, bool) {
@@ -212,6 +206,40 @@ func writerProviderBindingFromArtifact(value json.RawMessage) (writerProviderBin
 		return writerProviderBinding{}, false
 	}
 	return identity.ProviderBinding, true
+}
+
+func writerTargetBindingFromArtifact(value json.RawMessage) (writerProviderBinding, bool) {
+	resolved, ok := resolveWriterArtifact(value)
+	if !ok {
+		return writerProviderBinding{}, false
+	}
+	var envelope struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if json.Unmarshal(resolved, &envelope) != nil {
+		return writerProviderBinding{}, false
+	}
+	target := resolved
+	if len(envelope.Data) > 0 {
+		target = envelope.Data
+	}
+	var identity struct {
+		DocumentID string `json:"doc_id"`
+		URI        string `json:"uri"`
+		Adapter    string `json:"adapter"`
+	}
+	if json.Unmarshal(target, &identity) != nil {
+		return writerProviderBinding{}, false
+	}
+	provider := strings.ToLower(strings.TrimSpace(identity.Adapter))
+	if !writerProviderSupported(provider) || strings.TrimSpace(identity.DocumentID) == "" {
+		return writerProviderBinding{}, false
+	}
+	return writerProviderBinding{
+		Provider:   provider,
+		DocumentID: identity.DocumentID,
+		URI:        identity.URI,
+	}, true
 }
 
 func resolveWriterArtifact(value json.RawMessage) (json.RawMessage, bool) {
@@ -300,7 +328,7 @@ func writerArtifactPathAllowed(path string) bool {
 
 func writerProviderSupported(provider string) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "feishu", "notion":
+	case "feishu", "notion", "obsidian":
 		return true
 	default:
 		return false

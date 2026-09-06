@@ -430,6 +430,14 @@ def _provider_document_locator(value: str) -> str:
         except ValueError:
             continue
         return locator
+    try:
+        provider = match_writer_provider(value or '')
+        locator = str(provider.extract_locator_from_text(value or '') or '').strip()
+        return str(provider.resolve(locator or value or '').uri or '').strip()
+    except ValueError as exc:
+        if str(exc).startswith('No Writer provider matches locator'):
+            return ''
+        raise
     return ''
 
 
@@ -743,12 +751,18 @@ def _markdown_filename(title: str) -> str:
 def _save_publish_payload(payload: dict, root: Path) -> dict:
     draft_document = payload.get('draft_document') or {}
     publish_result = payload.get('publish_result') or {}
+    target_document = payload.get('target_document')
     if isinstance(publish_result, dict):
         publish_result = {
             **publish_result,
             'success': bool(publish_result.get('success', draft_document)),
         }
-    return {
+    if isinstance(target_document, dict):
+        publish_result = {
+            **publish_result,
+            'target_document': target_document,
+        }
+    saved = {
         'publish_result': _save_json_artifact(
             'publish_result',
             json.dumps(publish_result, ensure_ascii=False),
@@ -760,16 +774,10 @@ def _save_publish_payload(payload: dict, root: Path) -> dict:
             draft_document,
             editable=True,
             directory=root,
-            extra_meta={
-                'lazymind_provider_sync': {
-                    'confirmed': True,
-                    'provider': str(payload.get('provider') or ''),
-                    'source': 'initial_auto',
-                },
-            },
         ),
         'published_link': str(payload.get('published_link') or ''),
     }
+    return saved
 
 
 def writer_build_writing_task(query: str, representation: str = 'markdown') -> str:
@@ -844,6 +852,26 @@ def writer_load_document(user_input: str, stage: str = 'final') -> dict:
         ),
         'representation': str(payload.get('representation') or ''),
     }
+
+
+def writer_prepare_loaded_document(
+    source_document_path: str,
+    target_document_path: str,
+    media_assets_path: str,
+) -> str:
+    payload = _json_loads(
+        WriterResourceToolkit().prepare_loaded_document(
+            source_document_json=source_document_path,
+            target_document_json=target_document_path,
+            media_assets_json=media_assets_path,
+        ),
+        {},
+    )
+    return _save_writer_document(
+        'source_document',
+        payload.get('source_document') or '',
+        directory=_run_root('prepare-loaded-document'),
+    )
 
 
 def writer_profile_resources(
@@ -1019,7 +1047,8 @@ def writer_prepare_workspace(
         if Path(path).suffix.lower() in _LOCAL_WRITER_DOCUMENT_SUFFIXES
     ]
     source_filename = str(source_filename or '').strip()
-    cloud_source_locator = _provider_document_locator(user_input or '')
+    provider_locator = _provider_document_locator(user_input or '')
+    cloud_source_locator = provider_locator
     has_cloud_source = bool(cloud_source_locator)
 
     # Models occasionally copy a provider locator into both fields.
@@ -1044,10 +1073,13 @@ def writer_prepare_workspace(
                 'or .lmd document.',
             )
         if has_cloud_source:
-            raise ValueError(
-                'The request contains both a provider document locator and a local source '
-                'document. Specify exactly one document source.',
-            )
+            if not local_candidates:
+                source_filename = ''
+            else:
+                raise ValueError(
+                    'The request contains both a provider document locator and a local source '
+                    'document. Specify exactly one document source.',
+                )
 
     source_kind = 'cloud' if has_cloud_source else (
         'local' if source_filename or local_candidates else 'cloud'
@@ -1107,7 +1139,10 @@ def writer_prepare_workspace(
                 'revise_document': 'draft',
                 'prepare_only': 'final',
             }[operation]
-            loaded = writer_load_document(user_input=user_input, stage=source_stage)
+            loaded = writer_load_document(
+                user_input=user_input,
+                stage=source_stage,
+            )
             source_document = loaded['source_document']
             target_document = loaded['target_document']
             representation = loaded['representation']
@@ -1120,6 +1155,12 @@ def writer_prepare_workspace(
         writing_task_path=writing_task,
         source_document_path=source_document if operation != 'use_outline' else '',
     )
+    if source_document and target_document:
+        source_document = writer_prepare_loaded_document(
+            source_document,
+            target_document,
+            media_result['media_assets'],
+        )
     resource_profiles = writer_profile_resources(
         writing_task_path=writing_task,
         user_input=user_input,
@@ -2715,7 +2756,7 @@ def _replace_document_and_read_back(
             'write_result': write_result,
         },
     )
-    return {
+    response = {
         'success': True,
         'changed': True,
         'provider_synced': True,
@@ -2724,6 +2765,9 @@ def _replace_document_and_read_back(
         'representation': payload.get('representation'),
         'provider': payload.get('provider'),
     }
+    if isinstance(payload.get('target_document'), dict):
+        response['target_document'] = payload['target_document']
+    return response
 
 
 def _action_result_path(result: dict, key: str | None = None) -> str:
