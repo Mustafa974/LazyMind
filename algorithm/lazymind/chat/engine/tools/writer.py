@@ -574,6 +574,19 @@ def _provider_targets(user_input: str, *, stage: str | None = None) -> list[Targ
         if stage is not None:
             target.meta = {**target.meta, 'stage': stage}
         targets.append(target)
+    if targets:
+        return targets
+    try:
+        provider = match_writer_provider(user_input)
+        locator = str(provider.extract_locator_from_text(user_input) or '').strip()
+        target = provider.resolve(locator or user_input)
+    except ValueError as exc:
+        if str(exc).startswith('No Writer provider matches locator'):
+            return targets
+        raise
+    if stage is not None:
+        target.meta = {**target.meta, 'stage': stage}
+    targets.append(target)
     return targets
 
 
@@ -2398,6 +2411,27 @@ class WriterToolkitBase:
             'representation': result.get('representation'),
         })
 
+    def prepare_loaded_document(
+        self,
+        source_document_json: str,
+        target_document_json: str,
+        media_assets_json: str = '',
+    ) -> str:
+        """Prepare loaded provider content after the shared media library is available."""
+        root = _temp_root()
+        result = WriterResourceTools(
+            llm=None, artifact_store=str(root),
+        ).prepare_loaded_document(
+            source_document=source_document_json,
+            target_document=target_document_json,
+            media_assets=media_assets_json or None,
+        )
+        return _json_dumps({
+            'source_document': _primary_data(result),
+            'target_document': _result_data(result, 'target_document'),
+            'representation': result.get('representation'),
+        })
+
     def create_document(self, title: str, parent_uri: str = '', adapter: str = '') -> str:
         """Create an empty provider document and return its target binding."""
         root = _temp_root()
@@ -2606,6 +2640,6 @@ class WriterResourceToolkit(WriterToolkitBase):
     """Load and persist WriterDocuments through provider-neutral resource tools."""
 
     __public_apis__ = [
-        'load_document', 'create_document', 'publish_revision',
+        'load_document', 'prepare_loaded_document', 'create_document', 'publish_revision',
         'replace_document', 'append_document',
     ]

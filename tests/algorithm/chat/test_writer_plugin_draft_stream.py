@@ -5,8 +5,6 @@ import json
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from unittest.mock import MagicMock
-
 import pytest
 
 
@@ -199,17 +197,10 @@ def _prepare_with_document_locator(
         },
         emit=lambda _event: None,
     )
-    absolute_finder = MagicMock(return_value=absolute_locator)
-
     monkeypatch.setattr(tools, '_authoritative_writer_user_input', lambda _default: user_input)
     monkeypatch.setattr(tools, '_verified_knowledge_text', lambda value: value)
     monkeypatch.setattr(tools, 'require_context', lambda: context)
     monkeypatch.setattr(tools, '_provider_document_locator', lambda _value: provider_locator)
-    monkeypatch.setattr(
-        tools.ObsidianWriterProvider,
-        'find_absolute_path_locator',
-        absolute_finder,
-    )
     monkeypatch.setattr(
         tools,
         '_resolve_prepare_control',
@@ -242,7 +233,7 @@ def _prepare_with_document_locator(
             'warnings': [],
         },
     )
-    monkeypatch.setattr(tools, '_normalize_obsidian_source_document', lambda *args: args[0])
+    monkeypatch.setattr(tools, 'writer_prepare_loaded_document', lambda *args: args[0])
     monkeypatch.setattr(tools, 'writer_profile_resources', lambda **_kwargs: 'resources.json')
     monkeypatch.setattr(tools, 'writer_create_writing_context', lambda **_kwargs: 'context.json')
     monkeypatch.setattr(tools, '_save_draft_workspace_artifacts', lambda _result: [])
@@ -251,7 +242,7 @@ def _prepare_with_document_locator(
         operation='rewrite_document',
         source_filename=source_filename,
     )
-    return captured, absolute_finder
+    return captured
 
 
 @pytest.mark.parametrize(
@@ -262,30 +253,28 @@ def _prepare_with_document_locator(
     ],
 )
 def test_prepare_does_not_call_obsidian_fallback_for_existing_provider_locator(monkeypatch, user_input):
-    captured, finder = _prepare_with_document_locator(
+    captured = _prepare_with_document_locator(
         monkeypatch,
         user_input,
         user_input.split()[-1],
         'obsidian://vlt_test/note.md',
     )
 
-    finder.assert_not_called()
     assert captured['load_input'] == user_input
     assert captured['load_stage'] == 'draft'
 
 
-def test_prepare_uses_canonical_uri_only_for_a_resolved_obsidian_absolute_path(monkeypatch):
+def test_prepare_loads_a_resolved_obsidian_absolute_path_through_the_generic_locator(monkeypatch):
     user_input = '使用写作工作流，改写 /Users/test/Documents/obs/note.md'
     canonical_uri = 'obsidian://vlt_test/note.md'
-    captured, finder = _prepare_with_document_locator(
+    captured = _prepare_with_document_locator(
         monkeypatch,
         user_input,
-        '',
+        canonical_uri,
         canonical_uri,
     )
 
-    finder.assert_called_once_with(user_input)
-    assert captured['load_input'] == canonical_uri
+    assert captured['load_input'] == user_input
     assert captured['load_stage'] == 'draft'
 
 
@@ -300,9 +289,9 @@ def test_prepare_uses_canonical_uri_only_for_a_resolved_obsidian_absolute_path(m
         ),
         (
             '使用写作工作流，改写 /Users/test/Documents/obs/note.md',
-            '',
             'obsidian://vlt_test/note.md',
             'obsidian://vlt_test/note.md',
+            '使用写作工作流，改写 /Users/test/Documents/obs/note.md',
         ),
     ],
 )
@@ -313,7 +302,7 @@ def test_prepare_ignores_unbacked_source_filename_for_provider_document(
     absolute_locator,
     expected_load_input,
 ):
-    captured, _ = _prepare_with_document_locator(
+    captured = _prepare_with_document_locator(
         monkeypatch,
         user_input,
         provider_locator,
@@ -356,10 +345,23 @@ def test_prepare_rejects_uploaded_source_filename_alongside_provider_document(mo
 
 def test_prepare_keeps_the_existing_input_for_a_non_vault_absolute_path(monkeypatch):
     user_input = '使用写作工作流，改写 /Users/test/Desktop/ordinary.md'
-    captured, finder = _prepare_with_document_locator(monkeypatch, user_input, '', '')
+    captured = _prepare_with_document_locator(monkeypatch, user_input, '', '')
 
-    finder.assert_called_once_with(user_input)
     assert captured['load_input'] == user_input
+
+
+def test_provider_document_locator_uses_registered_provider_extractor(monkeypatch):
+    tools = _load_tools_module()
+    target = SimpleNamespace(uri='obsidian://vlt_test/note.md')
+    provider = SimpleNamespace(
+        extract_locator_from_text=lambda _value: target.uri,
+        resolve=lambda _value: target,
+    )
+    monkeypatch.setattr(tools, 'match_writer_provider', lambda _value: provider)
+
+    assert tools._provider_document_locator(
+        '使用写作工作流，改写 /Users/test/Documents/obs/note.md',
+    ) == target.uri
 
 
 def test_write_document_revision_emits_markdown_draft_stream(monkeypatch, tmp_path):
