@@ -46,7 +46,6 @@ from lazyllm.tools.writer.numbering import (
     materialize_markdown,
 )
 from lazyllm.tools.writer.provider import match_writer_provider
-from lazyllm.tools.writer.provider.obsidian import ObsidianWriterProvider
 from lazyllm.tools.writer.tools import (
     WriterDraftingTools,
     WriterPlanningTools,
@@ -431,6 +430,14 @@ def _provider_document_locator(value: str) -> str:
         except ValueError:
             continue
         return locator
+    try:
+        provider = match_writer_provider(value or '')
+        locator = str(provider.extract_locator_from_text(value or '') or '').strip()
+        return str(provider.resolve(locator or value or '').uri or '').strip()
+    except ValueError as exc:
+        if str(exc).startswith('No Writer provider matches locator'):
+            return ''
+        raise
     return ''
 
 
@@ -847,27 +854,23 @@ def writer_load_document(user_input: str, stage: str = 'final') -> dict:
     }
 
 
-def _normalize_obsidian_source_document(
+def writer_prepare_loaded_document(
     source_document_path: str,
     target_document_path: str,
     media_assets_path: str,
 ) -> str:
-    target = TargetDocument.model_validate(_read_json_file(target_document_path))
-    if str(target.adapter or '').strip().lower() != 'obsidian':
-        return source_document_path
-    source = _read_json_string(source_document_path)
-    media_assets = MediaAssetLibrary.model_validate(_read_json_file(media_assets_path))
-    normalized = ObsidianWriterProvider._normalize_materialized_image_paths(
-        source,
-        dict(target.meta.get('obsidian_bridge') or {}),
-        media_assets,
+    payload = _json_loads(
+        WriterResourceToolkit().prepare_loaded_document(
+            source_document_json=source_document_path,
+            target_document_json=target_document_path,
+            media_assets_json=media_assets_path,
+        ),
+        {},
     )
-    if normalized == source:
-        return source_document_path
     return _save_writer_document(
         'source_document',
-        normalized,
-        directory=_run_root('normalize-obsidian-source'),
+        payload.get('source_document') or '',
+        directory=_run_root('prepare-loaded-document'),
     )
 
 
@@ -1045,10 +1048,7 @@ def writer_prepare_workspace(
     ]
     source_filename = str(source_filename or '').strip()
     provider_locator = _provider_document_locator(user_input or '')
-    obsidian_absolute_locator = ''
-    if not provider_locator:
-        obsidian_absolute_locator = ObsidianWriterProvider.find_absolute_path_locator(user_input or '')
-    cloud_source_locator = provider_locator or obsidian_absolute_locator
+    cloud_source_locator = provider_locator
     has_cloud_source = bool(cloud_source_locator)
 
     # Models occasionally copy a provider locator into both fields.
@@ -1140,7 +1140,7 @@ def writer_prepare_workspace(
                 'prepare_only': 'final',
             }[operation]
             loaded = writer_load_document(
-                user_input=obsidian_absolute_locator or user_input,
+                user_input=user_input,
                 stage=source_stage,
             )
             source_document = loaded['source_document']
@@ -1156,7 +1156,7 @@ def writer_prepare_workspace(
         source_document_path=source_document if operation != 'use_outline' else '',
     )
     if source_document and target_document:
-        source_document = _normalize_obsidian_source_document(
+        source_document = writer_prepare_loaded_document(
             source_document,
             target_document,
             media_result['media_assets'],
