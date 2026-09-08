@@ -410,6 +410,25 @@ def test_markdown_assembly_drops_unregistered_images(monkeypatch, tmp_path):
     assert './images/AI-lighthouse.jpg' not in filled
 
 
+def test_markdown_assembly_keeps_media_source_reference():
+    from lazymind.document_tools import writing as document_writing
+
+    markdown = '![Source](assets/source.png)\n'
+    media_assets = {
+        'assets': {
+            'asset-source': {
+                'uri': 'file:///mnt/obsidian/obs/assets/source.png',
+                'local_path': '/data/subagent/assets/source.png',
+                'meta': {'source_reference': 'assets/source.png'},
+            },
+        },
+    }
+
+    assert document_writing.drop_unregistered_markdown_images(
+        markdown, media_assets,
+    ) == markdown
+
+
 def test_markdown_revision_fills_resolved_media_placeholder(monkeypatch, tmp_path):
     from lazymind.document_tools import revision as document_revision
 
