@@ -383,7 +383,7 @@ func writerArtifactPathAllowed(path string) bool {
 
 func writerProviderSupported(provider string) bool {
 	switch canonicalWriterWriteBackProvider(provider) {
-	case "feishu", "notion", "github", "wechat":
+	case "feishu", "notion", "github", "wechat", "obsidian":
 		return true
 	default:
 		return false
@@ -426,6 +426,8 @@ func canonicalWriterWriteBackProvider(provider string) string {
 		return "notion"
 	case "wechat":
 		return "wechat"
+	case "obsidian":
+		return "obsidian"
 	default:
 		return ""
 	}

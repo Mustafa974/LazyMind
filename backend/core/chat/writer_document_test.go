@@ -106,6 +106,26 @@ func TestWriterProviderSelectionSupportsGitHubTarget(t *testing.T) {
 	}
 }
 
+func TestWriterProviderSelectionSupportsObsidianTarget(t *testing.T) {
+	target := json.RawMessage(
+		`{"adapter":"obsidian","uri":"obsidian://vlt_test/Note.md"}`,
+	)
+	if got := writerDocumentProvider(target); got != "obsidian" {
+		t.Fatalf("provider = %q, want obsidian", got)
+	}
+}
+
+func TestWriterProviderCredentialPolicy(t *testing.T) {
+	if writerProviderRequiresToolConfig("obsidian") {
+		t.Fatal("Obsidian should not require cloud document credentials")
+	}
+	for _, provider := range []string{"feishu", "notion", "github", "wechat"} {
+		if !writerProviderRequiresToolConfig(provider) {
+			t.Fatalf("%s should retain the existing cloud credential requirement", provider)
+		}
+	}
+}
+
 func TestAttachWriterMediaURLs(t *testing.T) {
 	uploadRoot := t.TempDir()
 	imagePath := filepath.Join(uploadRoot, "session", "diagram.png")

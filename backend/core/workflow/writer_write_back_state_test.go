@@ -202,6 +202,18 @@ func TestApplyWriterProviderBindingUsesWeChatBrowserURL(t *testing.T) {
 	}
 }
 
+func TestCanonicalWriterWriteBackProviderSupportsObsidian(t *testing.T) {
+	if !writerProviderSupported("obsidian") {
+		t.Fatal("Obsidian should be a supported write-back provider")
+	}
+	if got := canonicalWriterWriteBackProvider("obsidian"); got != "obsidian" {
+		t.Fatalf("canonical provider = %q, want obsidian", got)
+	}
+	if got := writerProviderURL("obsidian", "obsidian://vlt_test/Note.md"); got != "" {
+		t.Fatalf("Obsidian should not expose a browser URL, got %q", got)
+	}
+}
+
 func writerRevision(id, sessionID, slot string, revision int, source string, content json.RawMessage) orm.WorkflowSlotRevision {
 	return orm.WorkflowSlotRevision{
 		ID: id, SessionID: sessionID, SlotID: slot, Revision: revision, Selected: true,
