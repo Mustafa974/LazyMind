@@ -780,6 +780,71 @@ func TestLoadWriterWriteBackArtifact_InlineMarkdown(t *testing.T) {
 	}
 }
 
+func TestLoadWriterWriteBackArtifact_PathMarkdownTitleSources(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("LAZYMIND_SUBAGENT_WORKSPACE", root)
+	tests := []struct {
+		name     string
+		filename string
+		content  string
+		meta     map[string]string
+		want     string
+	}{
+		{
+			name:     "internal draft artifact",
+			filename: "draft_document.md",
+			content:  "# Fresh Document\n",
+			want:     "",
+		},
+		{
+			name:     "internal flat draft artifact",
+			filename: "flat_draft_document.md",
+			content:  "Content without a heading\n",
+			want:     "",
+		},
+		{
+			name:     "external markdown filename",
+			filename: "uploaded-note.md",
+			content:  "# Body Title\n",
+			want:     "uploaded-note",
+		},
+		{
+			name:     "explicit metadata title",
+			filename: "draft_document.md",
+			content:  "Content\n",
+			meta:     map[string]string{"title": "Explicit Target"},
+			want:     "Explicit Target",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(root, tt.name, tt.filename)
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatalf("create artifact directory: %v", err)
+			}
+			if err := os.WriteFile(path, []byte(tt.content), 0o600); err != nil {
+				t.Fatalf("write Markdown artifact: %v", err)
+			}
+			value, err := json.Marshal(map[string]any{
+				"path":     path,
+				"filename": tt.filename,
+				"meta":     tt.meta,
+			})
+			if err != nil {
+				t.Fatalf("marshal artifact: %v", err)
+			}
+			artifact, err := loadWriterWriteBackArtifact(value)
+			if err != nil {
+				t.Fatalf("load path Markdown: %v", err)
+			}
+			if artifact.Format != "markdown" || artifact.Markdown != tt.content || artifact.Title != tt.want {
+				t.Fatalf("unexpected path Markdown artifact: %+v", artifact)
+			}
+		})
+	}
+}
+
 func TestWriterGitHubSyncedMarkdownUnchanged(t *testing.T) {
 	artifact := &selectedWriterArtifact{
 		Revision: orm.WorkflowSlotRevision{ChangeSource: "provider_sync"},

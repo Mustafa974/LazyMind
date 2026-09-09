@@ -1560,13 +1560,19 @@ func loadWriterWriteBackArtifact(value json.RawMessage) (*writerWriteBackArtifac
 		if strings.TrimSpace(string(content)) == "" {
 			return nil, fmt.Errorf("active draft_document Markdown is empty")
 		}
-		filename := record.Filename
+		filename := strings.TrimSpace(record.Filename)
 		if filename == "" {
 			filename = filepath.Base(cleanPath)
 		}
+		title := strings.TrimSpace(record.Meta.Title)
+		normalizedFilename := strings.ToLower(filepath.Base(filename))
+		if title == "" && normalizedFilename != "draft_document.md" &&
+			normalizedFilename != "flat_draft_document.md" {
+			title = strings.TrimSuffix(filename, filepath.Ext(filename))
+		}
 		return &writerWriteBackArtifact{
 			Format: "markdown", Markdown: string(content),
-			Title: strings.TrimSuffix(filename, filepath.Ext(filename)),
+			Title: title,
 		}, nil
 	case ".lmd":
 		document, dataErr := writerArtifactData(content, false)
