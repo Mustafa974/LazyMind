@@ -429,6 +429,26 @@ def test_markdown_assembly_keeps_media_source_reference():
     ) == markdown
 
 
+def test_markdown_media_fill_drops_failed_need_marker_only():
+    from lazymind.document_tools import writing as document_writing
+
+    markdown = '\n'.join([
+        'before',
+        '![IMAGE-1]',
+        '![Missing](media-placeholder://IMAGE-1)',
+        '![IMAGE-2]',
+        'after',
+    ])
+
+    filled = document_writing.fill_markdown_media_placeholders(
+        markdown, {'assets': {}, 'visual_need_asset_ids': {}},
+    )
+
+    assert '![IMAGE-1]' not in filled
+    assert 'media-placeholder://IMAGE-1' not in filled
+    assert '![IMAGE-2]' in filled
+
+
 def test_markdown_revision_fills_resolved_media_placeholder(monkeypatch, tmp_path):
     from lazymind.document_tools import revision as document_revision
 

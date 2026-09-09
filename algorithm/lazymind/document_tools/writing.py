@@ -1122,6 +1122,11 @@ def fill_markdown_media_placeholders(markdown: str, resolved_media_assets: Any) 
         filled,
     )
     if dropped:
+        dropped_markers = {f'![{need_id}]' for need_id in dropped}
+        filled = ''.join(
+            line for line in filled.splitlines(keepends=True)
+            if line.strip() not in dropped_markers
+        )
         LOG.warning(
             '[Writer] Markdown media fill dropped %d unresolved placeholder(s): %s',
             len(dropped),
