@@ -18,6 +18,7 @@ import (
 	"lazymind/core/common/orm"
 	"lazymind/core/doc"
 	"lazymind/core/log"
+	"lazymind/core/modelconfig"
 	"lazymind/core/store"
 	"lazymind/core/workflow"
 
@@ -110,7 +111,7 @@ func writerProviderToolConfig(toolConfig map[string]any, provider string) (map[s
 }
 
 func writerProviderRequiresToolConfig(provider string) bool {
-	return canonicalWriterProvider(provider) != "obsidian"
+	return modelconfig.IsCloudToolProvider(canonicalWriterProvider(provider))
 }
 
 func writerDocumentProviderSupported(provider string) bool {
