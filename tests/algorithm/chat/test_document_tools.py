@@ -534,6 +534,49 @@ def test_write_uses_provider_supplied_empty_published_link(monkeypatch):
     assert serialized["published_link"] == ""
 
 
+def test_write_strips_provider_supplied_published_link(monkeypatch):
+    source = WriterDocument(
+        document_id="local-1",
+        title="Draft",
+        stage="final",
+        blocks=[WriterBlock(node_id="body", type="paragraph", content="content")],
+    )
+    converted = WriterProviderDocument(
+        provider="obsidian",
+        format="markdown",
+        content="# Draft\n",
+        source_document=source,
+    )
+
+    class FakeProvider:
+        def require_capability(self, _capability):
+            pass
+
+        def write_document(self, _document, _target, **_kwargs):
+            return {
+                "doc_id": "vlt_test:Draft.md",
+                "adapter": "obsidian",
+                "locator": "obsidian://vlt_test/Draft.md",
+                "persisted_document": "# Draft\n",
+                "representation": "markdown",
+                "published_link": "  https://example.test/doc  ",
+            }
+
+    monkeypatch.setattr(
+        document_resources, "get_writer_provider", lambda _provider: FakeProvider()
+    )
+
+    serialized = json.loads(WriterResourceCapabilities().write_document(
+        converted_document_json=converted.model_dump_json(),
+        target_document_json=json.dumps({
+            "adapter": "obsidian",
+            "uri": "obsidian://vlt_test/Draft.md",
+        }),
+    ))
+
+    assert serialized["published_link"] == "https://example.test/doc"
+
+
 def test_write_keeps_local_image_reference_after_provider_readback(monkeypatch):
     source = WriterDocument(
         document_id="local-1",

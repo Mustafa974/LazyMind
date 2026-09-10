@@ -629,7 +629,7 @@ class WriterResourceCapabilities:
         target = TargetDocument.model_validate(payload['target_document'])
         write_result = payload.get('write_result')
         published_link = (
-            str(write_result.get('published_link') or '')
+            str(write_result.get('published_link') or '').strip()
             if isinstance(write_result, Mapping) and 'published_link' in write_result
             else _published_link(target)
         )
