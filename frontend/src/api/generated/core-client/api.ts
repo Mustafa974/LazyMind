@@ -423,8 +423,9 @@ export interface ApplyWordGroupActionResponse {
 }
 export interface ArtifactActionPreviewOpenAPIRequest {
     'action': string;
+    'base_draft_version'?: number;
     'base_revision': number;
-    'input'?: { [key: string]: object; };
+    'input': { [key: string]: any; };
 }
 export interface AuthorizationSubjectGrant {
     'grantee_id'?: string;
@@ -2676,8 +2677,8 @@ export interface RouterTrafficSummary {
 }
 export interface RunPerformanceMetrics {
     'cache_hit_rate'?: number;
-    'cached_tokens'?: number;
     'cache_input_tokens'?: number;
+    'cached_tokens'?: number;
     'context_input_tokens'?: number;
     'context_ratio'?: number;
     'input_tokens'?: number;
@@ -3410,6 +3411,22 @@ export interface SkillWriteOpenAPIResponse {
     'head_revision_id'?: string;
     'skill_id': string;
 }
+export interface SlotItemPatchOpenAPIRequest {
+    'base_draft_version'?: number;
+    'base_revision': number;
+    'caption'?: string;
+    'content_type'?: string;
+    'mode'?: SlotItemPatchOpenAPIRequestModeEnum;
+    'value': any;
+}
+
+export const SlotItemPatchOpenAPIRequestModeEnum = {
+    Draft: 'draft',
+    Checkpoint: 'checkpoint'
+} as const;
+
+export type SlotItemPatchOpenAPIRequestModeEnum = typeof SlotItemPatchOpenAPIRequestModeEnum[keyof typeof SlotItemPatchOpenAPIRequestModeEnum];
+
 export interface StartTaskRequest {
     'start_mode'?: string;
     'task_ids': Array<string>;
@@ -3592,7 +3609,7 @@ export interface ToolMethodOpenAPIResponse {
 export interface ToolResponse {
     'description': string;
     'id': string;
-    'input_schema'?: Array<number>;
+    'input_schema'?: any;
     'tool_name': string;
 }
 export interface ToolStateOpenAPIResponse {
@@ -3613,6 +3630,18 @@ export interface TransferBinding {
     'stored_path'?: string;
     'target_document_id'?: string;
     'target_lazy_doc_id'?: string;
+}
+export interface TranslationOpenAPIRequest {
+    'target'?: string;
+    'text': string;
+}
+export interface TranslationOpenAPIResponse {
+    'source': string;
+    'target': string;
+    'translated_text': string;
+}
+export interface TranslationStatusOpenAPIResponse {
+    'configured': boolean;
 }
 export interface UnsetDefaultDatasetRequest {
     'name': string;
@@ -3825,13 +3854,45 @@ export interface WorkflowTrashListResponse {
     'data': WorkflowTrashListData;
     'message': string;
 }
-export interface WriterDocumentSyncOpenAPIRequest {
+export interface WriterDocumentSaveOpenAPIRequest {
+    'base_draft_version'?: number;
     'base_revision': number;
-    'revised_document'?: { [key: string]: object; };
-    'source_document'?: { [key: string]: object; };
+    'document': any;
+    'mode'?: WriterDocumentSaveOpenAPIRequestModeEnum;
+    'numbering_update'?: { [key: string]: object; };
+    'slot'?: string;
 }
-export interface WriterDocumentWriteBackOpenAPIRequest {
+
+export const WriterDocumentSaveOpenAPIRequestModeEnum = {
+    Draft: 'draft',
+    Checkpoint: 'checkpoint'
+} as const;
+
+export type WriterDocumentSaveOpenAPIRequestModeEnum = typeof WriterDocumentSaveOpenAPIRequestModeEnum[keyof typeof WriterDocumentSaveOpenAPIRequestModeEnum];
+
+export interface WriterDocumentSyncOpenAPIRequest {
+    'base_draft_version'?: number;
     'base_revision': number;
+    'mode'?: WriterDocumentSyncOpenAPIRequestModeEnum;
+    'revised_document': any;
+    'source_document': any;
+}
+
+export const WriterDocumentSyncOpenAPIRequestModeEnum = {
+    Draft: 'draft',
+    Checkpoint: 'checkpoint'
+} as const;
+
+export type WriterDocumentSyncOpenAPIRequestModeEnum = typeof WriterDocumentSyncOpenAPIRequestModeEnum[keyof typeof WriterDocumentSyncOpenAPIRequestModeEnum];
+
+export interface WriterDocumentWriteBackOpenAPIRequest {
+    'base_draft_version'?: number;
+    'base_revision': number;
+    'provider'?: string;
+    'revised_document'?: any;
+    'slot'?: string;
+    'source_document'?: any;
+    'template'?: string;
 }
 
 /**
@@ -16253,47 +16314,6 @@ export const DefaultApiAxiosParamCreator = function (configuration?: Configurati
         },
         /**
          *
-         * @summary POST /workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}:action-execute
-         * @param {string} sessionId
-         * @param {string} slotId
-         * @param {string} listIndex
-         * @param {*} [options] Override http request option.
-         * @throws {RequiredError}
-         */
-        apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePost: async (sessionId: string, slotId: string, listIndex: string, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
-            // verify required parameter 'sessionId' is not null or undefined
-            assertParamExists('apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePost', 'sessionId', sessionId)
-            // verify required parameter 'slotId' is not null or undefined
-            assertParamExists('apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePost', 'slotId', slotId)
-            // verify required parameter 'listIndex' is not null or undefined
-            assertParamExists('apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePost', 'listIndex', listIndex)
-            const localVarPath = `/api/core/workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}:action-execute`
-                .replace(`{${"session_id"}}`, encodeURIComponent(String(sessionId)))
-                .replace(`{${"slot_id"}}`, encodeURIComponent(String(slotId)))
-                .replace(`{${"list_index"}}`, encodeURIComponent(String(listIndex)));
-            // use dummy base URL string because the URL constructor only accepts absolute URLs.
-            const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
-            let baseOptions;
-            if (configuration) {
-                baseOptions = configuration.baseOptions;
-            }
-
-            const localVarRequestOptions = { method: 'POST', ...baseOptions, ...options};
-            const localVarHeaderParameter = {} as any;
-            const localVarQueryParameter = {} as any;
-
-
-            setSearchParams(localVarUrlObj, localVarQueryParameter);
-            let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
-            localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
-
-            return {
-                url: toPathString(localVarUrlObj),
-                options: localVarRequestOptions,
-            };
-        },
-        /**
-         *
          * @summary PATCH /workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/caption
          * @param {string} sessionId
          * @param {string} slotId
@@ -16361,47 +16381,6 @@ export const DefaultApiAxiosParamCreator = function (configuration?: Configurati
             }
 
             const localVarRequestOptions = { method: 'DELETE', ...baseOptions, ...options};
-            const localVarHeaderParameter = {} as any;
-            const localVarQueryParameter = {} as any;
-
-
-            setSearchParams(localVarUrlObj, localVarQueryParameter);
-            let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
-            localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
-
-            return {
-                url: toPathString(localVarUrlObj),
-                options: localVarRequestOptions,
-            };
-        },
-        /**
-         *
-         * @summary PATCH /workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}
-         * @param {string} sessionId
-         * @param {string} slotId
-         * @param {string} listIndex
-         * @param {*} [options] Override http request option.
-         * @throws {RequiredError}
-         */
-        apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatch: async (sessionId: string, slotId: string, listIndex: string, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
-            // verify required parameter 'sessionId' is not null or undefined
-            assertParamExists('apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatch', 'sessionId', sessionId)
-            // verify required parameter 'slotId' is not null or undefined
-            assertParamExists('apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatch', 'slotId', slotId)
-            // verify required parameter 'listIndex' is not null or undefined
-            assertParamExists('apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatch', 'listIndex', listIndex)
-            const localVarPath = `/api/core/workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}`
-                .replace(`{${"session_id"}}`, encodeURIComponent(String(sessionId)))
-                .replace(`{${"slot_id"}}`, encodeURIComponent(String(slotId)))
-                .replace(`{${"list_index"}}`, encodeURIComponent(String(listIndex)));
-            // use dummy base URL string because the URL constructor only accepts absolute URLs.
-            const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
-            let baseOptions;
-            if (configuration) {
-                baseOptions = configuration.baseOptions;
-            }
-
-            const localVarRequestOptions = { method: 'PATCH', ...baseOptions, ...options};
             const localVarHeaderParameter = {} as any;
             const localVarQueryParameter = {} as any;
 
@@ -16788,39 +16767,6 @@ export const DefaultApiAxiosParamCreator = function (configuration?: Configurati
             // verify required parameter 'sessionId' is not null or undefined
             assertParamExists('apiCoreWorkflowSessionsSessionIdWriterDocumentRenderPost', 'sessionId', sessionId)
             const localVarPath = `/api/core/workflow-sessions/{session_id}/writer-document:render`
-                .replace(`{${"session_id"}}`, encodeURIComponent(String(sessionId)));
-            // use dummy base URL string because the URL constructor only accepts absolute URLs.
-            const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
-            let baseOptions;
-            if (configuration) {
-                baseOptions = configuration.baseOptions;
-            }
-
-            const localVarRequestOptions = { method: 'POST', ...baseOptions, ...options};
-            const localVarHeaderParameter = {} as any;
-            const localVarQueryParameter = {} as any;
-
-
-            setSearchParams(localVarUrlObj, localVarQueryParameter);
-            let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
-            localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
-
-            return {
-                url: toPathString(localVarUrlObj),
-                options: localVarRequestOptions,
-            };
-        },
-        /**
-         *
-         * @summary POST /workflow-sessions/{session_id}/writer-document:save
-         * @param {string} sessionId
-         * @param {*} [options] Override http request option.
-         * @throws {RequiredError}
-         */
-        apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost: async (sessionId: string, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
-            // verify required parameter 'sessionId' is not null or undefined
-            assertParamExists('apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost', 'sessionId', sessionId)
-            const localVarPath = `/api/core/workflow-sessions/{session_id}/writer-document:save`
                 .replace(`{${"session_id"}}`, encodeURIComponent(String(sessionId)));
             // use dummy base URL string because the URL constructor only accepts absolute URLs.
             const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
@@ -19967,21 +19913,6 @@ export const DefaultApiFp = function(configuration?: Configuration) {
         },
         /**
          *
-         * @summary POST /workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}:action-execute
-         * @param {string} sessionId
-         * @param {string} slotId
-         * @param {string} listIndex
-         * @param {*} [options] Override http request option.
-         * @throws {RequiredError}
-         */
-        async apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePost(sessionId: string, slotId: string, listIndex: string, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<void>> {
-            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePost(sessionId, slotId, listIndex, options);
-            const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
-            const localVarOperationServerBasePath = operationServerMap['DefaultApi.apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePost']?.[localVarOperationServerIndex]?.url;
-            return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
-        },
-        /**
-         *
          * @summary PATCH /workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/caption
          * @param {string} sessionId
          * @param {string} slotId
@@ -20008,21 +19939,6 @@ export const DefaultApiFp = function(configuration?: Configuration) {
             const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexDelete(sessionId, slotId, listIndex, options);
             const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
             const localVarOperationServerBasePath = operationServerMap['DefaultApi.apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexDelete']?.[localVarOperationServerIndex]?.url;
-            return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
-        },
-        /**
-         *
-         * @summary PATCH /workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}
-         * @param {string} sessionId
-         * @param {string} slotId
-         * @param {string} listIndex
-         * @param {*} [options] Override http request option.
-         * @throws {RequiredError}
-         */
-        async apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatch(sessionId: string, slotId: string, listIndex: string, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<void>> {
-            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatch(sessionId, slotId, listIndex, options);
-            const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
-            const localVarOperationServerBasePath = operationServerMap['DefaultApi.apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatch']?.[localVarOperationServerIndex]?.url;
             return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
         },
         /**
@@ -20174,19 +20090,6 @@ export const DefaultApiFp = function(configuration?: Configuration) {
             const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreWorkflowSessionsSessionIdWriterDocumentRenderPost(sessionId, options);
             const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
             const localVarOperationServerBasePath = operationServerMap['DefaultApi.apiCoreWorkflowSessionsSessionIdWriterDocumentRenderPost']?.[localVarOperationServerIndex]?.url;
-            return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
-        },
-        /**
-         *
-         * @summary POST /workflow-sessions/{session_id}/writer-document:save
-         * @param {string} sessionId
-         * @param {*} [options] Override http request option.
-         * @throws {RequiredError}
-         */
-        async apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost(sessionId: string, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<void>> {
-            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost(sessionId, options);
-            const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
-            const localVarOperationServerBasePath = operationServerMap['DefaultApi.apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost']?.[localVarOperationServerIndex]?.url;
             return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
         },
         /**
@@ -22447,16 +22350,6 @@ export const DefaultApiFactory = function (configuration?: Configuration, basePa
         },
         /**
          *
-         * @summary POST /workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}:action-execute
-         * @param {DefaultApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePostRequest} requestParameters Request parameters.
-         * @param {*} [options] Override http request option.
-         * @throws {RequiredError}
-         */
-        apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePost(requestParameters: DefaultApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePostRequest, options?: RawAxiosRequestConfig): AxiosPromise<void> {
-            return localVarFp.apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePost(requestParameters.sessionId, requestParameters.slotId, requestParameters.listIndex, options).then((request) => request(axios, basePath));
-        },
-        /**
-         *
          * @summary PATCH /workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/caption
          * @param {DefaultApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexCaptionPatchRequest} requestParameters Request parameters.
          * @param {*} [options] Override http request option.
@@ -22474,16 +22367,6 @@ export const DefaultApiFactory = function (configuration?: Configuration, basePa
          */
         apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexDelete(requestParameters: DefaultApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexDeleteRequest, options?: RawAxiosRequestConfig): AxiosPromise<void> {
             return localVarFp.apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexDelete(requestParameters.sessionId, requestParameters.slotId, requestParameters.listIndex, options).then((request) => request(axios, basePath));
-        },
-        /**
-         *
-         * @summary PATCH /workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}
-         * @param {DefaultApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatchRequest} requestParameters Request parameters.
-         * @param {*} [options] Override http request option.
-         * @throws {RequiredError}
-         */
-        apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatch(requestParameters: DefaultApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatchRequest, options?: RawAxiosRequestConfig): AxiosPromise<void> {
-            return localVarFp.apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatch(requestParameters.sessionId, requestParameters.slotId, requestParameters.listIndex, options).then((request) => request(axios, basePath));
         },
         /**
          *
@@ -22594,16 +22477,6 @@ export const DefaultApiFactory = function (configuration?: Configuration, basePa
          */
         apiCoreWorkflowSessionsSessionIdWriterDocumentRenderPost(requestParameters: DefaultApiApiCoreWorkflowSessionsSessionIdWriterDocumentRenderPostRequest, options?: RawAxiosRequestConfig): AxiosPromise<void> {
             return localVarFp.apiCoreWorkflowSessionsSessionIdWriterDocumentRenderPost(requestParameters.sessionId, options).then((request) => request(axios, basePath));
-        },
-        /**
-         *
-         * @summary POST /workflow-sessions/{session_id}/writer-document:save
-         * @param {DefaultApiApiCoreWorkflowSessionsSessionIdWriterDocumentSavePostRequest} requestParameters Request parameters.
-         * @param {*} [options] Override http request option.
-         * @throws {RequiredError}
-         */
-        apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost(requestParameters: DefaultApiApiCoreWorkflowSessionsSessionIdWriterDocumentSavePostRequest, options?: RawAxiosRequestConfig): AxiosPromise<void> {
-            return localVarFp.apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost(requestParameters.sessionId, options).then((request) => request(axios, basePath));
         },
         /**
          *
@@ -23955,17 +23828,6 @@ export interface DefaultApiApiCoreWorkflowSessionsSessionIdSlotsGetRequest {
 }
 
 /**
- * Request parameters for apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePost operation in DefaultApi.
- */
-export interface DefaultApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePostRequest {
-    readonly sessionId: string
-
-    readonly slotId: string
-
-    readonly listIndex: string
-}
-
-/**
  * Request parameters for apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexCaptionPatch operation in DefaultApi.
  */
 export interface DefaultApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexCaptionPatchRequest {
@@ -23980,17 +23842,6 @@ export interface DefaultApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxLi
  * Request parameters for apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexDelete operation in DefaultApi.
  */
 export interface DefaultApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexDeleteRequest {
-    readonly sessionId: string
-
-    readonly slotId: string
-
-    readonly listIndex: string
-}
-
-/**
- * Request parameters for apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatch operation in DefaultApi.
- */
-export interface DefaultApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatchRequest {
     readonly sessionId: string
 
     readonly slotId: string
@@ -24088,13 +23939,6 @@ export interface DefaultApiApiCoreWorkflowSessionsSessionIdSyncSearchConfigPostR
  * Request parameters for apiCoreWorkflowSessionsSessionIdWriterDocumentRenderPost operation in DefaultApi.
  */
 export interface DefaultApiApiCoreWorkflowSessionsSessionIdWriterDocumentRenderPostRequest {
-    readonly sessionId: string
-}
-
-/**
- * Request parameters for apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost operation in DefaultApi.
- */
-export interface DefaultApiApiCoreWorkflowSessionsSessionIdWriterDocumentSavePostRequest {
     readonly sessionId: string
 }
 
@@ -26528,17 +26372,6 @@ export class DefaultApi extends BaseAPI {
 
     /**
      *
-     * @summary POST /workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}:action-execute
-     * @param {DefaultApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePostRequest} requestParameters Request parameters.
-     * @param {*} [options] Override http request option.
-     * @throws {RequiredError}
-     */
-    public apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePost(requestParameters: DefaultApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePostRequest, options?: RawAxiosRequestConfig) {
-        return DefaultApiFp(this.configuration).apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePost(requestParameters.sessionId, requestParameters.slotId, requestParameters.listIndex, options).then((request) => request(this.axios, this.basePath));
-    }
-
-    /**
-     *
      * @summary PATCH /workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/caption
      * @param {DefaultApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexCaptionPatchRequest} requestParameters Request parameters.
      * @param {*} [options] Override http request option.
@@ -26557,17 +26390,6 @@ export class DefaultApi extends BaseAPI {
      */
     public apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexDelete(requestParameters: DefaultApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexDeleteRequest, options?: RawAxiosRequestConfig) {
         return DefaultApiFp(this.configuration).apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexDelete(requestParameters.sessionId, requestParameters.slotId, requestParameters.listIndex, options).then((request) => request(this.axios, this.basePath));
-    }
-
-    /**
-     *
-     * @summary PATCH /workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}
-     * @param {DefaultApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatchRequest} requestParameters Request parameters.
-     * @param {*} [options] Override http request option.
-     * @throws {RequiredError}
-     */
-    public apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatch(requestParameters: DefaultApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatchRequest, options?: RawAxiosRequestConfig) {
-        return DefaultApiFp(this.configuration).apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatch(requestParameters.sessionId, requestParameters.slotId, requestParameters.listIndex, options).then((request) => request(this.axios, this.basePath));
     }
 
     /**
@@ -26689,17 +26511,6 @@ export class DefaultApi extends BaseAPI {
      */
     public apiCoreWorkflowSessionsSessionIdWriterDocumentRenderPost(requestParameters: DefaultApiApiCoreWorkflowSessionsSessionIdWriterDocumentRenderPostRequest, options?: RawAxiosRequestConfig) {
         return DefaultApiFp(this.configuration).apiCoreWorkflowSessionsSessionIdWriterDocumentRenderPost(requestParameters.sessionId, options).then((request) => request(this.axios, this.basePath));
-    }
-
-    /**
-     *
-     * @summary POST /workflow-sessions/{session_id}/writer-document:save
-     * @param {DefaultApiApiCoreWorkflowSessionsSessionIdWriterDocumentSavePostRequest} requestParameters Request parameters.
-     * @param {*} [options] Override http request option.
-     * @throws {RequiredError}
-     */
-    public apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost(requestParameters: DefaultApiApiCoreWorkflowSessionsSessionIdWriterDocumentSavePostRequest, options?: RawAxiosRequestConfig) {
-        return DefaultApiFp(this.configuration).apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost(requestParameters.sessionId, options).then((request) => request(this.axios, this.basePath));
     }
 
     /**
@@ -41039,6 +40850,176 @@ export class ToolsApi extends BaseAPI {
 
 
 /**
+ * TranslationApi - axios parameter creator
+ */
+export const TranslationApiAxiosParamCreator = function (configuration?: Configuration) {
+    return {
+        /**
+         * Reports whether the current user has a selected translation provider with credentials. Secrets are never returned.
+         * @summary Get translation configuration status
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreTranslationStatusGet: async (options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+            const localVarPath = `/api/core/translation/status`;
+            // use dummy base URL string because the URL constructor only accepts absolute URLs.
+            const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+            let baseOptions;
+            if (configuration) {
+                baseOptions = configuration.baseOptions;
+            }
+
+            const localVarRequestOptions = { method: 'GET', ...baseOptions, ...options};
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+
+            localVarHeaderParameter['Accept'] = 'application/json';
+
+            setSearchParams(localVarUrlObj, localVarQueryParameter);
+            let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
+            localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
+
+            return {
+                url: toPathString(localVarUrlObj),
+                options: localVarRequestOptions,
+            };
+        },
+        /**
+         * Translates up to 5000 characters with the current user\'s server-side translation credential.
+         * @summary Translate selected document text
+         * @param {TranslationOpenAPIRequest} translationOpenAPIRequest
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreTranslationTranslatePost: async (translationOpenAPIRequest: TranslationOpenAPIRequest, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+            // verify required parameter 'translationOpenAPIRequest' is not null or undefined
+            assertParamExists('apiCoreTranslationTranslatePost', 'translationOpenAPIRequest', translationOpenAPIRequest)
+            const localVarPath = `/api/core/translation:translate`;
+            // use dummy base URL string because the URL constructor only accepts absolute URLs.
+            const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+            let baseOptions;
+            if (configuration) {
+                baseOptions = configuration.baseOptions;
+            }
+
+            const localVarRequestOptions = { method: 'POST', ...baseOptions, ...options};
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+
+            localVarHeaderParameter['Content-Type'] = 'application/json';
+            localVarHeaderParameter['Accept'] = 'application/json';
+
+            setSearchParams(localVarUrlObj, localVarQueryParameter);
+            let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
+            localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
+            localVarRequestOptions.data = serializeDataIfNeeded(translationOpenAPIRequest, localVarRequestOptions, configuration)
+
+            return {
+                url: toPathString(localVarUrlObj),
+                options: localVarRequestOptions,
+            };
+        },
+    }
+};
+
+/**
+ * TranslationApi - functional programming interface
+ */
+export const TranslationApiFp = function(configuration?: Configuration) {
+    const localVarAxiosParamCreator = TranslationApiAxiosParamCreator(configuration)
+    return {
+        /**
+         * Reports whether the current user has a selected translation provider with credentials. Secrets are never returned.
+         * @summary Get translation configuration status
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        async apiCoreTranslationStatusGet(options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<TranslationStatusOpenAPIResponse>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreTranslationStatusGet(options);
+            const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+            const localVarOperationServerBasePath = operationServerMap['TranslationApi.apiCoreTranslationStatusGet']?.[localVarOperationServerIndex]?.url;
+            return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
+        },
+        /**
+         * Translates up to 5000 characters with the current user\'s server-side translation credential.
+         * @summary Translate selected document text
+         * @param {TranslationOpenAPIRequest} translationOpenAPIRequest
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        async apiCoreTranslationTranslatePost(translationOpenAPIRequest: TranslationOpenAPIRequest, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<TranslationOpenAPIResponse>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreTranslationTranslatePost(translationOpenAPIRequest, options);
+            const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+            const localVarOperationServerBasePath = operationServerMap['TranslationApi.apiCoreTranslationTranslatePost']?.[localVarOperationServerIndex]?.url;
+            return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
+        },
+    }
+};
+
+/**
+ * TranslationApi - factory interface
+ */
+export const TranslationApiFactory = function (configuration?: Configuration, basePath?: string, axios?: AxiosInstance) {
+    const localVarFp = TranslationApiFp(configuration)
+    return {
+        /**
+         * Reports whether the current user has a selected translation provider with credentials. Secrets are never returned.
+         * @summary Get translation configuration status
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreTranslationStatusGet(options?: RawAxiosRequestConfig): AxiosPromise<TranslationStatusOpenAPIResponse> {
+            return localVarFp.apiCoreTranslationStatusGet(options).then((request) => request(axios, basePath));
+        },
+        /**
+         * Translates up to 5000 characters with the current user\'s server-side translation credential.
+         * @summary Translate selected document text
+         * @param {TranslationApiApiCoreTranslationTranslatePostRequest} requestParameters Request parameters.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreTranslationTranslatePost(requestParameters: TranslationApiApiCoreTranslationTranslatePostRequest, options?: RawAxiosRequestConfig): AxiosPromise<TranslationOpenAPIResponse> {
+            return localVarFp.apiCoreTranslationTranslatePost(requestParameters.translationOpenAPIRequest, options).then((request) => request(axios, basePath));
+        },
+    };
+};
+
+/**
+ * Request parameters for apiCoreTranslationTranslatePost operation in TranslationApi.
+ */
+export interface TranslationApiApiCoreTranslationTranslatePostRequest {
+    readonly translationOpenAPIRequest: TranslationOpenAPIRequest
+}
+
+/**
+ * TranslationApi - object-oriented interface
+ */
+export class TranslationApi extends BaseAPI {
+    /**
+     * Reports whether the current user has a selected translation provider with credentials. Secrets are never returned.
+     * @summary Get translation configuration status
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    public apiCoreTranslationStatusGet(options?: RawAxiosRequestConfig) {
+        return TranslationApiFp(this.configuration).apiCoreTranslationStatusGet(options).then((request) => request(this.axios, this.basePath));
+    }
+
+    /**
+     * Translates up to 5000 characters with the current user\'s server-side translation credential.
+     * @summary Translate selected document text
+     * @param {TranslationApiApiCoreTranslationTranslatePostRequest} requestParameters Request parameters.
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    public apiCoreTranslationTranslatePost(requestParameters: TranslationApiApiCoreTranslationTranslatePostRequest, options?: RawAxiosRequestConfig) {
+        return TranslationApiFp(this.configuration).apiCoreTranslationTranslatePost(requestParameters.translationOpenAPIRequest, options).then((request) => request(this.axios, this.basePath));
+    }
+}
+
+
+
+/**
  * UploadsApi - axios parameter creator
  */
 export const UploadsApiAxiosParamCreator = function (configuration?: Configuration) {
@@ -42899,6 +42880,53 @@ export const WorkflowApiAxiosParamCreator = function (configuration?: Configurat
     return {
         /**
          *
+         * @summary Execute a Workflow-owned artifact action
+         * @param {string} sessionId
+         * @param {string} slotId
+         * @param {number} listIndex
+         * @param {ArtifactActionPreviewOpenAPIRequest} artifactActionPreviewOpenAPIRequest
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePost: async (sessionId: string, slotId: string, listIndex: number, artifactActionPreviewOpenAPIRequest: ArtifactActionPreviewOpenAPIRequest, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+            // verify required parameter 'sessionId' is not null or undefined
+            assertParamExists('apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePost', 'sessionId', sessionId)
+            // verify required parameter 'slotId' is not null or undefined
+            assertParamExists('apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePost', 'slotId', slotId)
+            // verify required parameter 'listIndex' is not null or undefined
+            assertParamExists('apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePost', 'listIndex', listIndex)
+            // verify required parameter 'artifactActionPreviewOpenAPIRequest' is not null or undefined
+            assertParamExists('apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePost', 'artifactActionPreviewOpenAPIRequest', artifactActionPreviewOpenAPIRequest)
+            const localVarPath = `/api/core/workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}:action-execute`
+                .replace(`{${"session_id"}}`, encodeURIComponent(String(sessionId)))
+                .replace(`{${"slot_id"}}`, encodeURIComponent(String(slotId)))
+                .replace(`{${"list_index"}}`, encodeURIComponent(String(listIndex)));
+            // use dummy base URL string because the URL constructor only accepts absolute URLs.
+            const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+            let baseOptions;
+            if (configuration) {
+                baseOptions = configuration.baseOptions;
+            }
+
+            const localVarRequestOptions = { method: 'POST', ...baseOptions, ...options};
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+
+            localVarHeaderParameter['Content-Type'] = 'application/json';
+            localVarHeaderParameter['Accept'] = 'application/json';
+
+            setSearchParams(localVarUrlObj, localVarQueryParameter);
+            let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
+            localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
+            localVarRequestOptions.data = serializeDataIfNeeded(artifactActionPreviewOpenAPIRequest, localVarRequestOptions, configuration)
+
+            return {
+                url: toPathString(localVarUrlObj),
+                options: localVarRequestOptions,
+            };
+        },
+        /**
+         *
          * @summary Preview a Workflow-owned artifact action
          * @param {string} sessionId
          * @param {string} slotId
@@ -42946,7 +42974,54 @@ export const WorkflowApiAxiosParamCreator = function (configuration?: Configurat
         },
         /**
          *
-         * @summary Sync an edited WriterDocument to Feishu
+         * @summary Save a Workflow slot item draft or checkpoint
+         * @param {string} sessionId
+         * @param {string} slotId
+         * @param {number} listIndex
+         * @param {SlotItemPatchOpenAPIRequest} slotItemPatchOpenAPIRequest
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatch: async (sessionId: string, slotId: string, listIndex: number, slotItemPatchOpenAPIRequest: SlotItemPatchOpenAPIRequest, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+            // verify required parameter 'sessionId' is not null or undefined
+            assertParamExists('apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatch', 'sessionId', sessionId)
+            // verify required parameter 'slotId' is not null or undefined
+            assertParamExists('apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatch', 'slotId', slotId)
+            // verify required parameter 'listIndex' is not null or undefined
+            assertParamExists('apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatch', 'listIndex', listIndex)
+            // verify required parameter 'slotItemPatchOpenAPIRequest' is not null or undefined
+            assertParamExists('apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatch', 'slotItemPatchOpenAPIRequest', slotItemPatchOpenAPIRequest)
+            const localVarPath = `/api/core/workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}`
+                .replace(`{${"session_id"}}`, encodeURIComponent(String(sessionId)))
+                .replace(`{${"slot_id"}}`, encodeURIComponent(String(slotId)))
+                .replace(`{${"list_index"}}`, encodeURIComponent(String(listIndex)));
+            // use dummy base URL string because the URL constructor only accepts absolute URLs.
+            const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+            let baseOptions;
+            if (configuration) {
+                baseOptions = configuration.baseOptions;
+            }
+
+            const localVarRequestOptions = { method: 'PATCH', ...baseOptions, ...options};
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+
+            localVarHeaderParameter['Content-Type'] = 'application/json';
+            localVarHeaderParameter['Accept'] = 'application/json';
+
+            setSearchParams(localVarUrlObj, localVarQueryParameter);
+            let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
+            localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
+            localVarRequestOptions.data = serializeDataIfNeeded(slotItemPatchOpenAPIRequest, localVarRequestOptions, configuration)
+
+            return {
+                url: toPathString(localVarUrlObj),
+                options: localVarRequestOptions,
+            };
+        },
+        /**
+         *
+         * @summary Sync an edited WriterDocument to its cloud provider
          * @param {string} sessionId
          * @param {string} slotId
          * @param {number} listIndex
@@ -42993,7 +43068,46 @@ export const WorkflowApiAxiosParamCreator = function (configuration?: Configurat
         },
         /**
          *
-         * @summary Write the active WriterDocument back to Feishu
+         * @summary Save an edited Writer document draft or checkpoint
+         * @param {string} sessionId
+         * @param {WriterDocumentSaveOpenAPIRequest} writerDocumentSaveOpenAPIRequest
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost: async (sessionId: string, writerDocumentSaveOpenAPIRequest: WriterDocumentSaveOpenAPIRequest, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+            // verify required parameter 'sessionId' is not null or undefined
+            assertParamExists('apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost', 'sessionId', sessionId)
+            // verify required parameter 'writerDocumentSaveOpenAPIRequest' is not null or undefined
+            assertParamExists('apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost', 'writerDocumentSaveOpenAPIRequest', writerDocumentSaveOpenAPIRequest)
+            const localVarPath = `/api/core/workflow-sessions/{session_id}/writer-document:save`
+                .replace(`{${"session_id"}}`, encodeURIComponent(String(sessionId)));
+            // use dummy base URL string because the URL constructor only accepts absolute URLs.
+            const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+            let baseOptions;
+            if (configuration) {
+                baseOptions = configuration.baseOptions;
+            }
+
+            const localVarRequestOptions = { method: 'POST', ...baseOptions, ...options};
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+
+            localVarHeaderParameter['Content-Type'] = 'application/json';
+            localVarHeaderParameter['Accept'] = 'application/json';
+
+            setSearchParams(localVarUrlObj, localVarQueryParameter);
+            let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
+            localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
+            localVarRequestOptions.data = serializeDataIfNeeded(writerDocumentSaveOpenAPIRequest, localVarRequestOptions, configuration)
+
+            return {
+                url: toPathString(localVarUrlObj),
+                options: localVarRequestOptions,
+            };
+        },
+        /**
+         *
+         * @summary Write the active WriterDocument back to its cloud provider
          * @param {string} sessionId
          * @param {WriterDocumentWriteBackOpenAPIRequest} writerDocumentWriteBackOpenAPIRequest
          * @param {*} [options] Override http request option.
@@ -43041,6 +43155,22 @@ export const WorkflowApiFp = function(configuration?: Configuration) {
     return {
         /**
          *
+         * @summary Execute a Workflow-owned artifact action
+         * @param {string} sessionId
+         * @param {string} slotId
+         * @param {number} listIndex
+         * @param {ArtifactActionPreviewOpenAPIRequest} artifactActionPreviewOpenAPIRequest
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        async apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePost(sessionId: string, slotId: string, listIndex: number, artifactActionPreviewOpenAPIRequest: ArtifactActionPreviewOpenAPIRequest, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<{ [key: string]: any; }>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePost(sessionId, slotId, listIndex, artifactActionPreviewOpenAPIRequest, options);
+            const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+            const localVarOperationServerBasePath = operationServerMap['WorkflowApi.apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePost']?.[localVarOperationServerIndex]?.url;
+            return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
+        },
+        /**
+         *
          * @summary Preview a Workflow-owned artifact action
          * @param {string} sessionId
          * @param {string} slotId
@@ -43057,7 +43187,23 @@ export const WorkflowApiFp = function(configuration?: Configuration) {
         },
         /**
          *
-         * @summary Sync an edited WriterDocument to Feishu
+         * @summary Save a Workflow slot item draft or checkpoint
+         * @param {string} sessionId
+         * @param {string} slotId
+         * @param {number} listIndex
+         * @param {SlotItemPatchOpenAPIRequest} slotItemPatchOpenAPIRequest
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        async apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatch(sessionId: string, slotId: string, listIndex: number, slotItemPatchOpenAPIRequest: SlotItemPatchOpenAPIRequest, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<{ [key: string]: any; }>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatch(sessionId, slotId, listIndex, slotItemPatchOpenAPIRequest, options);
+            const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+            const localVarOperationServerBasePath = operationServerMap['WorkflowApi.apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatch']?.[localVarOperationServerIndex]?.url;
+            return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
+        },
+        /**
+         *
+         * @summary Sync an edited WriterDocument to its cloud provider
          * @param {string} sessionId
          * @param {string} slotId
          * @param {number} listIndex
@@ -43073,7 +43219,21 @@ export const WorkflowApiFp = function(configuration?: Configuration) {
         },
         /**
          *
-         * @summary Write the active WriterDocument back to Feishu
+         * @summary Save an edited Writer document draft or checkpoint
+         * @param {string} sessionId
+         * @param {WriterDocumentSaveOpenAPIRequest} writerDocumentSaveOpenAPIRequest
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        async apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost(sessionId: string, writerDocumentSaveOpenAPIRequest: WriterDocumentSaveOpenAPIRequest, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<{ [key: string]: any; }>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost(sessionId, writerDocumentSaveOpenAPIRequest, options);
+            const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+            const localVarOperationServerBasePath = operationServerMap['WorkflowApi.apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost']?.[localVarOperationServerIndex]?.url;
+            return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
+        },
+        /**
+         *
+         * @summary Write the active WriterDocument back to its cloud provider
          * @param {string} sessionId
          * @param {WriterDocumentWriteBackOpenAPIRequest} writerDocumentWriteBackOpenAPIRequest
          * @param {*} [options] Override http request option.
@@ -43096,6 +43256,16 @@ export const WorkflowApiFactory = function (configuration?: Configuration, baseP
     return {
         /**
          *
+         * @summary Execute a Workflow-owned artifact action
+         * @param {WorkflowApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePostRequest} requestParameters Request parameters.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePost(requestParameters: WorkflowApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePostRequest, options?: RawAxiosRequestConfig): AxiosPromise<{ [key: string]: any; }> {
+            return localVarFp.apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePost(requestParameters.sessionId, requestParameters.slotId, requestParameters.listIndex, requestParameters.artifactActionPreviewOpenAPIRequest, options).then((request) => request(axios, basePath));
+        },
+        /**
+         *
          * @summary Preview a Workflow-owned artifact action
          * @param {WorkflowApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionPreviewPostRequest} requestParameters Request parameters.
          * @param {*} [options] Override http request option.
@@ -43106,7 +43276,17 @@ export const WorkflowApiFactory = function (configuration?: Configuration, baseP
         },
         /**
          *
-         * @summary Sync an edited WriterDocument to Feishu
+         * @summary Save a Workflow slot item draft or checkpoint
+         * @param {WorkflowApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatchRequest} requestParameters Request parameters.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatch(requestParameters: WorkflowApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatchRequest, options?: RawAxiosRequestConfig): AxiosPromise<{ [key: string]: any; }> {
+            return localVarFp.apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatch(requestParameters.sessionId, requestParameters.slotId, requestParameters.listIndex, requestParameters.slotItemPatchOpenAPIRequest, options).then((request) => request(axios, basePath));
+        },
+        /**
+         *
+         * @summary Sync an edited WriterDocument to its cloud provider
          * @param {WorkflowApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexSyncWriterDocumentPostRequest} requestParameters Request parameters.
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
@@ -43116,7 +43296,17 @@ export const WorkflowApiFactory = function (configuration?: Configuration, baseP
         },
         /**
          *
-         * @summary Write the active WriterDocument back to Feishu
+         * @summary Save an edited Writer document draft or checkpoint
+         * @param {WorkflowApiApiCoreWorkflowSessionsSessionIdWriterDocumentSavePostRequest} requestParameters Request parameters.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost(requestParameters: WorkflowApiApiCoreWorkflowSessionsSessionIdWriterDocumentSavePostRequest, options?: RawAxiosRequestConfig): AxiosPromise<{ [key: string]: any; }> {
+            return localVarFp.apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost(requestParameters.sessionId, requestParameters.writerDocumentSaveOpenAPIRequest, options).then((request) => request(axios, basePath));
+        },
+        /**
+         *
+         * @summary Write the active WriterDocument back to its cloud provider
          * @param {WorkflowApiApiCoreWorkflowSessionsSessionIdWriterDocumentWriteBackPostRequest} requestParameters Request parameters.
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
@@ -43126,6 +43316,19 @@ export const WorkflowApiFactory = function (configuration?: Configuration, baseP
         },
     };
 };
+
+/**
+ * Request parameters for apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePost operation in WorkflowApi.
+ */
+export interface WorkflowApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePostRequest {
+    readonly sessionId: string
+
+    readonly slotId: string
+
+    readonly listIndex: number
+
+    readonly artifactActionPreviewOpenAPIRequest: ArtifactActionPreviewOpenAPIRequest
+}
 
 /**
  * Request parameters for apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionPreviewPost operation in WorkflowApi.
@@ -43141,6 +43344,19 @@ export interface WorkflowApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxL
 }
 
 /**
+ * Request parameters for apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatch operation in WorkflowApi.
+ */
+export interface WorkflowApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatchRequest {
+    readonly sessionId: string
+
+    readonly slotId: string
+
+    readonly listIndex: number
+
+    readonly slotItemPatchOpenAPIRequest: SlotItemPatchOpenAPIRequest
+}
+
+/**
  * Request parameters for apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexSyncWriterDocumentPost operation in WorkflowApi.
  */
 export interface WorkflowApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexSyncWriterDocumentPostRequest {
@@ -43151,6 +43367,15 @@ export interface WorkflowApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxL
     readonly listIndex: number
 
     readonly writerDocumentSyncOpenAPIRequest: WriterDocumentSyncOpenAPIRequest
+}
+
+/**
+ * Request parameters for apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost operation in WorkflowApi.
+ */
+export interface WorkflowApiApiCoreWorkflowSessionsSessionIdWriterDocumentSavePostRequest {
+    readonly sessionId: string
+
+    readonly writerDocumentSaveOpenAPIRequest: WriterDocumentSaveOpenAPIRequest
 }
 
 /**
@@ -43168,6 +43393,17 @@ export interface WorkflowApiApiCoreWorkflowSessionsSessionIdWriterDocumentWriteB
 export class WorkflowApi extends BaseAPI {
     /**
      *
+     * @summary Execute a Workflow-owned artifact action
+     * @param {WorkflowApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePostRequest} requestParameters Request parameters.
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    public apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePost(requestParameters: WorkflowApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePostRequest, options?: RawAxiosRequestConfig) {
+        return WorkflowApiFp(this.configuration).apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionExecutePost(requestParameters.sessionId, requestParameters.slotId, requestParameters.listIndex, requestParameters.artifactActionPreviewOpenAPIRequest, options).then((request) => request(this.axios, this.basePath));
+    }
+
+    /**
+     *
      * @summary Preview a Workflow-owned artifact action
      * @param {WorkflowApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexActionPreviewPostRequest} requestParameters Request parameters.
      * @param {*} [options] Override http request option.
@@ -43179,7 +43415,18 @@ export class WorkflowApi extends BaseAPI {
 
     /**
      *
-     * @summary Sync an edited WriterDocument to Feishu
+     * @summary Save a Workflow slot item draft or checkpoint
+     * @param {WorkflowApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatchRequest} requestParameters Request parameters.
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    public apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatch(requestParameters: WorkflowApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatchRequest, options?: RawAxiosRequestConfig) {
+        return WorkflowApiFp(this.configuration).apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexPatch(requestParameters.sessionId, requestParameters.slotId, requestParameters.listIndex, requestParameters.slotItemPatchOpenAPIRequest, options).then((request) => request(this.axios, this.basePath));
+    }
+
+    /**
+     *
+     * @summary Sync an edited WriterDocument to its cloud provider
      * @param {WorkflowApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexSyncWriterDocumentPostRequest} requestParameters Request parameters.
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
@@ -43190,7 +43437,18 @@ export class WorkflowApi extends BaseAPI {
 
     /**
      *
-     * @summary Write the active WriterDocument back to Feishu
+     * @summary Save an edited Writer document draft or checkpoint
+     * @param {WorkflowApiApiCoreWorkflowSessionsSessionIdWriterDocumentSavePostRequest} requestParameters Request parameters.
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    public apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost(requestParameters: WorkflowApiApiCoreWorkflowSessionsSessionIdWriterDocumentSavePostRequest, options?: RawAxiosRequestConfig) {
+        return WorkflowApiFp(this.configuration).apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost(requestParameters.sessionId, requestParameters.writerDocumentSaveOpenAPIRequest, options).then((request) => request(this.axios, this.basePath));
+    }
+
+    /**
+     *
+     * @summary Write the active WriterDocument back to its cloud provider
      * @param {WorkflowApiApiCoreWorkflowSessionsSessionIdWriterDocumentWriteBackPostRequest} requestParameters Request parameters.
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
@@ -43209,7 +43467,7 @@ export const WriterApiAxiosParamCreator = function (configuration?: Configuratio
     return {
         /**
          *
-         * @summary Sync an edited WriterDocument to Feishu
+         * @summary Sync an edited WriterDocument to its cloud provider
          * @param {string} sessionId
          * @param {string} slotId
          * @param {number} listIndex
@@ -43256,7 +43514,46 @@ export const WriterApiAxiosParamCreator = function (configuration?: Configuratio
         },
         /**
          *
-         * @summary Write the active WriterDocument back to Feishu
+         * @summary Save an edited Writer document draft or checkpoint
+         * @param {string} sessionId
+         * @param {WriterDocumentSaveOpenAPIRequest} writerDocumentSaveOpenAPIRequest
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost: async (sessionId: string, writerDocumentSaveOpenAPIRequest: WriterDocumentSaveOpenAPIRequest, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+            // verify required parameter 'sessionId' is not null or undefined
+            assertParamExists('apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost', 'sessionId', sessionId)
+            // verify required parameter 'writerDocumentSaveOpenAPIRequest' is not null or undefined
+            assertParamExists('apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost', 'writerDocumentSaveOpenAPIRequest', writerDocumentSaveOpenAPIRequest)
+            const localVarPath = `/api/core/workflow-sessions/{session_id}/writer-document:save`
+                .replace(`{${"session_id"}}`, encodeURIComponent(String(sessionId)));
+            // use dummy base URL string because the URL constructor only accepts absolute URLs.
+            const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+            let baseOptions;
+            if (configuration) {
+                baseOptions = configuration.baseOptions;
+            }
+
+            const localVarRequestOptions = { method: 'POST', ...baseOptions, ...options};
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+
+            localVarHeaderParameter['Content-Type'] = 'application/json';
+            localVarHeaderParameter['Accept'] = 'application/json';
+
+            setSearchParams(localVarUrlObj, localVarQueryParameter);
+            let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
+            localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
+            localVarRequestOptions.data = serializeDataIfNeeded(writerDocumentSaveOpenAPIRequest, localVarRequestOptions, configuration)
+
+            return {
+                url: toPathString(localVarUrlObj),
+                options: localVarRequestOptions,
+            };
+        },
+        /**
+         *
+         * @summary Write the active WriterDocument back to its cloud provider
          * @param {string} sessionId
          * @param {WriterDocumentWriteBackOpenAPIRequest} writerDocumentWriteBackOpenAPIRequest
          * @param {*} [options] Override http request option.
@@ -43304,7 +43601,7 @@ export const WriterApiFp = function(configuration?: Configuration) {
     return {
         /**
          *
-         * @summary Sync an edited WriterDocument to Feishu
+         * @summary Sync an edited WriterDocument to its cloud provider
          * @param {string} sessionId
          * @param {string} slotId
          * @param {number} listIndex
@@ -43320,7 +43617,21 @@ export const WriterApiFp = function(configuration?: Configuration) {
         },
         /**
          *
-         * @summary Write the active WriterDocument back to Feishu
+         * @summary Save an edited Writer document draft or checkpoint
+         * @param {string} sessionId
+         * @param {WriterDocumentSaveOpenAPIRequest} writerDocumentSaveOpenAPIRequest
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        async apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost(sessionId: string, writerDocumentSaveOpenAPIRequest: WriterDocumentSaveOpenAPIRequest, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<{ [key: string]: any; }>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost(sessionId, writerDocumentSaveOpenAPIRequest, options);
+            const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+            const localVarOperationServerBasePath = operationServerMap['WriterApi.apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost']?.[localVarOperationServerIndex]?.url;
+            return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
+        },
+        /**
+         *
+         * @summary Write the active WriterDocument back to its cloud provider
          * @param {string} sessionId
          * @param {WriterDocumentWriteBackOpenAPIRequest} writerDocumentWriteBackOpenAPIRequest
          * @param {*} [options] Override http request option.
@@ -43343,7 +43654,7 @@ export const WriterApiFactory = function (configuration?: Configuration, basePat
     return {
         /**
          *
-         * @summary Sync an edited WriterDocument to Feishu
+         * @summary Sync an edited WriterDocument to its cloud provider
          * @param {WriterApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexSyncWriterDocumentPostRequest} requestParameters Request parameters.
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
@@ -43353,7 +43664,17 @@ export const WriterApiFactory = function (configuration?: Configuration, basePat
         },
         /**
          *
-         * @summary Write the active WriterDocument back to Feishu
+         * @summary Save an edited Writer document draft or checkpoint
+         * @param {WriterApiApiCoreWorkflowSessionsSessionIdWriterDocumentSavePostRequest} requestParameters Request parameters.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost(requestParameters: WriterApiApiCoreWorkflowSessionsSessionIdWriterDocumentSavePostRequest, options?: RawAxiosRequestConfig): AxiosPromise<{ [key: string]: any; }> {
+            return localVarFp.apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost(requestParameters.sessionId, requestParameters.writerDocumentSaveOpenAPIRequest, options).then((request) => request(axios, basePath));
+        },
+        /**
+         *
+         * @summary Write the active WriterDocument back to its cloud provider
          * @param {WriterApiApiCoreWorkflowSessionsSessionIdWriterDocumentWriteBackPostRequest} requestParameters Request parameters.
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
@@ -43378,6 +43699,15 @@ export interface WriterApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxLis
 }
 
 /**
+ * Request parameters for apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost operation in WriterApi.
+ */
+export interface WriterApiApiCoreWorkflowSessionsSessionIdWriterDocumentSavePostRequest {
+    readonly sessionId: string
+
+    readonly writerDocumentSaveOpenAPIRequest: WriterDocumentSaveOpenAPIRequest
+}
+
+/**
  * Request parameters for apiCoreWorkflowSessionsSessionIdWriterDocumentWriteBackPost operation in WriterApi.
  */
 export interface WriterApiApiCoreWorkflowSessionsSessionIdWriterDocumentWriteBackPostRequest {
@@ -43392,7 +43722,7 @@ export interface WriterApiApiCoreWorkflowSessionsSessionIdWriterDocumentWriteBac
 export class WriterApi extends BaseAPI {
     /**
      *
-     * @summary Sync an edited WriterDocument to Feishu
+     * @summary Sync an edited WriterDocument to its cloud provider
      * @param {WriterApiApiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexSyncWriterDocumentPostRequest} requestParameters Request parameters.
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
@@ -43403,7 +43733,18 @@ export class WriterApi extends BaseAPI {
 
     /**
      *
-     * @summary Write the active WriterDocument back to Feishu
+     * @summary Save an edited Writer document draft or checkpoint
+     * @param {WriterApiApiCoreWorkflowSessionsSessionIdWriterDocumentSavePostRequest} requestParameters Request parameters.
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    public apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost(requestParameters: WriterApiApiCoreWorkflowSessionsSessionIdWriterDocumentSavePostRequest, options?: RawAxiosRequestConfig) {
+        return WriterApiFp(this.configuration).apiCoreWorkflowSessionsSessionIdWriterDocumentSavePost(requestParameters.sessionId, requestParameters.writerDocumentSaveOpenAPIRequest, options).then((request) => request(this.axios, this.basePath));
+    }
+
+    /**
+     *
+     * @summary Write the active WriterDocument back to its cloud provider
      * @param {WriterApiApiCoreWorkflowSessionsSessionIdWriterDocumentWriteBackPostRequest} requestParameters Request parameters.
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"sort"
@@ -320,6 +321,9 @@ func (b *schemaBuilder) inlineSchemaForType(t reflect.Type) map[string]any {
 func inlineSpecialSchema(t reflect.Type) map[string]any {
 	if t.PkgPath() == "time" && t.Name() == "Time" {
 		return map[string]any{"type": "string", "format": "date-time"}
+	}
+	if t.PkgPath() == "encoding/json" && t.Name() == "RawMessage" {
+		return map[string]any{}
 	}
 	return nil
 }
@@ -2352,9 +2356,11 @@ type writerDocumentSyncPathParams struct {
 }
 
 type writerDocumentSyncOpenAPIRequest struct {
-	BaseRevision    int            `json:"base_revision"`
-	SourceDocument  map[string]any `json:"source_document"`
-	RevisedDocument map[string]any `json:"revised_document"`
+	BaseRevision     int             `json:"base_revision"`
+	BaseDraftVersion *int64          `json:"base_draft_version,omitempty"`
+	SourceDocument   json.RawMessage `json:"source_document" required:"true"`
+	RevisedDocument  json.RawMessage `json:"revised_document" required:"true"`
+	Mode             string          `json:"mode,omitempty" enum:"draft,checkpoint"`
 }
 
 type writerDocumentWriteBackPathParams struct {
@@ -2362,9 +2368,13 @@ type writerDocumentWriteBackPathParams struct {
 }
 
 type writerDocumentWriteBackOpenAPIRequest struct {
-	BaseRevision int    `json:"base_revision"`
-	Provider     string `json:"provider,omitempty"`
-	Template     string `json:"template,omitempty"`
+	BaseRevision     int             `json:"base_revision"`
+	BaseDraftVersion *int64          `json:"base_draft_version,omitempty"`
+	Slot             string          `json:"slot,omitempty"`
+	Provider         string          `json:"provider,omitempty"`
+	Template         string          `json:"template,omitempty"`
+	SourceDocument   json.RawMessage `json:"source_document,omitempty"`
+	RevisedDocument  json.RawMessage `json:"revised_document,omitempty"`
 }
 
 type artifactActionPathParams struct {
@@ -2374,9 +2384,28 @@ type artifactActionPathParams struct {
 }
 
 type artifactActionPreviewOpenAPIRequest struct {
-	Action       string         `json:"action"`
-	BaseRevision int            `json:"base_revision"`
-	Input        map[string]any `json:"input"`
+	Action           string                     `json:"action"`
+	BaseRevision     int                        `json:"base_revision"`
+	BaseDraftVersion *int64                     `json:"base_draft_version,omitempty"`
+	Input            map[string]json.RawMessage `json:"input" required:"true"`
+}
+
+type slotItemPatchOpenAPIRequest struct {
+	Value            json.RawMessage `json:"value" required:"true"`
+	ContentType      string          `json:"content_type,omitempty"`
+	Caption          *string         `json:"caption,omitempty"`
+	Mode             string          `json:"mode,omitempty" enum:"draft,checkpoint"`
+	BaseRevision     int             `json:"base_revision"`
+	BaseDraftVersion *int64          `json:"base_draft_version,omitempty"`
+}
+
+type writerDocumentSaveOpenAPIRequest struct {
+	BaseRevision     int             `json:"base_revision"`
+	BaseDraftVersion *int64          `json:"base_draft_version,omitempty"`
+	Document         json.RawMessage `json:"document" required:"true"`
+	Slot             string          `json:"slot,omitempty"`
+	NumberingUpdate  map[string]any  `json:"numbering_update,omitempty"`
+	Mode             string          `json:"mode,omitempty" enum:"draft,checkpoint"`
 }
 
 type translationOpenAPIRequest struct {
@@ -2446,6 +2475,15 @@ func registeredCoreOperations() []openAPIOperation {
 	}
 	return []openAPIOperation{
 		{
+			Method:      "PATCH",
+			Path:        "/workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}",
+			Summary:     "Save a Workflow slot item draft or checkpoint",
+			Tags:        []string{"workflow"},
+			PathParams:  artifactActionPathParams{},
+			RequestBody: jsonBodyOf(slotItemPatchOpenAPIRequest{}, true),
+			Responses:   map[int]openAPIResponse{200: evoJSONResp("Workflow slot item save result")},
+		},
+		{
 			Method:      "POST",
 			Path:        "/workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}:action-preview",
 			Summary:     "Preview a Workflow-owned artifact action",
@@ -2453,6 +2491,24 @@ func registeredCoreOperations() []openAPIOperation {
 			PathParams:  artifactActionPathParams{},
 			RequestBody: jsonBodyOf(artifactActionPreviewOpenAPIRequest{}, true),
 			Responses:   map[int]openAPIResponse{200: evoJSONResp("Artifact action preview")},
+		},
+		{
+			Method:      "POST",
+			Path:        "/workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}:action-execute",
+			Summary:     "Execute a Workflow-owned artifact action",
+			Tags:        []string{"workflow"},
+			PathParams:  artifactActionPathParams{},
+			RequestBody: jsonBodyOf(artifactActionPreviewOpenAPIRequest{}, true),
+			Responses:   map[int]openAPIResponse{200: evoJSONResp("Artifact action execute result")},
+		},
+		{
+			Method:      "POST",
+			Path:        "/workflow-sessions/{session_id}/writer-document:save",
+			Summary:     "Save an edited Writer document draft or checkpoint",
+			Tags:        []string{"workflow", "writer"},
+			PathParams:  writerDocumentWriteBackPathParams{},
+			RequestBody: jsonBodyOf(writerDocumentSaveOpenAPIRequest{}, true),
+			Responses:   map[int]openAPIResponse{200: evoJSONResp("Writer document save result")},
 		},
 		{
 			Method:      "POST",

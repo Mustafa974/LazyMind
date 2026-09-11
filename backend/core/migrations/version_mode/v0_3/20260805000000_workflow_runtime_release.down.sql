@@ -2,6 +2,14 @@ DROP TABLE IF EXISTS conversation_fork_requests;
 DROP TABLE IF EXISTS conversation_fork_origins;
 
 -- +migrate Dialect postgres
+ALTER TABLE plugin_human_artifacts
+    DROP COLUMN IF EXISTS draft_version;
+
+-- +migrate Dialect sqlite
+ALTER TABLE plugin_human_artifacts
+    DROP COLUMN draft_version;
+
+-- +migrate Dialect postgres
 DROP TABLE IF EXISTS public.workflow_approval_preferences;
 ALTER TABLE public.task_center_tasks DROP CONSTRAINT IF EXISTS chk_tct_task_type;
 UPDATE public.task_center_tasks SET task_type = 'plugin_run' WHERE task_type = 'workflow_run';

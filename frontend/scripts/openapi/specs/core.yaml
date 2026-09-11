@@ -3822,10 +3822,10 @@ components:
                 cache_hit_rate:
                     format: double
                     type: number
-                cached_tokens:
+                cache_input_tokens:
                     format: int64
                     type: integer
-                cache_input_tokens:
+                cached_tokens:
                     format: int64
                     type: integer
                 context_input_tokens:
@@ -4632,11 +4632,7 @@ components:
                     type: string
                 id:
                     type: string
-                input_schema:
-                    items:
-                        minimum: 0
-                        type: integer
-                    type: array
+                input_schema: {}
                 tool_name:
                     type: string
             required:
@@ -5380,16 +5376,18 @@ components:
             properties:
                 action:
                     type: string
+                base_draft_version:
+                    format: int64
+                    type: integer
                 base_revision:
                     type: integer
                 input:
-                    additionalProperties:
-                        properties: {}
-                        type: object
+                    additionalProperties: {}
                     type: object
             required:
                 - action
                 - base_revision
+                - input
             type: object
         builtinSkillListOpenAPIResponse:
             properties:
@@ -8035,6 +8033,27 @@ components:
             required:
                 - skill_id
             type: object
+        slotItemPatchOpenAPIRequest:
+            properties:
+                base_draft_version:
+                    format: int64
+                    type: integer
+                base_revision:
+                    type: integer
+                caption:
+                    type: string
+                content_type:
+                    type: string
+                mode:
+                    enum:
+                        - draft
+                        - checkpoint
+                    type: string
+                value: {}
+            required:
+                - base_revision
+                - value
+            type: object
         toolGroupOpenAPIResponse:
             properties:
                 active:
@@ -8094,6 +8113,35 @@ components:
             required:
                 - disabled
                 - name
+            type: object
+        translationOpenAPIRequest:
+            properties:
+                target:
+                    type: string
+                text:
+                    type: string
+            required:
+                - text
+            type: object
+        translationOpenAPIResponse:
+            properties:
+                source:
+                    type: string
+                target:
+                    type: string
+                translated_text:
+                    type: string
+            required:
+                - source
+                - target
+                - translated_text
+            type: object
+        translationStatusOpenAPIResponse:
+            properties:
+                configured:
+                    type: boolean
+            required:
+                - configured
             type: object
         updateModelProviderGroupOpenAPIRequest:
             properties:
@@ -8288,27 +8336,64 @@ components:
             required:
                 - ready
             type: object
-        writerDocumentSyncOpenAPIRequest:
+        writerDocumentSaveOpenAPIRequest:
             properties:
+                base_draft_version:
+                    format: int64
+                    type: integer
                 base_revision:
                     type: integer
-                revised_document:
+                document: {}
+                mode:
+                    enum:
+                        - draft
+                        - checkpoint
+                    type: string
+                numbering_update:
                     additionalProperties:
                         properties: {}
                         type: object
                     type: object
-                source_document:
-                    additionalProperties:
-                        properties: {}
-                        type: object
-                    type: object
+                slot:
+                    type: string
             required:
                 - base_revision
+                - document
+            type: object
+        writerDocumentSyncOpenAPIRequest:
+            properties:
+                base_draft_version:
+                    format: int64
+                    type: integer
+                base_revision:
+                    type: integer
+                mode:
+                    enum:
+                        - draft
+                        - checkpoint
+                    type: string
+                revised_document: {}
+                source_document: {}
+            required:
+                - base_revision
+                - revised_document
+                - source_document
             type: object
         writerDocumentWriteBackOpenAPIRequest:
             properties:
+                base_draft_version:
+                    format: int64
+                    type: integer
                 base_revision:
                     type: integer
+                provider:
+                    type: string
+                revised_document: {}
+                slot:
+                    type: string
+                source_document: {}
+                template:
+                    type: string
             required:
                 - base_revision
             type: object
@@ -16500,6 +16585,38 @@ paths:
             summary: Enable tool
             tags:
                 - tools
+    /api/core/translation/status:
+        get:
+            description: Reports whether the current user has a selected translation provider with credentials. Secrets are never returned.
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/translationStatusOpenAPIResponse'
+                    description: Translation configuration status
+            summary: Get translation configuration status
+            tags:
+                - translation
+    /api/core/translation:translate:
+        post:
+            description: Translates up to 5000 characters with the current user's server-side translation credential.
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/translationOpenAPIRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/translationOpenAPIResponse'
+                    description: Translated text
+            summary: Translate selected document text
+            tags:
+                - translation
     /api/core/upload_files:
         post:
             responses:
@@ -17437,11 +17554,24 @@ paths:
                   name: list_index
                   required: true
                   schema:
-                    type: string
+                    type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/slotItemPatchOpenAPIRequest'
+                required: true
             responses:
                 "200":
-                    description: OK
-            summary: PATCH /workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}
+                    content:
+                        application/json:
+                            schema:
+                                additionalProperties: true
+                                type: object
+                    description: Workflow slot item save result
+            summary: Save a Workflow slot item draft or checkpoint
+            tags:
+                - workflow
     /api/core/workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/caption:
         patch:
             parameters:
@@ -17525,11 +17655,24 @@ paths:
                   name: list_index
                   required: true
                   schema:
-                    type: string
+                    type: integer
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/artifactActionPreviewOpenAPIRequest'
+                required: true
             responses:
                 "200":
-                    description: OK
-            summary: POST /workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}:action-execute
+                    content:
+                        application/json:
+                            schema:
+                                additionalProperties: true
+                                type: object
+                    description: Artifact action execute result
+            summary: Execute a Workflow-owned artifact action
+            tags:
+                - workflow
     /api/core/workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}:action-preview:
         post:
             parameters:
@@ -17597,7 +17740,7 @@ paths:
                                 additionalProperties: true
                                 type: object
                     description: WriterDocument sync result
-            summary: Sync an edited WriterDocument to Feishu
+            summary: Sync an edited WriterDocument to its cloud provider
             tags:
                 - workflow
                 - writer
@@ -17678,10 +17821,24 @@ paths:
                   required: true
                   schema:
                     type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/writerDocumentSaveOpenAPIRequest'
+                required: true
             responses:
                 "200":
-                    description: OK
-            summary: POST /workflow-sessions/{session_id}/writer-document:save
+                    content:
+                        application/json:
+                            schema:
+                                additionalProperties: true
+                                type: object
+                    description: Writer document save result
+            summary: Save an edited Writer document draft or checkpoint
+            tags:
+                - workflow
+                - writer
     /api/core/workflow-sessions/{session_id}/writer-document:write-back:
         post:
             parameters:
@@ -17704,7 +17861,7 @@ paths:
                                 additionalProperties: true
                                 type: object
                     description: WriterDocument write-back result
-            summary: Write the active WriterDocument back to Feishu
+            summary: Write the active WriterDocument back to its cloud provider
             tags:
                 - workflow
                 - writer

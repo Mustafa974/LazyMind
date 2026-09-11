@@ -88,6 +88,7 @@ type slotDTO struct {
 	CreatedAt     time.Time       `json:"created_at"`
 	ContentType   string          `json:"content_type,omitempty"`
 	ArtifactValue json.RawMessage `json:"artifact_value,omitempty"`
+	DraftVersion  int64           `json:"draft_version,omitempty"`
 	Caption       *string         `json:"caption,omitempty"`
 	ChangeSource  string          `json:"change_source,omitempty"`
 	// Write-back state is calculated from the server-side Writer revision history
@@ -275,6 +276,7 @@ func enrichSlots(ctx context.Context, db *gorm.DB, sessionID string, slots []slo
 				resolvedContentType = resolveContentType(ha.ContentType, ha.Value)
 				resolved = enrichArtifactValue(ha.Value, resolvedContentType)
 				resolvedCaption = ha.Caption
+				slot.DraftVersion = ha.DraftVersion
 			} else {
 				fmt.Printf("[enrichSlots] WARN: HumanArtifactID=%s not found for slot_id=%s list_index=%v: %v\n",
 					*slot.HumanArtifactID, slot.SlotID, slot.ListIndex, haErr)
@@ -911,6 +913,7 @@ func CreateSlotItem(w http.ResponseWriter, r *http.Request) {
 		sessionID, slotID, anyRev.Slot, anyRev.StepID, attempt,
 		"list", nil,
 		body.ContentType, resolveValuePaths(body.Value), body.Caption,
+		"human", nil, nil,
 	)
 	if err != nil {
 		common.ReplyErr(w, "create item failed", http.StatusInternalServerError)
@@ -1039,7 +1042,7 @@ func SaveArtifactByKey(w http.ResponseWriter, r *http.Request) {
 
 	rev, err := WriteSlotRevisionWithHumanArtifact(ctx, db,
 		sessionID, slotID, body.Slot, stepID, attempt, cardinality, listIndex,
-		body.ContentType, body.Value, body.Caption)
+		body.ContentType, body.Value, body.Caption, "human", nil, nil)
 	if err != nil {
 		common.ReplyErr(w, "write slot revision failed", http.StatusInternalServerError)
 		return

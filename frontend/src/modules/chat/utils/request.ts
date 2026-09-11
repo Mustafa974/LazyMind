@@ -205,6 +205,7 @@ export type SlotSaveMode = 'draft' | 'checkpoint';
 
 export interface SyncWriterDocumentRequest {
   base_revision: number;
+  base_draft_version?: number;
   source_document: Record<string, unknown>;
   revised_document: Record<string, unknown>;
   /** draft: overwrite selected human artifact; checkpoint (default): new revision. */
@@ -223,6 +224,7 @@ export interface SyncWriterDocumentPatchResult {
 export interface SyncWriterDocumentResult {
   status: "synced" | "no_change";
   revision: number;
+  draft_version: number;
   provider_synced: boolean;
   artifact_saved: boolean;
   patch_result: SyncWriterDocumentPatchResult;
@@ -232,6 +234,7 @@ export interface SyncWriterDocumentResult {
 export interface WriteBackWriterDocumentResult {
   status: "synced";
   revision: number;
+  draft_version: number;
   provider_synced: boolean;
   artifact_saved: boolean;
   patch_result: SyncWriterDocumentPatchResult;
@@ -297,6 +300,7 @@ export interface RenderWriterDocumentResult {
 
 export interface SaveWriterDocumentResult extends RenderWriterDocumentResult {
   revision: number;
+  draft_version: number;
 }
 
 export type RewriteSelection =
@@ -324,6 +328,7 @@ export type RewriteSelection =
 export interface RewriteSelectionPreviewRequest {
   action: 'rewrite_selection';
   base_revision: number;
+  base_draft_version?: number;
   input: {
     instruction: string;
     selection: RewriteSelection;
@@ -334,6 +339,7 @@ export interface RewriteSelectionPreview {
   status: 'ready';
   action: 'rewrite_selection';
   base_revision: number;
+  base_draft_version?: number;
   representation: 'ir' | 'markdown' | 'ppt_html';
   target: {
     type: 'block';
@@ -373,6 +379,7 @@ export interface ConvertDocumentResult {
 export interface ExecuteArtifactActionRequest {
   action: 'rewrite_selection';
   base_revision: number;
+  base_draft_version?: number;
   input: { commit_token: string };
 }
 
@@ -381,6 +388,7 @@ export interface ExecuteArtifactActionResult {
   action: 'rewrite_selection';
   base_revision: number;
   revision: number;
+  draft_version: number;
   representation: 'ppt_html';
   artifact: RewriteSelectionPreview['artifact'];
 }
@@ -468,6 +476,7 @@ export function WorkflowSessionApi() {
       contentType?: string,
       mode?: SlotSaveMode,
       baseRevision?: number,
+      baseDraftVersion?: number,
       options?: RawAxiosRequestConfig,
     ) {
       return axiosInstance.patch(
@@ -477,6 +486,7 @@ export function WorkflowSessionApi() {
           ...(contentType ? { content_type: contentType } : {}),
           ...(mode ? { mode } : {}),
           ...(baseRevision !== undefined ? { base_revision: baseRevision } : {}),
+          ...(baseDraftVersion !== undefined ? { base_draft_version: baseDraftVersion } : {}),
         },
         options,
       );
@@ -564,6 +574,7 @@ export function WorkflowSessionApi() {
     saveWriterDocument(
       sessionId: string,
       baseRevision: number,
+      baseDraftVersion: number | undefined,
       document: RenderedWriterDocument,
       slot: WriterDocumentSlot,
       mode: SlotSaveMode,
@@ -572,6 +583,7 @@ export function WorkflowSessionApi() {
     ) {
       const payload: Record<string, unknown> = {
         base_revision: baseRevision,
+        ...(baseDraftVersion !== undefined ? { base_draft_version: baseDraftVersion } : {}),
         document,
         mode,
         ...(numberingUpdate ? { numbering_update: numberingUpdate } : {}),
@@ -590,6 +602,7 @@ export function WorkflowSessionApi() {
     writeBackWriterDocument(
       sessionId: string,
       baseRevision: number,
+      baseDraftVersion: number | undefined,
       sourceDocument?: Record<string, unknown>,
       revisedDocument?: Record<string, unknown>,
       slot?: WriterDocumentSlot,
@@ -597,7 +610,10 @@ export function WorkflowSessionApi() {
       template?: string,
       options?: RawAxiosRequestConfig,
     ) {
-      const payload: Record<string, unknown> = { base_revision: baseRevision };
+      const payload: Record<string, unknown> = {
+        base_revision: baseRevision,
+        ...(baseDraftVersion !== undefined ? { base_draft_version: baseDraftVersion } : {}),
+      };
       // Keep the legacy IR payload compatible while the server treats the
       // selected revision as the authoritative write-back input.
       if (sourceDocument !== undefined) payload.source_document = sourceDocument;

@@ -697,7 +697,12 @@ func GetSlotOrder(ctx context.Context, db *gorm.DB, sessionID, slotID string) (*
 // sortOrderSeq is the desired new sequence of sort_order values (1-based) computed from
 // the current order; the caller must have already translated them to list_index values.
 // version is used for optimistic locking; a mismatch returns ErrConflict.
-var ErrConflict = errors.New("version conflict")
+var (
+	ErrConflict             = errors.New("version conflict")
+	ErrRevisionRequired     = errors.New("revision required")
+	ErrDraftVersionConflict = errors.New("draft version conflict")
+	ErrDraftVersionRequired = errors.New("draft version required")
+)
 
 func ReorderSlot(ctx context.Context, db *gorm.DB,
 	sessionID, slotID string, newListIndexOrder []int, version int) error {
@@ -1119,13 +1124,10 @@ func UpdateSelectedHumanArtifactValue(
 	ctx context.Context, db *gorm.DB,
 	sessionID, slotID string, listIndex *int,
 	contentType string, value json.RawMessage, caption *string,
-	expectedRevision ...*int,
-) (*orm.WorkflowSlotRevision, bool, error) {
+	expectedRevision *int, expectedDraftVersion *int64,
+) (*orm.WorkflowSlotRevision, int64, bool, error) {
 	var selected orm.WorkflowSlotRevision
-	var expected *int
-	if len(expectedRevision) > 0 {
-		expected = expectedRevision[0]
-	}
+	var draftVersion int64
 	updated := false
 
 	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -1137,34 +1139,58 @@ func UpdateSelectedHumanArtifactValue(
 			q = q.Where("list_index = ?", *listIndex)
 		}
 		if err := q.First(&selected).Error; err != nil {
+			if expectedRevision != nil && errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrConflict
+			}
 			return err
 		}
-		if expected != nil && selected.Revision != *expected {
+		if expectedRevision != nil && selected.Revision != *expectedRevision {
 			return ErrConflict
 		}
-		if selected.ChangeSource != "human" || selected.HumanArtifactID == nil || *selected.HumanArtifactID == "" {
+		if selected.HumanArtifactID == nil || *selected.HumanArtifactID == "" {
+			return nil
+		}
+		if expectedDraftVersion == nil {
+			return ErrDraftVersionRequired
+		}
+		if selected.ChangeSource != "human" {
+			var artifact orm.WorkflowHumanArtifact
+			if err := tx.Select("draft_version").
+				Where("id = ?", *selected.HumanArtifactID).
+				First(&artifact).Error; err != nil {
+				return err
+			}
+			if artifact.DraftVersion != *expectedDraftVersion {
+				return ErrDraftVersionConflict
+			}
 			return nil
 		}
 
 		updates := map[string]any{
-			"content_type": contentType,
-			"value":        value,
+			"content_type":  contentType,
+			"draft_version": gorm.Expr("draft_version + 1"),
+			"value":         value,
 		}
 		if caption != nil {
 			updates["caption"] = caption
 		}
-		if err := tx.Model(&orm.WorkflowHumanArtifact{}).
-			Where("id = ?", *selected.HumanArtifactID).
-			Updates(updates).Error; err != nil {
-			return err
+		result := tx.Model(&orm.WorkflowHumanArtifact{}).
+			Where("id = ? AND draft_version = ?", *selected.HumanArtifactID, *expectedDraftVersion).
+			Updates(updates)
+		if result.Error != nil {
+			return result.Error
 		}
+		if result.RowsAffected != 1 {
+			return ErrDraftVersionConflict
+		}
+		draftVersion = *expectedDraftVersion + 1
 		updated = true
 		return nil
 	})
 	if err != nil {
-		return nil, false, err
+		return nil, 0, false, err
 	}
-	return &selected, updated, nil
+	return &selected, draftVersion, updated, nil
 }
 
 // WriteSlotRevisionWithHumanArtifact inserts a plugin_human_artifacts row and a new
@@ -1178,31 +1204,31 @@ func WriteSlotRevisionWithHumanArtifact(
 	sessionID, slotID, artifactKey, stepID string, attempt int,
 	cardinality string, listIndex *int,
 	contentType string, value json.RawMessage, caption *string,
-	expectedRevision ...*int,
+	changeSource string,
+	expectedRevision *int, expectedDraftVersion *int64,
 ) (*orm.WorkflowSlotRevision, error) {
 
+	if changeSource == "" {
+		changeSource = "human"
+	}
 	now := time.Now().UTC()
 	artifactID := "pha_" + common.GenerateID()
 	humanArt := &orm.WorkflowHumanArtifact{
-		ID:          artifactID,
-		SessionID:   sessionID,
-		Slot:        artifactKey,
-		ContentType: contentType,
-		Value:       value,
-		Caption:     caption,
-		CreatedAt:   now,
+		ID:           artifactID,
+		SessionID:    sessionID,
+		Slot:         artifactKey,
+		ContentType:  contentType,
+		Value:        value,
+		DraftVersion: 1,
+		Caption:      caption,
+		CreatedAt:    now,
 	}
 
 	var revision int
 	var revisionID string
 	var finalListIndex *int
-	var expected *int
-	if len(expectedRevision) > 0 {
-		expected = expectedRevision[0]
-	}
-
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if expected != nil {
+		if expectedRevision != nil {
 			var current orm.WorkflowSlotRevision
 			q := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 				Where("session_id = ? AND slot_id = ? AND selected = ?", sessionID, slotID, true)
@@ -1212,10 +1238,27 @@ func WriteSlotRevisionWithHumanArtifact(
 				q = q.Where("list_index = ?", *listIndex)
 			}
 			if err := q.First(&current).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return ErrConflict
+				}
 				return err
 			}
-			if current.Revision != *expected {
+			if current.Revision != *expectedRevision {
 				return ErrConflict
+			}
+			if current.HumanArtifactID != nil && *current.HumanArtifactID != "" {
+				if expectedDraftVersion == nil {
+					return ErrDraftVersionRequired
+				}
+				guard := tx.Model(&orm.WorkflowHumanArtifact{}).
+					Where("id = ? AND draft_version = ?", *current.HumanArtifactID, *expectedDraftVersion).
+					UpdateColumn("draft_version", gorm.Expr("draft_version"))
+				if guard.Error != nil {
+					return guard.Error
+				}
+				if guard.RowsAffected != 1 {
+					return ErrDraftVersionConflict
+				}
 			}
 		}
 		if err := tx.Create(humanArt).Error; err != nil {
@@ -1270,7 +1313,7 @@ func WriteSlotRevisionWithHumanArtifact(
 			Revision:        revision,
 			ListIndex:       finalListIndex,
 			Selected:        true,
-			ChangeSource:    "human",
+			ChangeSource:    changeSource,
 			HumanArtifactID: &artifactID,
 			Slot:            artifactKey,
 			StepID:          stepID,

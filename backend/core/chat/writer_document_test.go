@@ -3,11 +3,14 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,11 +20,12 @@ import (
 	"lazymind/core/common"
 	"lazymind/core/common/orm"
 	"lazymind/core/store"
+	"lazymind/core/workflow"
 )
 
 func TestWriterSyncReplyUsesProviderSynced(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	writerSyncReply(recorder, "synced", 2, true, &algo.WriterDocumentSyncResponse{
+	writerSyncReply(recorder, "synced", 2, 3, true, &algo.WriterDocumentSyncResponse{
 		Success:        true,
 		ProviderSynced: true,
 		PatchResult:    json.RawMessage(`{"success":true}`),
@@ -33,6 +37,9 @@ func TestWriterSyncReplyUsesProviderSynced(t *testing.T) {
 	body := recorder.Body.String()
 	if !strings.Contains(body, `"provider_synced":true`) {
 		t.Fatalf("provider_synced missing from response: %s", body)
+	}
+	if !strings.Contains(body, `"draft_version":3`) {
+		t.Fatalf("draft_version missing from response: %s", body)
 	}
 	if strings.Contains(body, "feishu_synced") {
 		t.Fatalf("legacy sync field leaked into response: %s", body)
@@ -51,6 +58,200 @@ func TestWriterSyncStatus(t *testing.T) {
 		if got := writerSyncStatus(input); got != want {
 			t.Errorf("writerSyncStatus(%d) = %d, want %d", input, got, want)
 		}
+	}
+}
+
+func TestValidateWriterDraftVersionUsesArtifactBacking(t *testing.T) {
+	for _, changeSource := range []string{"human", "provider_sync", "host"} {
+		t.Run(changeSource, func(t *testing.T) {
+			db := orm.MigrateTestDB(t, &orm.WorkflowHumanArtifact{})
+			humanID := "artifact-" + changeSource
+			if err := db.Create(&orm.WorkflowHumanArtifact{
+				ID: humanID, SessionID: "session", Slot: "draft_document",
+				ContentType: "json", Value: json.RawMessage(`{"data":"draft"}`),
+				DraftVersion: 2, CreatedAt: time.Now().UTC(),
+			}).Error; err != nil {
+				t.Fatalf("seed artifact: %v", err)
+			}
+			revision := orm.WorkflowSlotRevision{
+				ChangeSource: changeSource, HumanArtifactID: &humanID,
+			}
+			if err := validateWriterDraftVersion(t.Context(), db.DB, revision, nil); !errors.Is(err, workflow.ErrDraftVersionRequired) {
+				t.Fatalf("missing version error = %v, want DRAFT_VERSION_REQUIRED", err)
+			}
+			stale := int64(1)
+			if err := validateWriterDraftVersion(t.Context(), db.DB, revision, &stale); !errors.Is(err, workflow.ErrDraftVersionConflict) {
+				t.Fatalf("stale version error = %v, want DRAFT_VERSION_CONFLICT", err)
+			}
+			current := int64(2)
+			if err := validateWriterDraftVersion(t.Context(), db.DB, revision, &current); err != nil {
+				t.Fatalf("current version: %v", err)
+			}
+		})
+	}
+}
+
+func TestSyncWriterDocumentPersistsProviderSyncRevision(t *testing.T) {
+	var providerCalls atomic.Int64
+	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/v1/cloud/connections/internal/chat-enabled") &&
+			r.URL.Query().Get("provider") == "notion":
+			_, _ = w.Write([]byte(`{"data":{"items":[{"connection_id":"notion-1"}]}}`))
+		case strings.HasSuffix(r.URL.Path, "/v1/cloud/connections/notion-1/token"):
+			_, _ = w.Write([]byte(`{"data":{"access_token":"notion-token"}}`))
+		case r.URL.Path == "/api/workflow/actions:invoke":
+			providerCalls.Add(1)
+			_, _ = w.Write([]byte(`{"result":{
+				"success":true,"changed":true,"provider_synced":true,
+				"patch_result":{"success":true},
+				"persisted_document":{"document_id":"doc-1","provider_binding":{"provider":"notion","document_id":"page-1"},"blocks":[]},
+				"provider":"notion"
+			}}`))
+		default:
+			_, _ = w.Write([]byte(`{"data":{"items":[]}}`))
+		}
+	}))
+	t.Cleanup(service.Close)
+	t.Setenv("LAZYMIND_AUTH_SERVICE_URL", service.URL)
+	t.Setenv("LAZYMIND_CHAT_SERVICE_URL", service.URL)
+
+	db := orm.MigrateTestDB(t,
+		&orm.WorkflowSession{}, &orm.WorkflowSlotRevision{}, &orm.WorkflowHumanArtifact{},
+		&orm.UserModelProvider{}, &orm.UserModelProviderGroup{}, &orm.UserSelectedProvider{},
+	)
+	store.Init(db.DB, db.DB, nil)
+	t.Cleanup(func() { store.Init(nil, nil, nil) })
+	now := time.Now().UTC()
+	if err := db.Create(&orm.WorkflowSession{
+		ID: "session", ConversationID: "conversation", WorkflowID: "writer-workflow",
+		Status: "completed", CreateUserID: "user-1", CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	humanID := "human-1"
+	if err := db.Create(&orm.WorkflowHumanArtifact{
+		ID: humanID, SessionID: "session", Slot: "provider_document", ContentType: "json",
+		Value:        json.RawMessage(`{"data":{"document_id":"doc-1","provider_binding":{"provider":"notion","document_id":"page-1"},"blocks":[]}}`),
+		DraftVersion: 1, CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed artifact: %v", err)
+	}
+	if err := db.Create(&orm.WorkflowSlotRevision{
+		ID: "revision-1", SessionID: "session", SlotID: "provider_document",
+		Revision: 1, Selected: true, ChangeSource: "human", HumanArtifactID: &humanID,
+		Slot: "provider_document", StepID: "write_document", Attempt: 1, CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed revision: %v", err)
+	}
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/core/workflow-sessions/session/slots/provider_document/items/idx/-1:sync-writer-document",
+		strings.NewReader(`{
+			"base_revision":1,"base_draft_version":1,"mode":"draft",
+			"source_document":{"document_id":"doc-1","provider_binding":{"provider":"notion","document_id":"page-1"},"blocks":[]},
+			"revised_document":{"document_id":"doc-1","provider_binding":{"provider":"notion","document_id":"page-1"},"blocks":[]}
+		}`),
+	)
+	req.Header.Set("X-User-Id", "user-1")
+	req = mux.SetURLVars(req, map[string]string{
+		"session_id": "session", "slot_id": "provider_document", "list_index": "-1",
+	})
+	recorder := httptest.NewRecorder()
+	SyncWriterDocument(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	var revisions []orm.WorkflowSlotRevision
+	if err := db.Where(
+		"session_id = ? AND slot_id = ?", "session", "provider_document",
+	).Order("revision ASC").Find(&revisions).Error; err != nil {
+		t.Fatalf("load revisions: %v", err)
+	}
+	if len(revisions) != 2 || revisions[0].Selected || !revisions[1].Selected ||
+		revisions[1].ChangeSource != "provider_sync" || revisions[1].HumanArtifactID == nil ||
+		*revisions[1].HumanArtifactID == humanID {
+		t.Fatalf("provider sync revisions = %#v", revisions)
+	}
+	var oldArtifact orm.WorkflowHumanArtifact
+	if err := db.First(&oldArtifact, "id = ?", humanID).Error; err != nil {
+		t.Fatalf("load old artifact: %v", err)
+	}
+	if oldArtifact.DraftVersion != 1 {
+		t.Fatalf("old artifact draft version=%d, want 1", oldArtifact.DraftVersion)
+	}
+	staleReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/core/workflow-sessions/session/slots/provider_document/items/idx/-1:sync-writer-document",
+		strings.NewReader(`{
+			"base_revision":1,"base_draft_version":1,"mode":"draft",
+			"source_document":{"document_id":"doc-1","provider_binding":{"provider":"notion","document_id":"page-1"},"blocks":[]},
+			"revised_document":{"document_id":"doc-1","provider_binding":{"provider":"notion","document_id":"page-1"},"blocks":[]}
+		}`),
+	)
+	staleReq.Header.Set("X-User-Id", "user-1")
+	staleReq = mux.SetURLVars(staleReq, map[string]string{
+		"session_id": "session", "slot_id": "provider_document", "list_index": "-1",
+	})
+	staleRecorder := httptest.NewRecorder()
+	SyncWriterDocument(staleRecorder, staleReq)
+	if staleRecorder.Code != http.StatusConflict ||
+		writerErrorCode(t, staleRecorder) != "REVISION_CONFLICT" {
+		t.Fatalf("stale sync: status=%d body=%s", staleRecorder.Code, staleRecorder.Body.String())
+	}
+	if calls := providerCalls.Load(); calls != 1 {
+		t.Fatalf("provider calls=%d, want 1", calls)
+	}
+}
+
+func writerErrorCode(t *testing.T, recorder *httptest.ResponseRecorder) string {
+	t.Helper()
+	var response struct {
+		Data struct {
+			Code string `json:"code"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v; body=%s", err, recorder.Body.String())
+	}
+	return response.Data.Code
+}
+
+func TestWriterMutationEndpointsRequireBaseRevision(t *testing.T) {
+	for _, testCase := range []struct {
+		name, path, body string
+		handler          http.HandlerFunc
+		pathVars         map[string]string
+	}{
+		{
+			name: "sync", path: "/sync",
+			body:     `{"source_document":{"document_id":"doc"},"revised_document":{"document_id":"doc"}}`,
+			handler:  SyncWriterDocument,
+			pathVars: map[string]string{"session_id": "session", "slot_id": "draft_document", "list_index": "-1"},
+		},
+		{
+			name: "save", path: "/save", body: `{"document":"# Draft"}`,
+			handler:  SaveWriterDocument,
+			pathVars: map[string]string{"session_id": "session"},
+		},
+		{
+			name: "write_back", path: "/write-back", body: `{}`,
+			handler:  WriteBackWriterDocument,
+			pathVars: map[string]string{"session_id": "session"},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, testCase.path, strings.NewReader(testCase.body))
+			req = mux.SetURLVars(req, testCase.pathVars)
+			recorder := httptest.NewRecorder()
+			testCase.handler(recorder, req)
+			if recorder.Code != http.StatusBadRequest || writerErrorCode(t, recorder) != "REVISION_REQUIRED" {
+				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+		})
 	}
 }
 
@@ -390,6 +591,234 @@ func TestWriteBackWriterDocumentPersistsFirstMarkdownTarget(t *testing.T) {
 		targetArtifact.Revision.ChangeSource != "provider_sync" {
 		t.Fatalf("unexpected first target binding: %#v, revision=%+v", target, targetArtifact.Revision)
 	}
+	published, err := loadSelectedWriterArtifact(
+		context.Background(), db.DB, "session", "draft_document",
+	)
+	if err != nil {
+		t.Fatalf("load provider-confirmed draft revision: %v", err)
+	}
+	if published.Revision.Revision != 2 || published.Revision.ChangeSource != "provider_sync" {
+		t.Fatalf("provider-confirmed draft revision = %+v", published.Revision)
+	}
+}
+
+func TestWriteBackWriterDocumentReportsProviderSuccessWhenLocalDraftChanged(t *testing.T) {
+	providerStarted := make(chan struct{})
+	releaseProvider := make(chan struct{})
+	var providerOnce sync.Once
+	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/v1/cloud/connections/internal/chat-enabled") &&
+			r.URL.Query().Get("provider") == "notion":
+			_, _ = w.Write([]byte(`{"data":{"items":[{"connection_id":"notion-1"}]}}`))
+		case strings.HasSuffix(r.URL.Path, "/v1/cloud/connections/notion-1/token"):
+			_, _ = w.Write([]byte(`{"data":{"access_token":"notion-token"}}`))
+		case r.URL.Path == "/api/workflow/actions:invoke":
+			var request struct {
+				Action string `json:"action"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Errorf("decode action request: %v", err)
+				return
+			}
+			if request.Action == "convert_document" {
+				_, _ = w.Write([]byte(`{"result":{"provider":"notion","format":"notion_blocks","content":[],"source_document":{"document_id":"local-1"},"media_references":{}}}`))
+				return
+			}
+			providerOnce.Do(func() { close(providerStarted) })
+			<-releaseProvider
+			_, _ = w.Write([]byte(`{"result":{"success":true,"changed":true,"provider_synced":true,"patch_result":{"success":true},"persisted_document":"# Published","representation":"markdown","provider":"notion","write_result":{"doc_id":"page-1"},"target_document":{"adapter":"notion","doc_id":"page-1","uri":"notion:/~page/page-1"}}}`))
+		default:
+			_, _ = w.Write([]byte(`{"data":{"items":[]}}`))
+		}
+	}))
+	t.Cleanup(service.Close)
+	t.Setenv("LAZYMIND_AUTH_SERVICE_URL", service.URL)
+	t.Setenv("LAZYMIND_CHAT_SERVICE_URL", service.URL)
+
+	db := orm.MigrateTestDB(t,
+		&orm.WorkflowSession{}, &orm.WorkflowSlotRevision{}, &orm.WorkflowHumanArtifact{},
+		&orm.UserModelProvider{}, &orm.UserModelProviderGroup{}, &orm.UserSelectedProvider{},
+	)
+	store.Init(db.DB, db.DB, nil)
+	t.Cleanup(func() { store.Init(nil, nil, nil) })
+	now := time.Now().UTC()
+	if err := db.Create(&orm.WorkflowSession{
+		ID: "session", ConversationID: "conversation", WorkflowID: "writer-workflow",
+		Status: "completed", CreateUserID: "user-1", CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed writer session: %v", err)
+	}
+	humanID := "human-draft"
+	if err := db.Create(&orm.WorkflowHumanArtifact{
+		ID: humanID, SessionID: "session", Slot: "draft_document", ContentType: "json",
+		Value:        json.RawMessage(`{"schema":"text/markdown","data":"# Original"}`),
+		DraftVersion: 1, CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed human draft: %v", err)
+	}
+	if err := db.Create(&orm.WorkflowSlotRevision{
+		ID: "revision-1", SessionID: "session", SlotID: "draft_document",
+		Revision: 1, Selected: true, ChangeSource: "human", HumanArtifactID: &humanID,
+		Slot: "draft_document", StepID: "write_document", Attempt: 1, CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed writer revision: %v", err)
+	}
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/core/workflow-sessions/session/writer-document:write-back",
+		strings.NewReader(`{"base_revision":1,"base_draft_version":1,"provider":"notion"}`),
+	)
+	req.Header.Set("X-User-Id", "user-1")
+	req = mux.SetURLVars(req, map[string]string{"session_id": "session"})
+	recorder := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		WriteBackWriterDocument(recorder, req)
+		close(done)
+	}()
+	<-providerStarted
+	if err := db.Model(&orm.WorkflowHumanArtifact{}).
+		Where("id = ? AND draft_version = ?", humanID, 1).
+		Updates(map[string]any{
+			"value":         json.RawMessage(`{"schema":"text/markdown","data":"# Concurrent edit"}`),
+			"draft_version": 2,
+		}).Error; err != nil {
+		t.Fatalf("write concurrent draft: %v", err)
+	}
+	close(releaseProvider)
+	<-done
+
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		Data struct {
+			Code           string `json:"code"`
+			ProviderSynced bool   `json:"provider_synced"`
+			ArtifactSaved  bool   `json:"artifact_saved"`
+			Retryable      bool   `json:"retryable"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Data.Code != "PROVIDER_SYNC_LOCAL_CONFLICT" ||
+		!response.Data.ProviderSynced || response.Data.ArtifactSaved || response.Data.Retryable {
+		t.Fatalf("unexpected partial-success response: %+v", response.Data)
+	}
+	var revisions []orm.WorkflowSlotRevision
+	if err := db.Where(
+		"session_id = ? AND slot_id = ?", "session", "draft_document",
+	).Find(&revisions).Error; err != nil {
+		t.Fatalf("load revisions: %v", err)
+	}
+	if len(revisions) != 1 || !revisions[0].Selected || revisions[0].HumanArtifactID == nil ||
+		*revisions[0].HumanArtifactID != humanID {
+		t.Fatalf("draft revisions after local conflict: %#v", revisions)
+	}
+	var targetRevisions int64
+	if err := db.Model(&orm.WorkflowSlotRevision{}).
+		Where("session_id = ? AND slot_id = ?", "session", "target_document").
+		Count(&targetRevisions).Error; err != nil {
+		t.Fatalf("count target revisions: %v", err)
+	}
+	if targetRevisions != 0 {
+		t.Fatalf("target revisions after main CAS conflict = %d, want 0", targetRevisions)
+	}
+}
+
+func TestWriteBackWriterDocumentRejectsInvalidDraftBaselineBeforeProviderCall(t *testing.T) {
+	for _, testCase := range []struct {
+		name             string
+		request          string
+		wantStatus       int
+		wantCode         string
+		seedDraftVersion int64
+	}{
+		{
+			name: "missing", request: `{"base_revision":1,"provider":"notion"}`,
+			wantStatus: http.StatusBadRequest, wantCode: "DRAFT_VERSION_REQUIRED", seedDraftVersion: 1,
+		},
+		{
+			name: "stale", request: `{"base_revision":1,"base_draft_version":1,"provider":"notion"}`,
+			wantStatus: http.StatusConflict, wantCode: "DRAFT_VERSION_CONFLICT", seedDraftVersion: 2,
+		},
+		{
+			name: "stale_revision", request: `{"base_revision":2,"base_draft_version":1,"provider":"notion"}`,
+			wantStatus: http.StatusConflict, wantCode: "REVISION_CONFLICT", seedDraftVersion: 1,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			var providerCalls atomic.Int64
+			service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				providerCalls.Add(1)
+				w.WriteHeader(http.StatusInternalServerError)
+			}))
+			t.Cleanup(service.Close)
+			t.Setenv("LAZYMIND_AUTH_SERVICE_URL", service.URL)
+			t.Setenv("LAZYMIND_CHAT_SERVICE_URL", service.URL)
+
+			db := orm.MigrateTestDB(t,
+				&orm.WorkflowSession{}, &orm.WorkflowSlotRevision{}, &orm.WorkflowHumanArtifact{},
+				&orm.UserModelProvider{}, &orm.UserModelProviderGroup{}, &orm.UserSelectedProvider{},
+			)
+			store.Init(db.DB, db.DB, nil)
+			t.Cleanup(func() { store.Init(nil, nil, nil) })
+			now := time.Now().UTC()
+			if err := db.Create(&orm.WorkflowSession{
+				ID: "session", ConversationID: "conversation", WorkflowID: "writer-workflow",
+				Status: "completed", CreateUserID: "user-1", CreatedAt: now, UpdatedAt: now,
+			}).Error; err != nil {
+				t.Fatalf("seed writer session: %v", err)
+			}
+			humanID := "human-draft"
+			if err := db.Create(&orm.WorkflowHumanArtifact{
+				ID: humanID, SessionID: "session", Slot: "draft_document", ContentType: "json",
+				Value:        json.RawMessage(`{"schema":"text/markdown","data":"# Draft"}`),
+				DraftVersion: testCase.seedDraftVersion, CreatedAt: now,
+			}).Error; err != nil {
+				t.Fatalf("seed human draft: %v", err)
+			}
+			if err := db.Create(&orm.WorkflowSlotRevision{
+				ID: "revision-1", SessionID: "session", SlotID: "draft_document",
+				Revision: 1, Selected: true, ChangeSource: "human", HumanArtifactID: &humanID,
+				Slot: "draft_document", StepID: "write_document", Attempt: 1, CreatedAt: now,
+			}).Error; err != nil {
+				t.Fatalf("seed writer revision: %v", err)
+			}
+
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"/api/core/workflow-sessions/session/writer-document:write-back",
+				strings.NewReader(testCase.request),
+			)
+			req.Header.Set("X-User-Id", "user-1")
+			req = mux.SetURLVars(req, map[string]string{"session_id": "session"})
+			recorder := httptest.NewRecorder()
+			WriteBackWriterDocument(recorder, req)
+
+			if recorder.Code != testCase.wantStatus {
+				t.Fatalf("status = %d, want %d; body=%s", recorder.Code, testCase.wantStatus, recorder.Body.String())
+			}
+			var response struct {
+				Data struct {
+					Code string `json:"code"`
+				} `json:"data"`
+			}
+			if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if response.Data.Code != testCase.wantCode {
+				t.Fatalf("code = %q, want %q", response.Data.Code, testCase.wantCode)
+			}
+			if calls := providerCalls.Load(); calls != 0 {
+				t.Fatalf("provider calls = %d, want 0", calls)
+			}
+		})
+	}
 }
 
 func TestRenderWriterDocumentKeepsIRCanonicalForPinnedWorkflow(t *testing.T) {
@@ -542,11 +971,12 @@ func TestSaveWriterDocumentDraftUpdatesInPlaceAndCheckpointCreatesRevision(t *te
 		t.Fatalf("seed writer revision: %v", err)
 	}
 
-	save := func(mode, document string, baseRevision int) int {
+	save := func(mode, document string, baseRevision int, baseDraftVersion int64) (int, int64) {
 		body, err := json.Marshal(map[string]any{
-			"base_revision": baseRevision,
-			"document":      document,
-			"mode":          mode,
+			"base_revision":      baseRevision,
+			"base_draft_version": baseDraftVersion,
+			"document":           document,
+			"mode":               mode,
 		})
 		if err != nil {
 			t.Fatalf("marshal save body: %v", err)
@@ -565,20 +995,21 @@ func TestSaveWriterDocumentDraftUpdatesInPlaceAndCheckpointCreatesRevision(t *te
 		}
 		var response struct {
 			Data struct {
-				Revision int `json:"revision"`
+				Revision     int   `json:"revision"`
+				DraftVersion int64 `json:"draft_version"`
 			} `json:"data"`
 		}
 		if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
 			t.Fatalf("decode save response: %v", err)
 		}
-		return response.Data.Revision
+		return response.Data.Revision, response.Data.DraftVersion
 	}
 
-	if revision := save("draft", "# First edit", 3); revision != 3 {
-		t.Fatalf("first draft revision = %d, want 3", revision)
+	if revision, draftVersion := save("draft", "# First edit", 3, 1); revision != 3 || draftVersion != 2 {
+		t.Fatalf("first draft baseline = revision %d draft %d, want 3 and 2", revision, draftVersion)
 	}
-	if revision := save("draft", "# Second edit", 3); revision != 3 {
-		t.Fatalf("second draft revision = %d, want 3", revision)
+	if revision, draftVersion := save("draft", "# Second edit", 3, 2); revision != 3 || draftVersion != 3 {
+		t.Fatalf("second draft baseline = revision %d draft %d, want 3 and 3", revision, draftVersion)
 	}
 	var revisionCount int64
 	if err := db.Model(&orm.WorkflowSlotRevision{}).
@@ -603,8 +1034,8 @@ func TestSaveWriterDocumentDraftUpdatesInPlaceAndCheckpointCreatesRevision(t *te
 		t.Fatalf("updated draft = %q, want second edit", updatedValue.Data)
 	}
 
-	if revision := save("checkpoint", "# Final edit", 3); revision != 4 {
-		t.Fatalf("checkpoint revision = %d, want 4", revision)
+	if revision, draftVersion := save("checkpoint", "# Final edit", 3, 3); revision != 4 || draftVersion != 1 {
+		t.Fatalf("checkpoint baseline = revision %d draft %d, want 4 and 1", revision, draftVersion)
 	}
 	if err := db.Model(&orm.WorkflowSlotRevision{}).
 		Where("session_id = ? AND slot_id = ?", "session", "draft_document").
@@ -613,6 +1044,23 @@ func TestSaveWriterDocumentDraftUpdatesInPlaceAndCheckpointCreatesRevision(t *te
 	}
 	if revisionCount != 2 {
 		t.Fatalf("checkpoint revision count = %d, want 2", revisionCount)
+	}
+	staleBody := strings.NewReader(`{
+		"base_revision":3,"base_draft_version":3,
+		"document":"# Stale","mode":"draft"
+	}`)
+	staleReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/core/workflow-sessions/session/writer-document:save",
+		staleBody,
+	)
+	staleReq.Header.Set("X-User-Id", "user-1")
+	staleReq = mux.SetURLVars(staleReq, map[string]string{"session_id": "session"})
+	staleRecorder := httptest.NewRecorder()
+	SaveWriterDocument(staleRecorder, staleReq)
+	if staleRecorder.Code != http.StatusConflict ||
+		writerErrorCode(t, staleRecorder) != "REVISION_CONFLICT" {
+		t.Fatalf("stale save: status=%d body=%s", staleRecorder.Code, staleRecorder.Body.String())
 	}
 }
 

@@ -25,19 +25,21 @@ import (
 )
 
 type writerDocumentSyncBody struct {
-	BaseRevision    int             `json:"base_revision"`
-	SourceDocument  json.RawMessage `json:"source_document"`
-	RevisedDocument json.RawMessage `json:"revised_document"`
+	BaseRevision     int             `json:"base_revision"`
+	BaseDraftVersion *int64          `json:"base_draft_version"`
+	SourceDocument   json.RawMessage `json:"source_document"`
+	RevisedDocument  json.RawMessage `json:"revised_document"`
 	// Mode controls versioning: "draft" updates the selected human artifact in
 	// place when possible; "checkpoint" (default) always creates a new revision.
 	Mode string `json:"mode"`
 }
 
 type writerDocumentWriteBackBody struct {
-	BaseRevision int    `json:"base_revision"`
-	Slot         string `json:"slot"`
-	Provider     string `json:"provider"`
-	Template     string `json:"template"`
+	BaseRevision     int    `json:"base_revision"`
+	BaseDraftVersion *int64 `json:"base_draft_version"`
+	Slot             string `json:"slot"`
+	Provider         string `json:"provider"`
+	Template         string `json:"template"`
 	// Legacy client fields remain accepted, but the selected server-side
 	// revision and synchronized baseline are authoritative.
 	SourceDocument  json.RawMessage `json:"source_document"`
@@ -45,10 +47,11 @@ type writerDocumentWriteBackBody struct {
 }
 
 type writerDocumentSaveBody struct {
-	BaseRevision    int             `json:"base_revision"`
-	Document        json.RawMessage `json:"document"`
-	Slot            string          `json:"slot"`
-	NumberingUpdate json.RawMessage `json:"numbering_update"`
+	BaseRevision     int             `json:"base_revision"`
+	BaseDraftVersion *int64          `json:"base_draft_version"`
+	Document         json.RawMessage `json:"document"`
+	Slot             string          `json:"slot"`
+	NumberingUpdate  json.RawMessage `json:"numbering_update"`
 	// Mode controls versioning: "draft" updates the selected human artifact in
 	// place when possible; "checkpoint" (default) creates a new revision.
 	Mode string `json:"mode"`
@@ -144,9 +147,13 @@ func SyncWriterDocument(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body writerDocumentSyncBody
-	if json.NewDecoder(r.Body).Decode(&body) != nil || body.BaseRevision <= 0 ||
+	if json.NewDecoder(r.Body).Decode(&body) != nil ||
 		len(body.SourceDocument) == 0 || len(body.RevisedDocument) == 0 {
 		common.ReplyErr(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if body.BaseRevision <= 0 {
+		replyWriterRevisionRequired(w)
 		return
 	}
 	mode := body.Mode
@@ -193,9 +200,13 @@ func SyncWriterDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if current.Revision != body.BaseRevision {
-		common.ReplyErrWithData(w, "revision conflict", map[string]any{
-			"current_revision": current.Revision,
-		}, http.StatusConflict)
+		replyWriterRevisionConflict(w, current.Revision)
+		return
+	}
+	if err := validateWriterDraftVersion(ctx, db, current, body.BaseDraftVersion); err != nil {
+		if !replyWriterDraftVersionError(w, err) {
+			common.ReplyErr(w, "load draft version failed", http.StatusInternalServerError)
+		}
 		return
 	}
 
@@ -237,7 +248,10 @@ func SyncWriterDocument(w http.ResponseWriter, r *http.Request) {
 	// Draft with no Feishu delta: nothing to persist. Checkpoint still wants a
 	// versioned snapshot even when the provider reports no_change.
 	if !result.Changed && mode != "checkpoint" {
-		writerSyncReply(w, "no_change", current.Revision, false, result)
+		writerSyncReply(
+			w, "no_change", current.Revision,
+			draftVersionValue(body.BaseDraftVersion), false, result,
+		)
 		return
 	}
 
@@ -254,45 +268,33 @@ func SyncWriterDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var revision *orm.WorkflowSlotRevision
-	if mode == "draft" {
-		updated, ok, updateErr := workflow.UpdateSelectedHumanArtifactValue(
-			ctx, db, sessionID, slotID, index, "json", artifact, nil,
-		)
-		if updateErr != nil {
-			common.ReplyErrWithData(w, "artifact save failed", map[string]any{
-				"status": "artifact_save_failed", "provider_synced": true, "artifact_saved": false,
-				"patch_result": result.PatchResult, "document": result.PersistedDocument,
-			}, http.StatusInternalServerError)
-			return
-		}
-		if ok {
-			revision = updated
-		}
+	cardinality := "single"
+	if current.ListIndex != nil {
+		cardinality = "list"
 	}
-	if revision == nil {
-		cardinality := "single"
-		if current.ListIndex != nil {
-			cardinality = "list"
-		}
-		created, createErr := workflow.WriteSlotRevisionWithHumanArtifact(
-			ctx, db, sessionID, slotID, current.Slot, current.StepID, current.Attempt,
-			cardinality, index, "json", artifact, nil,
-		)
-		if createErr != nil {
-			common.ReplyErrWithData(w, "artifact save failed", map[string]any{
-				"status": "artifact_save_failed", "provider_synced": true, "artifact_saved": false,
-				"patch_result": result.PatchResult, "document": result.PersistedDocument,
-			}, http.StatusInternalServerError)
+	revision, createErr := workflow.WriteSlotRevisionWithHumanArtifact(
+		ctx, db, sessionID, slotID, current.Slot, current.StepID, current.Attempt,
+		cardinality, index, "json", artifact, nil,
+		"provider_sync", &body.BaseRevision, body.BaseDraftVersion,
+	)
+	if createErr != nil {
+		if errors.Is(createErr, workflow.ErrConflict) ||
+			errors.Is(createErr, workflow.ErrDraftVersionConflict) ||
+			errors.Is(createErr, workflow.ErrDraftVersionRequired) {
+			replyWriterProviderLocalConflict(w, current.Revision, result)
 			return
 		}
-		revision = created
+		common.ReplyErrWithData(w, "artifact save failed", map[string]any{
+			"status": "artifact_save_failed", "provider_synced": true, "artifact_saved": false,
+			"patch_result": result.PatchResult, "document": result.PersistedDocument,
+		}, http.StatusInternalServerError)
+		return
 	}
 	workflow.NotifyWorkflowArtifactUpdated(
 		ctx, db, sessionID, revision.StepID, revision.SlotID, revision.Slot,
-		revision.Revision, revision.ListIndex, "human",
+		revision.Revision, revision.ListIndex, "provider_sync",
 	)
-	writerSyncReply(w, "synced", revision.Revision, true, result)
+	writerSyncReply(w, "synced", revision.Revision, 1, true, result)
 }
 
 // RenderWriterDocument renders a source, outline, or draft with automatic numbering.
@@ -385,9 +387,12 @@ func SaveWriterDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body writerDocumentSaveBody
-	if json.NewDecoder(r.Body).Decode(&body) != nil || body.BaseRevision <= 0 ||
-		len(body.Document) == 0 {
+	if json.NewDecoder(r.Body).Decode(&body) != nil || len(body.Document) == 0 {
 		common.ReplyErr(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if body.BaseRevision <= 0 {
+		replyWriterRevisionRequired(w)
 		return
 	}
 	mode := body.Mode
@@ -426,10 +431,13 @@ func SaveWriterDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if draft.Revision.Revision != body.BaseRevision {
-		common.ReplyErrWithData(w, "revision conflict", map[string]any{
-			"code":             "REVISION_CONFLICT",
-			"current_revision": draft.Revision.Revision,
-		}, http.StatusConflict)
+		replyWriterRevisionConflict(w, draft.Revision.Revision)
+		return
+	}
+	if err := validateWriterDraftVersion(ctx, db, draft.Revision, body.BaseDraftVersion); err != nil {
+		if !replyWriterDraftVersionError(w, err) {
+			common.ReplyErr(w, "load draft version failed", http.StatusInternalServerError)
+		}
 		return
 	}
 	editedArtifact, err := json.Marshal(map[string]json.RawMessage{"data": body.Document})
@@ -506,17 +514,20 @@ func SaveWriterDocument(w http.ResponseWriter, r *http.Request) {
 	unchangedGitHubSync := mode == "draft" && len(body.NumberingUpdate) == 0 &&
 		writerGitHubSyncedMarkdownUnchanged(draft, sourceValue)
 	var revision *orm.WorkflowSlotRevision
+	var draftVersion int64
 	if unchangedGitHubSync {
 		revision = &draft.Revision
+		draftVersion = draftVersionValue(body.BaseDraftVersion)
 	} else if mode == "draft" {
-		updated, updatedInPlace, updateErr := workflow.UpdateSelectedHumanArtifactValue(
+		updated, updatedDraftVersion, updatedInPlace, updateErr := workflow.UpdateSelectedHumanArtifactValue(
 			ctx, db, sessionID, draft.Revision.SlotID, nil,
-			"json", artifact, nil, &body.BaseRevision,
+			"json", artifact, nil, &body.BaseRevision, body.BaseDraftVersion,
 		)
 		if updateErr != nil {
 			err = updateErr
 		} else if updatedInPlace {
 			revision = updated
+			draftVersion = updatedDraftVersion
 		}
 	}
 	if revision == nil && err == nil {
@@ -524,10 +535,16 @@ func SaveWriterDocument(w http.ResponseWriter, r *http.Request) {
 			ctx, db, sessionID, draft.Revision.SlotID, draft.Revision.Slot,
 			draft.Revision.StepID, draft.Revision.Attempt, "single", nil,
 			"json", artifact, nil,
-			&body.BaseRevision,
+			"human", &body.BaseRevision, body.BaseDraftVersion,
 		)
+		if err == nil {
+			draftVersion = 1
+		}
 	}
 	if err != nil {
+		if replyWriterDraftVersionError(w, err) {
+			return
+		}
 		if errors.Is(err, workflow.ErrConflict) || errors.Is(err, gorm.ErrRecordNotFound) {
 			currentRevision := 0
 			if current, currentErr := loadSelectedWriterArtifact(ctx, db, sessionID, slot); currentErr == nil {
@@ -552,6 +569,7 @@ func SaveWriterDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	reply := map[string]any{
 		"revision":       revision.Revision,
+		"draft_version":  draftVersion,
 		"title":          result["title"],
 		"representation": representation,
 		"document":       renderedDocument,
@@ -583,7 +601,7 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 	if body.BaseRevision <= 0 {
 		log.Logger.Warn().Str("session_id", sessionID).Int("base_revision", body.BaseRevision).
 			Msg("invalid writer document write-back base revision")
-		common.ReplyErr(w, "base_revision must be greater than zero", http.StatusBadRequest)
+		replyWriterRevisionRequired(w)
 		return
 	}
 	slot, ok := writerDocumentSlot(body.Slot)
@@ -613,9 +631,13 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if draft.Revision.Revision != body.BaseRevision {
-		common.ReplyErrWithData(w, "revision conflict", map[string]any{
-			"current_revision": draft.Revision.Revision,
-		}, http.StatusConflict)
+		replyWriterRevisionConflict(w, draft.Revision.Revision)
+		return
+	}
+	if err := validateWriterDraftVersion(ctx, db, draft.Revision, body.BaseDraftVersion); err != nil {
+		if !replyWriterDraftVersionError(w, err) {
+			common.ReplyErr(w, "load draft version failed", http.StatusInternalServerError)
+		}
 		return
 	}
 	activeDraft, err := loadWriterWriteBackArtifact(draft.Value)
@@ -798,8 +820,11 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 	if representation == "markdown" {
 		schema = "text/markdown"
 	}
+	var targetValue json.RawMessage
+	targetSlotID, targetSlot, targetStepID, targetAttempt :=
+		"target_document", "target_document", draft.Revision.StepID, draft.Revision.Attempt
 	if len(result.TargetDocument) > 0 {
-		targetValue, marshalErr := json.Marshal(map[string]any{
+		targetValue, err = json.Marshal(map[string]any{
 			"schema":         "lazyllm.tools.writer.data_models.task.TargetDocument",
 			"schema_version": "0.1",
 			"data":           result.TargetDocument,
@@ -808,44 +833,16 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 				"created_at": time.Now().UTC().Format(time.RFC3339Nano),
 			},
 		})
-		if marshalErr != nil {
+		if err != nil {
 			common.ReplyErr(w, "marshal target_document artifact failed", http.StatusInternalServerError)
 			return
 		}
-		targetSlotID, targetSlot, targetStepID, targetAttempt :=
-			"target_document", "target_document", draft.Revision.StepID, draft.Revision.Attempt
 		if targetArtifact != nil {
 			targetSlotID = targetArtifact.Revision.SlotID
 			targetSlot = targetArtifact.Revision.Slot
 			targetStepID = targetArtifact.Revision.StepID
 			targetAttempt = targetArtifact.Revision.Attempt
 		}
-		targetRevision, saveErr := workflow.WriteSlotRevisionWithHumanArtifact(
-			ctx, db, sessionID, targetSlotID, targetSlot,
-			targetStepID, targetAttempt, "single", nil,
-			"json", targetValue, nil,
-		)
-		if saveErr != nil {
-			common.ReplyErrWithData(w, "target artifact save failed", map[string]any{
-				"status": "artifact_save_failed", "provider_synced": true,
-				"artifact_saved": false,
-			}, http.StatusInternalServerError)
-			return
-		}
-		if saveErr = db.WithContext(ctx).Model(&orm.WorkflowSlotRevision{}).
-			Where("id = ?", targetRevision.ID).
-			Update("change_source", "provider_sync").Error; saveErr != nil {
-			common.ReplyErrWithData(w, "target artifact state save failed", map[string]any{
-				"status": "artifact_state_save_failed", "provider_synced": true,
-				"artifact_saved": true,
-			}, http.StatusInternalServerError)
-			return
-		}
-		workflow.NotifyWorkflowArtifactUpdated(
-			ctx, db, sessionID, targetRevision.StepID, targetRevision.SlotID,
-			targetRevision.Slot, targetRevision.Revision, targetRevision.ListIndex,
-			"provider_sync",
-		)
 	}
 	artifact, err := json.Marshal(map[string]any{
 		"schema":         schema,
@@ -868,31 +865,48 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 	revision, err := workflow.WriteSlotRevisionWithHumanArtifact(
 		ctx, db, sessionID, draft.Revision.SlotID, draft.Revision.Slot,
 		draft.Revision.StepID, draft.Revision.Attempt, "single", nil,
-		"json", artifact, nil,
+		"json", artifact, nil, "provider_sync", &body.BaseRevision, body.BaseDraftVersion,
 	)
 	if err != nil {
+		if errors.Is(err, workflow.ErrConflict) ||
+			errors.Is(err, workflow.ErrDraftVersionConflict) ||
+			errors.Is(err, workflow.ErrDraftVersionRequired) {
+			replyWriterProviderLocalConflict(w, draft.Revision.Revision, result)
+			return
+		}
 		common.ReplyErrWithData(w, "artifact save failed", map[string]any{
 			"status": "artifact_save_failed", "provider_synced": true,
 			"artifact_saved": false,
 		}, http.StatusInternalServerError)
 		return
 	}
-	if err := db.WithContext(ctx).Model(&orm.WorkflowSlotRevision{}).
-		Where("id = ?", revision.ID).
-		Update("change_source", "provider_sync").Error; err != nil {
-		common.ReplyErrWithData(w, "artifact sync state save failed", map[string]any{
-			"status": "artifact_state_save_failed", "provider_synced": true,
-			"artifact_saved": true,
-		}, http.StatusInternalServerError)
-		return
-	}
-	revision.ChangeSource = "provider_sync"
 	workflow.NotifyWorkflowArtifactUpdated(
 		ctx, db, sessionID, revision.StepID, revision.SlotID, revision.Slot,
 		revision.Revision, revision.ListIndex, "provider_sync",
 	)
+	if len(targetValue) > 0 {
+		targetRevision, saveErr := workflow.WriteSlotRevisionWithHumanArtifact(
+			ctx, db, sessionID, targetSlotID, targetSlot,
+			targetStepID, targetAttempt, "single", nil,
+			"json", targetValue, nil, "provider_sync", nil, nil,
+		)
+		if saveErr != nil {
+			common.ReplyErrWithData(w, "target artifact save failed", map[string]any{
+				"code":   "PROVIDER_SYNC_TARGET_PERSIST_FAILED",
+				"status": "artifact_save_failed", "provider_synced": true,
+				"artifact_saved": true, "target_artifact_saved": false,
+				"retryable": false,
+			}, http.StatusInternalServerError)
+			return
+		}
+		workflow.NotifyWorkflowArtifactUpdated(
+			ctx, db, sessionID, targetRevision.StepID, targetRevision.SlotID,
+			targetRevision.Slot, targetRevision.Revision, targetRevision.ListIndex,
+			"provider_sync",
+		)
+	}
 	reply := map[string]any{
-		"status": "synced", "revision": revision.Revision,
+		"status": "synced", "revision": revision.Revision, "draft_version": int64(1),
 		"provider_synced": true, "artifact_saved": true,
 		"patch_result":    result.PatchResult,
 		"document":        result.PersistedDocument,
@@ -1595,16 +1609,97 @@ func canonicalWriterProvider(provider string) string {
 	}
 }
 
+func draftVersionValue(value *int64) int64 {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
+func validateWriterDraftVersion(
+	ctx context.Context,
+	db *gorm.DB,
+	revision orm.WorkflowSlotRevision,
+	expected *int64,
+) error {
+	if revision.HumanArtifactID == nil || *revision.HumanArtifactID == "" {
+		return nil
+	}
+	if expected == nil {
+		return workflow.ErrDraftVersionRequired
+	}
+	var artifact orm.WorkflowHumanArtifact
+	if err := db.WithContext(ctx).
+		Select("draft_version").
+		Where("id = ?", *revision.HumanArtifactID).
+		First(&artifact).Error; err != nil {
+		return err
+	}
+	if artifact.DraftVersion != *expected {
+		return workflow.ErrDraftVersionConflict
+	}
+	return nil
+}
+
+func replyWriterDraftVersionError(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, workflow.ErrDraftVersionRequired):
+		common.ReplyErrWithData(w, "base_draft_version required", map[string]any{
+			"code": "DRAFT_VERSION_REQUIRED",
+		}, http.StatusBadRequest)
+		return true
+	case errors.Is(err, workflow.ErrDraftVersionConflict):
+		common.ReplyErrWithData(w, "draft version conflict; refresh and retry", map[string]any{
+			"code": "DRAFT_VERSION_CONFLICT",
+		}, http.StatusConflict)
+		return true
+	default:
+		return false
+	}
+}
+
+func replyWriterRevisionRequired(w http.ResponseWriter) {
+	common.ReplyErrWithData(w, "base_revision required", map[string]any{
+		"code": "REVISION_REQUIRED",
+	}, http.StatusBadRequest)
+}
+
+func replyWriterRevisionConflict(w http.ResponseWriter, currentRevision int) {
+	common.ReplyErrWithData(w, "revision conflict", map[string]any{
+		"code":             "REVISION_CONFLICT",
+		"current_revision": currentRevision,
+	}, http.StatusConflict)
+}
+
+func replyWriterProviderLocalConflict(
+	w http.ResponseWriter,
+	currentRevision int,
+	result *algo.WriterDocumentSyncResponse,
+) {
+	common.ReplyErrWithData(w, "provider sync succeeded but local artifact changed", map[string]any{
+		"code":             "PROVIDER_SYNC_LOCAL_CONFLICT",
+		"provider":         result.Provider,
+		"provider_synced":  true,
+		"artifact_saved":   false,
+		"retryable":        false,
+		"current_revision": currentRevision,
+		"patch_result":     result.PatchResult,
+		"document":         result.PersistedDocument,
+	}, http.StatusConflict)
+}
+
 func writerSyncReply(
 	w http.ResponseWriter,
 	status string,
 	revision int,
+	draftVersion int64,
 	artifactSaved bool,
 	result *algo.WriterDocumentSyncResponse,
 ) {
 	common.ReplyOK(w, map[string]any{
-		"status": status, "revision": revision, "provider_synced": true,
-		"artifact_saved": artifactSaved, "patch_result": result.PatchResult,
+		"status": status, "revision": revision, "draft_version": draftVersion,
+		"provider_synced": true,
+		"artifact_saved":  artifactSaved, "patch_result": result.PatchResult,
 		"document": result.PersistedDocument,
 	})
 }
