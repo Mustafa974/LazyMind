@@ -1118,8 +1118,9 @@ func resolveContentType(contentType string, snapshot []byte) string {
 }
 
 // UpdateSelectedHumanArtifactValue overwrites the selected human revision's artifact
-// in place without creating a new revision. Returns (nil, false, nil) when the
-// selected revision is not an updatable human artifact (e.g. AI revision).
+// in place without creating a new revision. Returns (nil, 0, false, nil) when the
+// selected revision requires copy-on-write, including non-human sources and any
+// human revision already pinned by an Attempt input binding.
 func UpdateSelectedHumanArtifactValue(
 	ctx context.Context, db *gorm.DB,
 	sessionID, slotID string, listIndex *int,
@@ -1130,7 +1131,10 @@ func UpdateSelectedHumanArtifactValue(
 	var draftVersion int64
 	updated := false
 
-	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := common.TransactionWithSQLiteBusyRetry(ctx, db, func(tx *gorm.DB) error {
+		selected = orm.WorkflowSlotRevision{}
+		draftVersion = 0
+		updated = false
 		q := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("session_id = ? AND slot_id = ? AND selected = ?", sessionID, slotID, true)
 		if listIndex == nil {
@@ -1153,7 +1157,21 @@ func UpdateSelectedHumanArtifactValue(
 		if expectedDraftVersion == nil {
 			return ErrDraftVersionRequired
 		}
-		if selected.ChangeSource != "human" {
+		requiresCopyOnWrite := selected.ChangeSource != "human"
+		if !requiresCopyOnWrite {
+			var binding orm.WorkflowAttemptInputBinding
+			err := tx.Select("id").
+				Where("material_revision_id = ?", selected.ID).
+				Take(&binding).Error
+			switch {
+			case err == nil:
+				requiresCopyOnWrite = true
+			case errors.Is(err, gorm.ErrRecordNotFound):
+			default:
+				return err
+			}
+		}
+		if requiresCopyOnWrite {
 			var artifact orm.WorkflowHumanArtifact
 			if err := tx.Select("draft_version").
 				Where("id = ?", *selected.HumanArtifactID).
@@ -1227,7 +1245,7 @@ func WriteSlotRevisionWithHumanArtifact(
 	var revision int
 	var revisionID string
 	var finalListIndex *int
-	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	if err := common.TransactionWithSQLiteBusyRetry(ctx, db, func(tx *gorm.DB) error {
 		if expectedRevision != nil {
 			var current orm.WorkflowSlotRevision
 			q := tx.Clauses(clause.Locking{Strength: "UPDATE"}).

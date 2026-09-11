@@ -945,6 +945,7 @@ func TestSaveWriterDocumentDraftUpdatesInPlaceAndCheckpointCreatesRevision(t *te
 		&orm.WorkflowSession{},
 		&orm.WorkflowSlotRevision{},
 		&orm.WorkflowHumanArtifact{},
+		&orm.WorkflowAttemptInputBinding{},
 	)
 	store.Init(db.DB, db.DB, nil)
 	t.Cleanup(func() { store.Init(nil, nil, nil) })

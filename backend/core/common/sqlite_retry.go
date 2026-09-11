@@ -18,6 +18,8 @@ func IsSQLiteBusy(err error) bool {
 	}
 	message := strings.ToLower(err.Error())
 	return strings.Contains(message, "database is locked") ||
+		strings.Contains(message, "database table is locked") ||
+		strings.Contains(message, "database is deadlocked") ||
 		strings.Contains(message, "sqlite_busy")
 }
 
