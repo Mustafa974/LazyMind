@@ -28,6 +28,7 @@ func newTestDB(t *testing.T) *orm.DB {
 		&orm.WorkflowSlotRevision{},
 		&orm.WorkflowAttemptInputBinding{},
 		&orm.WorkflowOutbox{},
+		&orm.WorkflowEvent{},
 		&orm.WorkflowSlotOrder{},
 		&orm.WorkflowStepIntent{},
 	}

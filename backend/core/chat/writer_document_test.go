@@ -119,6 +119,7 @@ func TestSyncWriterDocumentPersistsProviderSyncRevision(t *testing.T) {
 
 	db := orm.MigrateTestDB(t,
 		&orm.WorkflowSession{}, &orm.WorkflowSlotRevision{}, &orm.WorkflowHumanArtifact{},
+		&orm.WorkflowEvent{},
 		&orm.UserModelProvider{}, &orm.UserModelProviderGroup{}, &orm.UserSelectedProvider{},
 	)
 	store.Init(db.DB, db.DB, nil)
@@ -545,6 +546,7 @@ func TestWriteBackWriterDocumentPersistsFirstMarkdownTarget(t *testing.T) {
 
 	db := orm.MigrateTestDB(t,
 		&orm.WorkflowSession{}, &orm.WorkflowSlotRevision{}, &orm.WorkflowHumanArtifact{},
+		&orm.WorkflowEvent{},
 		&orm.UserModelProvider{}, &orm.UserModelProviderGroup{}, &orm.UserSelectedProvider{},
 	)
 	store.Init(db.DB, db.DB, nil)
@@ -946,6 +948,7 @@ func TestSaveWriterDocumentDraftUpdatesInPlaceAndCheckpointCreatesRevision(t *te
 		&orm.WorkflowSlotRevision{},
 		&orm.WorkflowHumanArtifact{},
 		&orm.WorkflowAttemptInputBinding{},
+		&orm.WorkflowEvent{},
 	)
 	store.Init(db.DB, db.DB, nil)
 	t.Cleanup(func() { store.Init(nil, nil, nil) })

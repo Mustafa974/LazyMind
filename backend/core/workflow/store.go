@@ -443,7 +443,14 @@ func WriteSlotRevision(ctx context.Context, db *gorm.DB,
 		}
 	}
 
-	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	if err := common.TransactionWithSQLiteBusyRetry(ctx, db, func(tx *gorm.DB) error {
+		revision = 0
+		revisionID = ""
+		finalListIndex = nil
+		session, err := lockArtifactMutationSession(tx, sessionID)
+		if err != nil {
+			return err
+		}
 		// Compute next revision number scoped to (session, slot, list_index) so each
 		// list item has its own independent version counter starting at 1.
 		// For a new list append (listIndex == nil), this is always the first revision.
@@ -522,7 +529,7 @@ func WriteSlotRevision(ctx context.Context, db *gorm.DB,
 			}
 		}
 
-		return nil
+		return appendArtifactUpsertEvent(tx, session, row, 0, now)
 	}); err != nil {
 		return nil, err
 	}
@@ -1136,6 +1143,10 @@ func UpdateSelectedHumanArtifactValue(
 		selected = orm.WorkflowSlotRevision{}
 		draftVersion = 0
 		updated = false
+		session, err := lockArtifactMutationSession(tx, sessionID)
+		if err != nil {
+			return err
+		}
 		q := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("session_id = ? AND slot_id = ? AND selected = ?", sessionID, slotID, true)
 		if listIndex == nil {
@@ -1204,7 +1215,7 @@ func UpdateSelectedHumanArtifactValue(
 		}
 		draftVersion = *expectedDraftVersion + 1
 		updated = true
-		return nil
+		return appendArtifactUpsertEvent(tx, session, &selected, draftVersion, time.Now().UTC())
 	})
 	if err != nil {
 		return nil, 0, false, err
@@ -1248,6 +1259,13 @@ func WriteSlotRevisionWithHumanArtifact(
 	var revisionID string
 	var finalListIndex *int
 	if err := common.TransactionWithSQLiteBusyRetry(ctx, db, func(tx *gorm.DB) error {
+		revision = 0
+		revisionID = ""
+		finalListIndex = nil
+		session, err := lockArtifactMutationSession(tx, sessionID)
+		if err != nil {
+			return err
+		}
 		if expectedRevision != nil {
 			var current orm.WorkflowSlotRevision
 			q := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -1349,7 +1367,7 @@ func WriteSlotRevisionWithHumanArtifact(
 				return err
 			}
 		}
-		return nil
+		return appendArtifactUpsertEvent(tx, session, row, 1, now)
 	}); err != nil {
 		return nil, err
 	}
