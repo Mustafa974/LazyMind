@@ -13,6 +13,7 @@ import (
 	"lazymind/core/common/orm"
 	"lazymind/core/store"
 	"lazymind/core/subagent"
+	"lazymind/core/workflow/document"
 )
 
 // resolveValuePaths normalises a human-uploaded value by ensuring it carries a stable
@@ -79,18 +80,21 @@ type stepDTO struct {
 
 // slotDTO represents a currently-selected slot revision, with its artifact value inline.
 type slotDTO struct {
-	SlotID        string          `json:"slot_id"`
-	Revision      int             `json:"revision"`
-	ListIndex     *int            `json:"list_index,omitempty"`
-	SortOrder     *int            `json:"sort_order,omitempty"`
-	Selected      bool            `json:"selected"`
-	Slot          string          `json:"slot"`
-	CreatedAt     time.Time       `json:"created_at"`
-	ContentType   string          `json:"content_type,omitempty"`
-	ArtifactValue json.RawMessage `json:"artifact_value,omitempty"`
-	DraftVersion  int64           `json:"draft_version,omitempty"`
-	Caption       *string         `json:"caption,omitempty"`
-	ChangeSource  string          `json:"change_source,omitempty"`
+	ArtifactID    string                    `json:"artifact_id"`
+	Document      *document.Descriptor      `json:"document,omitempty"`
+	DocumentError *document.ProjectionError `json:"document_error,omitempty"`
+	SlotID        string                    `json:"slot_id"`
+	Revision      int                       `json:"revision"`
+	ListIndex     *int                      `json:"list_index,omitempty"`
+	SortOrder     *int                      `json:"sort_order,omitempty"`
+	Selected      bool                      `json:"selected"`
+	Slot          string                    `json:"slot"`
+	CreatedAt     time.Time                 `json:"created_at"`
+	ContentType   string                    `json:"content_type,omitempty"`
+	ArtifactValue json.RawMessage           `json:"artifact_value,omitempty"`
+	DraftVersion  int64                     `json:"draft_version,omitempty"`
+	Caption       *string                   `json:"caption,omitempty"`
+	ChangeSource  string                    `json:"change_source,omitempty"`
 	// Write-back state is calculated from the server-side Writer revision history
 	// and source document. It must not be inferred from a locally edited artifact.
 	WriteBackReady     bool   `json:"write_back_ready,omitempty"`
@@ -160,6 +164,7 @@ func buildStepIntentMap(ctx context.Context, db *gorm.DB, sessionID string) map[
 
 func toSlotDTO(r *orm.WorkflowSlotRevision) slotDTO {
 	return slotDTO{
+		ArtifactID:      r.ID,
 		SlotID:          r.SlotID,
 		Revision:        r.Revision,
 		ListIndex:       r.ListIndex,
@@ -401,6 +406,10 @@ func ListConversationSessions(w http.ResponseWriter, r *http.Request) {
 
 // GetSessionDetail handles GET /workflow-sessions/{session_id}.
 func GetSessionDetail(w http.ResponseWriter, r *http.Request) {
+	owner, ok := documentReadOwner(w, r)
+	if !ok {
+		return
+	}
 	sessionID := common.PathVar(r, "session_id")
 	if sessionID == "" {
 		common.ReplyErr(w, "session_id required", http.StatusBadRequest)
@@ -419,6 +428,9 @@ func GetSessionDetail(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		common.ReplyErr(w, "query session failed", http.StatusInternalServerError)
+		return
+	}
+	if !authorizeDocumentSession(w, r, db, s.ID, owner) {
 		return
 	}
 	if s.Dismissed {
@@ -432,6 +444,7 @@ func GetSessionDetail(w http.ResponseWriter, r *http.Request) {
 		dto.Slots = append(dto.Slots, toSlotDTO(&revisions[i]))
 	}
 	enrichSlots(ctx, db, sessionID, dto.Slots)
+	enrichDocumentSlots(ctx, db, owner, dto.Slots)
 	// Load attempt history inline for panel controls and audit display.
 	steps, _ := ListSteps(ctx, db, sessionID)
 	intentMap := buildStepIntentMap(ctx, db, sessionID)
@@ -445,6 +458,10 @@ func GetSessionDetail(w http.ResponseWriter, r *http.Request) {
 
 // GetSessionSlots handles GET /workflow-sessions/{session_id}/slots.
 func GetSessionSlots(w http.ResponseWriter, r *http.Request) {
+	owner, ok := documentReadOwner(w, r)
+	if !ok {
+		return
+	}
 	sessionID := common.PathVar(r, "session_id")
 	if sessionID == "" {
 		common.ReplyErr(w, "session_id required", http.StatusBadRequest)
@@ -463,6 +480,9 @@ func GetSessionSlots(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		common.ReplyErr(w, "query session failed", http.StatusInternalServerError)
+		return
+	}
+	if !authorizeDocumentSession(w, r, db, s.ID, owner) {
 		return
 	}
 	if s.Dismissed {
@@ -479,6 +499,7 @@ func GetSessionSlots(w http.ResponseWriter, r *http.Request) {
 		out = append(out, toSlotDTO(&revisions[i]))
 	}
 	enrichSlots(ctx, db, sessionID, out)
+	enrichDocumentSlots(ctx, db, owner, out)
 	common.ReplyOK(w, map[string]any{"slots": out})
 }
 
@@ -604,6 +625,10 @@ func PatchSessionSlot(w http.ResponseWriter, r *http.Request) {
 
 // GetActiveConversationSession handles GET /conversations/{conversation_id}/workflow-sessions:active.
 func GetActiveConversationSession(w http.ResponseWriter, r *http.Request) {
+	owner, ok := documentReadOwner(w, r)
+	if !ok {
+		return
+	}
 	convID := common.PathVar(r, "conversation_id")
 	if convID == "" {
 		common.ReplyErr(w, "conversation_id required", http.StatusBadRequest)
@@ -623,6 +648,9 @@ func GetActiveConversationSession(w http.ResponseWriter, r *http.Request) {
 		common.ReplyOK(w, map[string]any{"session": nil})
 		return
 	}
+	if !authorizeDocumentSession(w, r, db, s.ID, owner) {
+		return
+	}
 	if s.Status == SessionStatusActive {
 		healStaleActiveSession(r.Context(), db, s)
 	}
@@ -632,6 +660,7 @@ func GetActiveConversationSession(w http.ResponseWriter, r *http.Request) {
 		dto.Slots = append(dto.Slots, toSlotDTO(&revisions[i]))
 	}
 	enrichSlots(r.Context(), db, s.ID, dto.Slots)
+	enrichDocumentSlots(r.Context(), db, owner, dto.Slots)
 	common.ReplyOK(w, map[string]any{"session": dto})
 }
 
@@ -639,6 +668,10 @@ func GetActiveConversationSession(w http.ResponseWriter, r *http.Request) {
 // Returns the most recent session regardless of status, so the frontend can always show
 // plugin output even after a session completes or fails.
 func GetLatestConversationSession(w http.ResponseWriter, r *http.Request) {
+	owner, ok := documentReadOwner(w, r)
+	if !ok {
+		return
+	}
 	convID := common.PathVar(r, "conversation_id")
 	if convID == "" {
 		common.ReplyErr(w, "conversation_id required", http.StatusBadRequest)
@@ -658,12 +691,16 @@ func GetLatestConversationSession(w http.ResponseWriter, r *http.Request) {
 		common.ReplyOK(w, map[string]any{"session": nil})
 		return
 	}
+	if !authorizeDocumentSession(w, r, db, s.ID, owner) {
+		return
+	}
 	dto := toSessionDTO(s)
 	revisions, _ := LoadDisplaySlots(r.Context(), db, s.ID)
 	for i := range revisions {
 		dto.Slots = append(dto.Slots, toSlotDTO(&revisions[i]))
 	}
 	enrichSlots(r.Context(), db, s.ID, dto.Slots)
+	enrichDocumentSlots(r.Context(), db, owner, dto.Slots)
 	common.ReplyOK(w, map[string]any{"session": dto})
 }
 

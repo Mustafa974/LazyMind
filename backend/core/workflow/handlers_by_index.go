@@ -373,6 +373,10 @@ func PatchSlotCaptionByIndex(w http.ResponseWriter, r *http.Request) {
 
 // GetSlotItemVersionsByIndex handles GET /workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/versions.
 func GetSlotItemVersionsByIndex(w http.ResponseWriter, r *http.Request) {
+	owner, ok := documentReadOwner(w, r)
+	if !ok {
+		return
+	}
 	sessionID := common.PathVar(r, "session_id")
 	slotID := common.PathVar(r, "slot_id")
 	listIndex, ok := parseListIndex(r)
@@ -383,6 +387,9 @@ func GetSlotItemVersionsByIndex(w http.ResponseWriter, r *http.Request) {
 	db := store.DB()
 	if db == nil {
 		common.ReplyErr(w, "store not initialized", http.StatusInternalServerError)
+		return
+	}
+	if !authorizeDocumentSession(w, r, db, sessionID, owner) {
 		return
 	}
 	ctx := r.Context()
@@ -418,6 +425,7 @@ func GetSlotItemVersionsByIndex(w http.ResponseWriter, r *http.Request) {
 		}
 		formalVersion++
 		item := map[string]any{
+			"artifact_id":   rev.ID,
 			"revision":      rev.Revision,
 			"change_source": rev.ChangeSource,
 			"created_at":    rev.CreatedAt,
@@ -456,6 +464,13 @@ func GetSlotItemVersionsByIndex(w http.ResponseWriter, r *http.Request) {
 		if (slotID == "draft_document" || slotID == "flat_draft_document") &&
 			writerSlotRevisionSynced(rev.ChangeSource, artifactValue) {
 			item["provider_synced"] = true
+		}
+		artifact := describeDocumentRevision(ctx, db, owner, rev.ID)
+		if artifact.Document != nil {
+			item["document"] = artifact.Document
+		}
+		if artifact.DocumentError != nil {
+			item["document_error"] = artifact.DocumentError
 		}
 		out = append(out, item)
 	}

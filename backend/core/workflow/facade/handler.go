@@ -359,6 +359,7 @@ func (h Handler) ListArtifacts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for index := range values {
+		h.Store.DescribeArtifact(r.Context(), owner, &values[index], strings.TrimSpace(r.Header.Get("X-LazyMind-External-Ref")) == "")
 		values[index].Value = artifactfile.Metadata(values[index].Value)
 	}
 	writeJSON(w, http.StatusOK, envelope{Data: map[string]any{"artifacts": values}})
@@ -382,6 +383,7 @@ func (h Handler) ReadArtifact(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusServiceUnavailable, "ARTIFACT_READ_FAILED", err.Error(), true)
 		return
 	}
+	h.Store.DescribeArtifact(r.Context(), owner, &value, strings.TrimSpace(r.Header.Get("X-LazyMind-External-Ref")) == "")
 	value.Value, err = artifactfile.Inline(value.Value)
 	if err != nil {
 		fail(w, http.StatusServiceUnavailable, "ARTIFACT_READ_FAILED", err.Error(), true)

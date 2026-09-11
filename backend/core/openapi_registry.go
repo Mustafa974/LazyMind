@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	"lazymind/core/agent"
 	"lazymind/core/chat"
@@ -16,7 +17,66 @@ import (
 	"lazymind/core/modelprovider"
 	"lazymind/core/showcase"
 	"lazymind/core/wordgroup"
+	"lazymind/core/workflow"
+	"lazymind/core/workflow/document"
+	workflowstore "lazymind/core/workflow/store"
 )
+
+type workflowSlotsReadData struct {
+	Slots []workflow.SlotResponse `json:"slots"`
+}
+type workflowSessionReadData struct {
+	Session *workflow.SessionResponse `json:"session" nullable:"true" required:"true"`
+}
+type workflowArtifactListReadData struct {
+	Artifacts []workflowstore.Artifact `json:"artifacts"`
+}
+type workflowSlotVersionsReadData struct {
+	Versions []workflowSlotVersionRead `json:"versions"`
+}
+type workflowSlotsReadResponse struct {
+	Code    int                   `json:"code"`
+	Message string                `json:"message"`
+	Data    workflowSlotsReadData `json:"data"`
+}
+type workflowSessionReadResponse struct {
+	Code    int                     `json:"code"`
+	Message string                  `json:"message"`
+	Data    workflowSessionReadData `json:"data"`
+}
+type workflowArtifactReadResponse struct {
+	ContractVersion string                 `json:"contract_version"`
+	RequestID       string                 `json:"request_id"`
+	OK              bool                   `json:"ok"`
+	Result          workflowstore.Artifact `json:"result"`
+}
+type workflowArtifactListReadResponse struct {
+	ContractVersion string                       `json:"contract_version"`
+	RequestID       string                       `json:"request_id"`
+	OK              bool                         `json:"ok"`
+	Result          workflowArtifactListReadData `json:"result"`
+}
+
+// The versions endpoint uses a map because formal-version fields are conditional.
+type workflowSlotVersionRead struct {
+	ArtifactID      string                    `json:"artifact_id"`
+	Revision        int                       `json:"revision"`
+	ChangeSource    string                    `json:"change_source"`
+	CreatedAt       time.Time                 `json:"created_at"`
+	Selected        bool                      `json:"selected"`
+	ContentType     string                    `json:"content_type,omitempty"`
+	ContentSnapshot json.RawMessage           `json:"content_snapshot,omitempty"`
+	DraftVersion    int64                     `json:"draft_version,omitempty"`
+	Version         int                       `json:"version,omitempty"`
+	ProviderSynced  bool                      `json:"provider_synced,omitempty"`
+	Document        *document.Descriptor      `json:"document,omitempty"`
+	DocumentError   *document.ProjectionError `json:"document_error,omitempty"`
+}
+type workflowSlotVersionsReadResponse struct {
+	Code    int                          `json:"code"`
+	Message string                       `json:"message"`
+	Data    workflowSlotVersionsReadData `json:"data"`
+}
 
 type schemaSource struct {
 	Type   any
@@ -297,7 +357,7 @@ func (b *schemaBuilder) inlineSchemaForType(t reflect.Type) map[string]any {
 				propertySchema["enum"] = values
 			}
 			if field.Tag.Get("nullable") == "true" {
-				propertySchema["nullable"] = true
+				propertySchema = nullableSchema(propertySchema)
 			}
 			if field.Tag.Get("freeform") == "true" {
 				propertySchema["additionalProperties"] = true
@@ -2474,6 +2534,13 @@ func registeredCoreOperations() []openAPIOperation {
 		}},
 	}
 	return []openAPIOperation{
+		{Method: "GET", Path: "/workflow-sessions/{session_id}/slots", Summary: "Read Workflow artifacts with document descriptors", Tags: []string{"workflow"}, Responses: map[int]openAPIResponse{200: resp("Workflow artifact read result", workflowSlotsReadResponse{})}},
+		{Method: "GET", Path: "/workflow-sessions/{session_id}", Summary: "Read Workflow artifacts with document descriptors", Tags: []string{"workflow"}, Responses: map[int]openAPIResponse{200: resp("Workflow artifact read result", workflowSessionReadResponse{})}},
+		{Method: "GET", Path: "/conversations/{conversation_id}/workflow-sessions:active", Summary: "Read Workflow artifacts with document descriptors", Tags: []string{"workflow"}, Responses: map[int]openAPIResponse{200: resp("Workflow artifact read result", workflowSessionReadResponse{})}},
+		{Method: "GET", Path: "/conversations/{conversation_id}/workflow-sessions:latest", Summary: "Read Workflow artifacts with document descriptors", Tags: []string{"workflow"}, Responses: map[int]openAPIResponse{200: resp("Workflow artifact read result", workflowSessionReadResponse{})}},
+		{Method: "GET", Path: "/workflow-sessions/{session_id}/artifacts", Summary: "Read Workflow artifacts with document descriptors", Tags: []string{"workflow"}, Responses: map[int]openAPIResponse{200: resp("Workflow artifact read result", workflowArtifactListReadResponse{})}},
+		{Method: "GET", Path: "/workflow-artifacts/{artifact_id}", Summary: "Read Workflow artifacts with document descriptors", Tags: []string{"workflow"}, Responses: map[int]openAPIResponse{200: resp("Workflow artifact read result", workflowArtifactReadResponse{})}},
+		{Method: "GET", Path: "/workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/versions", Summary: "Read Workflow artifacts with document descriptors", Tags: []string{"workflow"}, Responses: map[int]openAPIResponse{200: resp("Workflow artifact read result", workflowSlotVersionsReadResponse{})}},
 		{
 			Method:      "PATCH",
 			Path:        "/workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}",

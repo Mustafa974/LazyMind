@@ -37,8 +37,18 @@ func InvalidateConsumers(
 	sessionID string,
 	revisionIDs ...string,
 ) error {
+	return walkConsumers(ctx, tx, sessionID, false, revisionIDs...)
+}
+
+// CheckConsumers reports the same live-consumer guard without locks or writes.
+// It is an advisory read; mutations still recheck under the Session lock.
+func CheckConsumers(ctx context.Context, db *gorm.DB, sessionID string, revisionIDs ...string) error {
+	return walkConsumers(ctx, db, sessionID, true, revisionIDs...)
+}
+
+func walkConsumers(ctx context.Context, tx *gorm.DB, sessionID string, readOnly bool, revisionIDs ...string) error {
 	engine := invalidationEngine{
-		ctx: ctx, tx: tx.WithContext(ctx), sessionID: sessionID,
+		ctx: ctx, tx: tx.WithContext(ctx), sessionID: sessionID, readOnly: readOnly,
 		seenAttempts: map[string]bool{}, seenDecisions: map[string]bool{},
 	}
 	for _, revisionID := range revisionIDs {
@@ -53,12 +63,20 @@ func InvalidateConsumers(
 }
 
 type invalidationEngine struct {
+	readOnly      bool
 	ctx           context.Context
 	tx            *gorm.DB
 	sessionID     string
 	queue         []orm.WorkflowSessionStep
 	seenAttempts  map[string]bool
 	seenDecisions map[string]bool
+}
+
+func (engine *invalidationEngine) attemptQuery() *gorm.DB {
+	if engine.readOnly {
+		return engine.tx
+	}
+	return engine.tx.Clauses(clause.Locking{Strength: "UPDATE"})
 }
 
 func terminalAttempt(status string) bool {
@@ -75,7 +93,7 @@ func (engine *invalidationEngine) enqueueAttempt(attemptID string) error {
 		return nil
 	}
 	var attempt orm.WorkflowSessionStep
-	err := engine.tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+	err := engine.attemptQuery().
 		Where("id = ? AND session_id = ? AND validity = ?", attemptID, engine.sessionID, "effective").
 		First(&attempt).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -130,14 +148,16 @@ func (engine *invalidationEngine) drain() error {
 		if !terminalAttempt(current.Status) {
 			return ErrArtifactInUse
 		}
-		updated := engine.tx.Model(&orm.WorkflowSessionStep{}).
-			Where("id = ? AND validity = ?", current.ID, "effective").
-			Update("validity", "stale")
-		if updated.Error != nil {
-			return updated.Error
-		}
-		if updated.RowsAffected == 0 {
-			continue
+		if !engine.readOnly {
+			updated := engine.tx.Model(&orm.WorkflowSessionStep{}).
+				Where("id = ? AND validity = ?", current.ID, "effective").
+				Update("validity", "stale")
+			if updated.Error != nil {
+				return updated.Error
+			}
+			if updated.RowsAffected == 0 {
+				continue
+			}
 		}
 		var outputs []orm.WorkflowSlotRevision
 		if err := engine.tx.Where(
@@ -147,9 +167,11 @@ func (engine *invalidationEngine) drain() error {
 			return err
 		}
 		for _, output := range outputs {
-			if err := engine.tx.Model(&orm.WorkflowSlotRevision{}).Where("id = ?", output.ID).
-				Updates(map[string]any{"validity": "stale", "selected": false}).Error; err != nil {
-				return err
+			if !engine.readOnly {
+				if err := engine.tx.Model(&orm.WorkflowSlotRevision{}).Where("id = ?", output.ID).
+					Updates(map[string]any{"validity": "stale", "selected": false}).Error; err != nil {
+					return err
+				}
 			}
 			if err := engine.enqueueRevisionConsumers(output.ID); err != nil {
 				return err
@@ -176,14 +198,16 @@ func (engine *invalidationEngine) invalidateDecision(decision orm.WorkflowRouteD
 		return nil
 	}
 	engine.seenDecisions[decision.ID] = true
-	updated := engine.tx.Model(&orm.WorkflowRouteDecision{}).
-		Where("id = ? AND validity = ?", decision.ID, "effective").
-		Update("validity", "stale")
-	if updated.Error != nil {
-		return updated.Error
-	}
-	if updated.RowsAffected == 0 {
-		return nil
+	if !engine.readOnly {
+		updated := engine.tx.Model(&orm.WorkflowRouteDecision{}).
+			Where("id = ? AND validity = ?", decision.ID, "effective").
+			Update("validity", "stale")
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected == 0 {
+			return nil
+		}
 	}
 	var targets []string
 	_ = json.Unmarshal(decision.ActivatedJSON, &targets)
@@ -199,7 +223,7 @@ func (engine *invalidationEngine) invalidateDecision(decision orm.WorkflowRouteD
 			continue
 		}
 		var attempt orm.WorkflowSessionStep
-		err = engine.tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		err = engine.attemptQuery().
 			Where("session_id = ? AND step_id = ? AND validity = ?", engine.sessionID, target, "effective").
 			Order("attempt DESC").First(&attempt).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -220,6 +244,9 @@ func (engine *invalidationEngine) targetStillActivated(target string) (bool, err
 		return false, err
 	}
 	for _, decision := range decisions {
+		if engine.seenDecisions[decision.ID] {
+			continue
+		}
 		var activated []string
 		_ = json.Unmarshal(decision.ActivatedJSON, &activated)
 		for _, value := range activated {

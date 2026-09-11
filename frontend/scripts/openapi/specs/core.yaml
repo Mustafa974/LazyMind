@@ -261,6 +261,64 @@ components:
             required:
                 - action
             type: object
+        Artifact:
+            properties:
+                artifact_id:
+                    type: string
+                attempt:
+                    type: integer
+                caption:
+                    type: string
+                change_source:
+                    type: string
+                content_type:
+                    type: string
+                created_at:
+                    format: date-time
+                    type: string
+                deleted:
+                    type: boolean
+                document:
+                    $ref: '#/components/schemas/Descriptor'
+                document_error:
+                    $ref: '#/components/schemas/ProjectionError'
+                draft_version:
+                    format: int64
+                    type: integer
+                list_index:
+                    type: integer
+                producer_attempt_id:
+                    type: string
+                revision:
+                    type: integer
+                selected:
+                    type: boolean
+                session_id:
+                    type: string
+                slot:
+                    type: string
+                slot_id:
+                    type: string
+                step_id:
+                    type: string
+                validity:
+                    type: string
+                value: {}
+            required:
+                - artifact_id
+                - attempt
+                - change_source
+                - content_type
+                - created_at
+                - deleted
+                - revision
+                - selected
+                - session_id
+                - slot
+                - slot_id
+                - step_id
+                - validity
+            type: object
         AuthorizationSubjectGrant:
             properties:
                 grantee_id:
@@ -2098,6 +2156,24 @@ components:
                 - deleted_rows
                 - group_id
             type: object
+        Descriptor:
+            properties:
+                capabilities:
+                    items:
+                        type: string
+                    type: array
+                editable:
+                    type: boolean
+                representation:
+                    type: string
+                schema:
+                    type: string
+            required:
+                - capabilities
+                - editable
+                - representation
+                - schema
+            type: object
         DiscoverResponse:
             properties:
                 success:
@@ -3527,6 +3603,16 @@ components:
                 - code
                 - message
                 - data
+            type: object
+        ProjectionError:
+            properties:
+                code:
+                    type: string
+                retryable:
+                    type: boolean
+            required:
+                - code
+                - retryable
             type: object
         PromptCategory:
             properties:
@@ -6812,6 +6898,48 @@ components:
                         $ref: '#/components/schemas/selectedProviderOpenAPIItem'
                     type: array
             type: object
+        sessionDTO:
+            properties:
+                conversation_id:
+                    type: string
+                created_at:
+                    format: date-time
+                    type: string
+                current_step_id:
+                    type: string
+                intent_context:
+                    type: string
+                pinned_revision_id:
+                    type: string
+                session_id:
+                    type: string
+                slots:
+                    items:
+                        $ref: '#/components/schemas/slotDTO'
+                    type: array
+                status:
+                    type: string
+                steps:
+                    items:
+                        $ref: '#/components/schemas/stepDTO'
+                    type: array
+                updated_at:
+                    format: date-time
+                    type: string
+                workflow_id:
+                    type: string
+                workflow_mode:
+                    type: string
+            required:
+                - conversation_id
+                - created_at
+                - current_step_id
+                - session_id
+                - status
+                - updated_at
+                - workflow_id
+                - workflow_mode
+            type: object
         setSelectedModelOpenAPIItem:
             properties:
                 model_id:
@@ -8033,6 +8161,73 @@ components:
             required:
                 - skill_id
             type: object
+        slotDTO:
+            properties:
+                artifact_id:
+                    type: string
+                artifact_value: {}
+                caption:
+                    type: string
+                change_source:
+                    type: string
+                content_type:
+                    type: string
+                created_at:
+                    format: date-time
+                    type: string
+                document:
+                    $ref: '#/components/schemas/Descriptor'
+                document_error:
+                    $ref: '#/components/schemas/ProjectionError'
+                draft_version:
+                    format: int64
+                    type: integer
+                editor_profile:
+                    type: string
+                last_synced_revision:
+                    type: integer
+                last_synced_version:
+                    type: integer
+                list_index:
+                    type: integer
+                order_version:
+                    type: integer
+                provider:
+                    type: string
+                provider_document_id:
+                    type: string
+                revision:
+                    type: integer
+                revision_count:
+                    type: integer
+                selected:
+                    type: boolean
+                slot:
+                    type: string
+                slot_id:
+                    type: string
+                sort_order:
+                    type: integer
+                step_id:
+                    type: string
+                version_number:
+                    type: integer
+                write_back_dirty:
+                    type: boolean
+                write_back_ready:
+                    type: boolean
+                write_back_state:
+                    type: string
+                write_back_url:
+                    type: string
+            required:
+                - artifact_id
+                - created_at
+                - revision
+                - selected
+                - slot
+                - slot_id
+            type: object
         slotItemPatchOpenAPIRequest:
             properties:
                 base_draft_version:
@@ -8053,6 +8248,31 @@ components:
             required:
                 - base_revision
                 - value
+            type: object
+        stepDTO:
+            properties:
+                attempt:
+                    type: integer
+                created_at:
+                    format: date-time
+                    type: string
+                intent_context:
+                    type: string
+                status:
+                    type: string
+                step_id:
+                    type: string
+                task_id:
+                    type: string
+                validity:
+                    type: string
+            required:
+                - attempt
+                - created_at
+                - status
+                - step_id
+                - task_id
+                - validity
             type: object
         toolGroupOpenAPIResponse:
             properties:
@@ -8336,6 +8556,141 @@ components:
             required:
                 - ready
             type: object
+        workflowArtifactListReadData:
+            properties:
+                artifacts:
+                    items:
+                        $ref: '#/components/schemas/Artifact'
+                    type: array
+            type: object
+        workflowArtifactListReadResponse:
+            properties:
+                contract_version:
+                    type: string
+                ok:
+                    type: boolean
+                request_id:
+                    type: string
+                result:
+                    $ref: '#/components/schemas/workflowArtifactListReadData'
+            required:
+                - contract_version
+                - ok
+                - request_id
+                - result
+            type: object
+        workflowArtifactReadResponse:
+            properties:
+                contract_version:
+                    type: string
+                ok:
+                    type: boolean
+                request_id:
+                    type: string
+                result:
+                    $ref: '#/components/schemas/Artifact'
+            required:
+                - contract_version
+                - ok
+                - request_id
+                - result
+            type: object
+        workflowSessionReadData:
+            properties:
+                session:
+                    allOf:
+                        - $ref: '#/components/schemas/sessionDTO'
+                    nullable: true
+            required:
+                - session
+            type: object
+        workflowSessionReadResponse:
+            properties:
+                code:
+                    type: integer
+                data:
+                    $ref: '#/components/schemas/workflowSessionReadData'
+                message:
+                    type: string
+            required:
+                - code
+                - data
+                - message
+            type: object
+        workflowSlotVersionRead:
+            properties:
+                artifact_id:
+                    type: string
+                change_source:
+                    type: string
+                content_snapshot: {}
+                content_type:
+                    type: string
+                created_at:
+                    format: date-time
+                    type: string
+                document:
+                    $ref: '#/components/schemas/Descriptor'
+                document_error:
+                    $ref: '#/components/schemas/ProjectionError'
+                draft_version:
+                    format: int64
+                    type: integer
+                provider_synced:
+                    type: boolean
+                revision:
+                    type: integer
+                selected:
+                    type: boolean
+                version:
+                    type: integer
+            required:
+                - artifact_id
+                - change_source
+                - created_at
+                - revision
+                - selected
+            type: object
+        workflowSlotVersionsReadData:
+            properties:
+                versions:
+                    items:
+                        $ref: '#/components/schemas/workflowSlotVersionRead'
+                    type: array
+            type: object
+        workflowSlotVersionsReadResponse:
+            properties:
+                code:
+                    type: integer
+                data:
+                    $ref: '#/components/schemas/workflowSlotVersionsReadData'
+                message:
+                    type: string
+            required:
+                - code
+                - data
+                - message
+            type: object
+        workflowSlotsReadData:
+            properties:
+                slots:
+                    items:
+                        $ref: '#/components/schemas/slotDTO'
+                    type: array
+            type: object
+        workflowSlotsReadResponse:
+            properties:
+                code:
+                    type: integer
+                data:
+                    $ref: '#/components/schemas/workflowSlotsReadData'
+                message:
+                    type: string
+            required:
+                - code
+                - data
+                - message
+            type: object
         writerDocumentSaveOpenAPIRequest:
             properties:
                 base_draft_version:
@@ -8409,12 +8764,6 @@ paths:
                 "200":
                     description: OK
             summary: POST /add_files_to_group
-    /api/core/admin:
-        get:
-            responses:
-                "200":
-                    description: OK
-            summary: GET /admin
     /api/core/admin/skill-market:
         post:
             requestBody:
@@ -9914,8 +10263,14 @@ paths:
                     type: string
             responses:
                 "200":
-                    description: OK
-            summary: GET /conversations/{conversation_id}/workflow-sessions:active
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/workflowSessionReadResponse'
+                    description: Workflow artifact read result
+            summary: Read Workflow artifacts with document descriptors
+            tags:
+                - workflow
     /api/core/conversations/{conversation_id}/workflow-sessions:latest:
         get:
             parameters:
@@ -9926,8 +10281,14 @@ paths:
                     type: string
             responses:
                 "200":
-                    description: OK
-            summary: GET /conversations/{conversation_id}/workflow-sessions:latest
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/workflowSessionReadResponse'
+                    description: Workflow artifact read result
+            summary: Read Workflow artifacts with document descriptors
+            tags:
+                - workflow
     /api/core/conversations/{conversation_id}/workflow-settings:
         patch:
             parameters:
@@ -12415,18 +12776,6 @@ paths:
                 "200":
                     description: OK
             summary: POST /external-chat/runs/{run_id}:heartbeat
-    /api/core/health:
-        get:
-            responses:
-                "200":
-                    description: OK
-            summary: GET /health
-    /api/core/hello:
-        get:
-            responses:
-                "200":
-                    description: OK
-            summary: GET /hello
     /api/core/inner/word_group:apply:
         post:
             requestBody:
@@ -16966,8 +17315,14 @@ paths:
                     type: string
             responses:
                 "200":
-                    description: OK
-            summary: GET /workflow-artifacts/{artifact_id}
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/workflowArtifactReadResponse'
+                    description: Workflow artifact read result
+            summary: Read Workflow artifacts with document descriptors
+            tags:
+                - workflow
         patch:
             parameters:
                 - in: path
@@ -17347,8 +17702,14 @@ paths:
                     type: string
             responses:
                 "200":
-                    description: OK
-            summary: GET /workflow-sessions/{session_id}
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/workflowSessionReadResponse'
+                    description: Workflow artifact read result
+            summary: Read Workflow artifacts with document descriptors
+            tags:
+                - workflow
     /api/core/workflow-sessions/{session_id}/artifacts:
         get:
             parameters:
@@ -17359,8 +17720,14 @@ paths:
                     type: string
             responses:
                 "200":
-                    description: OK
-            summary: GET /workflow-sessions/{session_id}/artifacts
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/workflowArtifactListReadResponse'
+                    description: Workflow artifact read result
+            summary: Read Workflow artifacts with document descriptors
+            tags:
+                - workflow
         post:
             parameters:
                 - in: path
@@ -17480,8 +17847,14 @@ paths:
                     type: string
             responses:
                 "200":
-                    description: OK
-            summary: GET /workflow-sessions/{session_id}/slots
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/workflowSlotsReadResponse'
+                    description: Workflow artifact read result
+            summary: Read Workflow artifacts with document descriptors
+            tags:
+                - workflow
     /api/core/workflow-sessions/{session_id}/slots/{slot_id}:
         patch:
             parameters:
@@ -17636,8 +18009,14 @@ paths:
                     type: string
             responses:
                 "200":
-                    description: OK
-            summary: GET /workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/versions
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/workflowSlotVersionsReadResponse'
+                    description: Workflow artifact read result
+            summary: Read Workflow artifacts with document descriptors
+            tags:
+                - workflow
     /api/core/workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}:action-execute:
         post:
             parameters:

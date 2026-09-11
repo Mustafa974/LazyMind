@@ -245,7 +245,7 @@ func (r *Repository) ListArtifacts(ctx context.Context, owner, sessionID string)
 	}
 	out := make([]Artifact, 0, len(revisions))
 	for _, revision := range revisions {
-		value, contentType, caption, err := r.resolveArtifact(ctx, revision)
+		value, contentType, caption, draftVersion, err := r.resolveArtifact(ctx, revision)
 		if err != nil {
 			return nil, err
 		}
@@ -253,36 +253,36 @@ func (r *Repository) ListArtifacts(ctx context.Context, owner, sessionID string)
 			Slot: revision.Slot, StepID: revision.StepID, Attempt: revision.Attempt,
 			ProducerAttemptID: revision.ProducerAttemptID, Revision: revision.Revision,
 			ListIndex: revision.ListIndex, Selected: revision.Selected, Validity: revision.Validity,
-			ChangeSource: revision.ChangeSource, ContentType: contentType, Value: value,
+			ChangeSource: revision.ChangeSource, ContentType: contentType, Value: value, DraftVersion: draftVersion,
 			Caption: caption, Deleted: revision.Validity == "deleted", CreatedAt: revision.CreatedAt})
 	}
 	return out, nil
 }
 
-func (r *Repository) resolveArtifact(ctx context.Context, revision orm.WorkflowSlotRevision) (json.RawMessage, string, *string, error) {
+func (r *Repository) resolveArtifact(ctx context.Context, revision orm.WorkflowSlotRevision) (json.RawMessage, string, *string, int64, error) {
 	if revision.HumanArtifactID != nil {
 		var value orm.WorkflowHumanArtifact
 		if err := r.db.WithContext(ctx).Where("id = ?", *revision.HumanArtifactID).First(&value).Error; err != nil {
-			return nil, "", nil, err
+			return nil, "", nil, 0, err
 		}
 		resolved := common.CanonicalizeTextArtifactValue(value.ContentType, value.Value)
-		return append(json.RawMessage(nil), resolved...), value.ContentType, value.Caption, nil
+		return append(json.RawMessage(nil), resolved...), value.ContentType, value.Caption, value.DraftVersion, nil
 	}
 	if revision.ArtifactSeq != nil {
 		var step orm.WorkflowSessionStep
 		if err := r.db.WithContext(ctx).Where("session_id = ? AND step_id = ? AND attempt = ?",
 			revision.SessionID, revision.StepID, revision.Attempt).First(&step).Error; err != nil {
-			return nil, "", nil, err
+			return nil, "", nil, 0, err
 		}
 		var value orm.SubAgentArtifact
 		if err := r.db.WithContext(ctx).Where("task_id = ? AND slot = ? AND seq = ?",
 			step.TaskID, revision.Slot, *revision.ArtifactSeq).First(&value).Error; err != nil {
-			return nil, "", nil, err
+			return nil, "", nil, 0, err
 		}
 		resolved := common.CanonicalizeTextArtifactValue(value.ContentType, value.Value)
-		return append(json.RawMessage(nil), resolved...), value.ContentType, value.Caption, nil
+		return append(json.RawMessage(nil), resolved...), value.ContentType, value.Caption, 0, nil
 	}
-	return append(json.RawMessage(nil), revision.ContentSnapshot...), "json", nil, nil
+	return append(json.RawMessage(nil), revision.ContentSnapshot...), "json", nil, 0, nil
 }
 
 func (r *Repository) ReadArtifact(ctx context.Context, owner, artifactID string) (Artifact, error) {
@@ -293,7 +293,7 @@ func (r *Repository) ReadArtifact(ctx context.Context, owner, artifactID string)
 	if err := r.AuthorizeSession(ctx, revision.SessionID, owner); err != nil {
 		return Artifact{}, err
 	}
-	value, contentType, caption, err := r.resolveArtifact(ctx, revision)
+	value, contentType, caption, draftVersion, err := r.resolveArtifact(ctx, revision)
 	if err != nil {
 		return Artifact{}, err
 	}
@@ -301,7 +301,7 @@ func (r *Repository) ReadArtifact(ctx context.Context, owner, artifactID string)
 		Slot: revision.Slot, StepID: revision.StepID, Attempt: revision.Attempt,
 		ProducerAttemptID: revision.ProducerAttemptID, Revision: revision.Revision,
 		ListIndex: revision.ListIndex, Selected: revision.Selected, Validity: revision.Validity,
-		ChangeSource: revision.ChangeSource, ContentType: contentType, Value: value,
+		ChangeSource: revision.ChangeSource, ContentType: contentType, Value: value, DraftVersion: draftVersion,
 		Caption: caption, Deleted: revision.Validity == "deleted", CreatedAt: revision.CreatedAt}, nil
 }
 
