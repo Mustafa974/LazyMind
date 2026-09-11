@@ -45,7 +45,8 @@ func resolveValuePaths(raw json.RawMessage) json.RawMessage {
 
 // enrichArtifactValue enriches artifact values with fresh browser-accessible signed URLs.
 func enrichArtifactValue(raw json.RawMessage, contentType string) json.RawMessage {
-	return subagent.SignArtifactImageValue(contentType, raw)
+	normalized := common.CanonicalizeTextArtifactValue(contentType, raw)
+	return subagent.SignArtifactImageValue(contentType, normalized)
 }
 
 // sessionDTO is the frontend shape for a WorkflowSession.

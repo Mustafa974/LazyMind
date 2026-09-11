@@ -232,6 +232,102 @@ func TestDBArtifactSinkIsIdempotentAndEmitsRevisionEvents(t *testing.T) {
 	}
 }
 
+func TestDBArtifactSinkCanonicalizesRootMarkdownAndPreservesLineage(t *testing.T) {
+	db := executorComponentDB(t, &orm.WorkflowSession{}, &orm.WorkflowSlotRevision{},
+		&orm.WorkflowHumanArtifact{}, &orm.WorkflowSlotOrder{}, &orm.WorkflowEvent{})
+	now := time.Now().UTC()
+	if err := db.Create(&orm.WorkflowSession{
+		ID: "session-text-shape", ConversationID: "conversation-text-shape", WorkflowID: "workflow-text-shape",
+		CreateUserID: "user-1", Status: "active", CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	sink := DBArtifactSink{DB: db}
+	attempt := AttemptContext{
+		AttemptID: "attempt-text-shape", SessionID: "session-text-shape", StepID: "write", AttemptNo: 1,
+		DeclaredOutputTypes: map[string]string{"markdown": "text"},
+		OutputCardinality:   map[string]string{"markdown": "single"},
+	}
+	if err := sink.Save(context.Background(), attempt, Artifact{
+		Slot: "markdown", ContentType: "text/markdown; charset=utf-8", Seq: 1,
+		Value: json.RawMessage(`"# Heading\nBody"`),
+	}); err != nil {
+		t.Fatalf("save markdown: %v", err)
+	}
+	var markdown orm.WorkflowHumanArtifact
+	if err := db.Where("session_id = ? AND slot = ?", attempt.SessionID, "markdown").First(&markdown).Error; err != nil {
+		t.Fatal(err)
+	}
+	var revisions []orm.WorkflowSlotRevision
+	if err := db.Where("session_id = ? AND slot_id = ?", attempt.SessionID, "markdown").Find(&revisions).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(revisions) != 1 {
+		t.Fatalf("revisions = %#v, want exactly one", revisions)
+	}
+	revision := revisions[0]
+	if revision.Revision != 1 || !revision.Selected || revision.HumanArtifactID == nil ||
+		*revision.HumanArtifactID != markdown.ID || revision.ProducerAttemptID != attempt.AttemptID {
+		t.Fatalf("revision = %#v", revision)
+	}
+	var persistedSession orm.WorkflowSession
+	if err := db.First(&persistedSession, "id = ?", attempt.SessionID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if persistedSession.StateVersion != 1 {
+		t.Fatalf("state version = %d, want 1", persistedSession.StateVersion)
+	}
+	var events []orm.WorkflowEvent
+	if err := db.Where("session_id = ?", attempt.SessionID).Find(&events).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].EventType != "artifact.upsert" ||
+		events[0].EntityID != revision.ID || events[0].StateVersion != 1 {
+		t.Fatalf("events = %#v", events)
+	}
+	var markdownValue any
+	if err := json.Unmarshal(markdown.Value, &markdownValue); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(markdownValue, map[string]any{"text": "# Heading\nBody"}) {
+		t.Fatalf("markdown value = %#v", markdownValue)
+	}
+}
+
+func TestDBArtifactSinkPreservesNonTextRootString(t *testing.T) {
+	db := executorComponentDB(t, &orm.WorkflowSession{}, &orm.WorkflowSlotRevision{},
+		&orm.WorkflowHumanArtifact{}, &orm.WorkflowSlotOrder{}, &orm.WorkflowEvent{})
+	now := time.Now().UTC()
+	if err := db.Create(&orm.WorkflowSession{
+		ID: "session-json-shape", ConversationID: "conversation-json-shape", WorkflowID: "workflow-json-shape",
+		CreateUserID: "user-1", Status: "active", CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	sink := DBArtifactSink{DB: db}
+	attempt := AttemptContext{
+		AttemptID: "attempt-json-shape", SessionID: "session-json-shape", StepID: "write", AttemptNo: 1,
+		OutputCardinality: map[string]string{"json": "single"},
+	}
+	if err := sink.Save(context.Background(), attempt, Artifact{
+		Slot: "json", ContentType: "application/json", Seq: 1,
+		Value: json.RawMessage(`"leave as JSON string"`),
+	}); err != nil {
+		t.Fatalf("save JSON: %v", err)
+	}
+	var jsonValue orm.WorkflowHumanArtifact
+	if err := db.Where("session_id = ? AND slot = ?", attempt.SessionID, "json").First(&jsonValue).Error; err != nil {
+		t.Fatal(err)
+	}
+	var structuredValue any
+	if err := json.Unmarshal(jsonValue.Value, &structuredValue); err != nil {
+		t.Fatal(err)
+	}
+	if structuredValue != "leave as JSON string" {
+		t.Fatalf("JSON value = %#v", structuredValue)
+	}
+}
+
 func TestDBArtifactSinkRejectsDeclaredTypeMismatch(t *testing.T) {
 	db := executorComponentDB(t)
 	sink := DBArtifactSink{DB: db}

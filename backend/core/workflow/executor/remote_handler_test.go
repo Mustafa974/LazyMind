@@ -242,6 +242,57 @@ func TestRemoteHandlerRejectsChangedArtifactInput(t *testing.T) {
 	}
 }
 
+func TestRemoteHandlerPreservesHistoricalRootTextAttemptBytes(t *testing.T) {
+	value := AttemptContext{
+		AttemptID: "attempt-root-text", SessionID: "session-root-text", StepID: "step-root-text",
+		Inputs: map[string]any{},
+	}
+	handler, db, claim := remoteHandlerFixture(t, value)
+	now := time.Now().UTC()
+	original := json.RawMessage(`"# Historical\n\\# literal hash"`)
+	sum := sha256.Sum256(original)
+	humanID := "human-root-text"
+	revisionID := "revision-root-text"
+	if err := db.Create(&orm.WorkflowHumanArtifact{
+		ID: humanID, SessionID: value.SessionID, Slot: "draft", ContentType: "text",
+		Value: original, CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&orm.WorkflowSlotRevision{
+		ID: revisionID, SessionID: value.SessionID, SlotID: "draft", Revision: 1,
+		Selected: true, HumanArtifactID: &humanID, Slot: "draft", StepID: "source",
+		Attempt: 1, Validity: "effective", CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	value.Inputs["draft"] = map[string]any{
+		"source_type": "artifact", "source_revision_id": revisionID,
+		"content_hash": "sha256:" + hex.EncodeToString(sum[:]),
+	}
+	handler.Contexts = staticContextLoader{value: value}
+	req := httptest.NewRequest(http.MethodGet, "/inputs/draft", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("X-Workflow-Lease-Token", claim.LeaseToken)
+	req = mux.SetURLVars(req, map[string]string{
+		"attempt_id": value.AttemptID, "material_id": "draft",
+	})
+	recorder := httptest.NewRecorder()
+	handler.Input(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("root text input: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var envelope remoteEnvelope
+	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	data := envelope.Data.(map[string]any)
+	content, err := base64.StdEncoding.DecodeString(data["content_base64"].(string))
+	if err != nil || !bytes.Equal(content, original) {
+		t.Fatalf("root text content=%q err=%v, want raw bytes %q", content, err, original)
+	}
+}
+
 func TestRemoteHandlerRejectsChangedListArtifactMetadata(t *testing.T) {
 	value := AttemptContext{
 		AttemptID: "attempt-list-hash", SessionID: "session-list-hash", StepID: "step-list-hash",

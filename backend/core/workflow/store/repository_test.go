@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -150,6 +151,71 @@ func TestDeleteArtifactCreatesTombstoneAndPreservesHistory(t *testing.T) {
 	}
 	if _, err := repo.DeleteArtifact(ctx, "u1", deleted.ID, 2, "cmd-again"); !errors.Is(err, ErrIdempotencyConflict) {
 		t.Fatalf("repeated delete must conflict: %v", err)
+	}
+}
+
+func TestPatchArtifactCanonicalizesCaseInsensitiveTextMIME(t *testing.T) {
+	repo := testRepo(t)
+	now := time.Now().UTC()
+	if err := repo.db.AutoMigrate(&orm.WorkflowSession{}, &orm.WorkflowHumanArtifact{},
+		&orm.WorkflowSlotRevision{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.db.Create(&orm.WorkflowSession{
+		ID: "text-shape-session", CreateUserID: "u1", WorkflowID: "wf", Status: "active",
+		StateVersion: 1, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	humanID := "text-shape-human-1"
+	if err := repo.db.Create(&orm.WorkflowHumanArtifact{
+		ID: humanID, SessionID: "text-shape-session", Slot: "report", ContentType: "text",
+		Value: json.RawMessage(`{"text":"original"}`), CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.db.Create(&orm.WorkflowSlotRevision{
+		ID: "text-shape-revision-1", SessionID: "text-shape-session", SlotID: "report",
+		Slot: "report", StepID: "draft", Revision: 1, Selected: true, HumanArtifactID: &humanID,
+		Validity: "effective", ChangeSource: "agent", CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	patched, err := repo.PatchArtifact(
+		t.Context(), "u1", "text-shape-revision-1", 1,
+		"TeXt/MaRkDoWn; charset=UTF-8", json.RawMessage(`"# Patched\nBody"`), nil, "cmd-text-shape",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if patched.Revision != 2 || !patched.Selected || patched.ContentType != "TeXt/MaRkDoWn; charset=UTF-8" {
+		t.Fatalf("patched artifact = %#v", patched)
+	}
+	var revision orm.WorkflowSlotRevision
+	if err := repo.db.First(&revision, "id = ?", patched.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if revision.HumanArtifactID == nil {
+		t.Fatalf("patched revision has no human artifact: %#v", revision)
+	}
+	var persisted orm.WorkflowHumanArtifact
+	if err := repo.db.First(&persisted, "id = ?", *revision.HumanArtifactID).Error; err != nil {
+		t.Fatal(err)
+	}
+	var persistedValue any
+	if err := json.Unmarshal(persisted.Value, &persistedValue); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(persistedValue, map[string]any{"text": "# Patched\nBody"}) {
+		t.Fatalf("persisted value = %#v", persistedValue)
+	}
+	var got any
+	if err := json.Unmarshal(patched.Value, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, map[string]any{"text": "# Patched\nBody"}) {
+		t.Fatalf("patched value = %#v", got)
 	}
 }
 

@@ -18,6 +18,7 @@ import (
 	"gorm.io/gorm"
 
 	"lazymind/core/common/orm"
+	"lazymind/core/workflow/graphengine"
 )
 
 func seedSelectedHumanDraft(t *testing.T) *orm.DB {
@@ -141,6 +142,114 @@ func assertArtifactJSON(t *testing.T, value json.RawMessage, want string) {
 	}
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatalf("artifact value = %#v, want %#v", actual, expected)
+	}
+}
+
+func TestHumanArtifactTextWritePathsCanonicalizeRootStrings(t *testing.T) {
+	t.Run("draft update", func(t *testing.T) {
+		db := seedSelectedHumanDraft(t)
+		baseRevision, baseDraftVersion := 1, int64(1)
+		_, nextDraftVersion, updated, err := UpdateSelectedHumanArtifactValue(
+			t.Context(), db.DB, "session-draft", "draft_document", nil,
+			"text", json.RawMessage(`"# Updated\nBody"`), nil,
+			&baseRevision, &baseDraftVersion,
+		)
+		if err != nil || !updated || nextDraftVersion != 2 {
+			t.Fatalf("draft update: updated=%v draft_version=%d err=%v", updated, nextDraftVersion, err)
+		}
+		artifact, storedDraftVersion := loadSelectedHumanDraft(t, db)
+		assertSingleSelectedRevisionOne(t, db)
+		var artifacts int64
+		if err := db.Model(&orm.WorkflowHumanArtifact{}).Count(&artifacts).Error; err != nil {
+			t.Fatal(err)
+		}
+		if artifacts != 1 {
+			t.Fatalf("human artifacts = %d, want 1 for in-place draft", artifacts)
+		}
+		if artifact.ID != "human-draft" || storedDraftVersion != 2 {
+			t.Fatalf("in-place artifact = %q draft_version=%d", artifact.ID, storedDraftVersion)
+		}
+		assertArtifactJSON(t, artifact.Value, `{"text":"# Updated\nBody"}`)
+	})
+
+	t.Run("new revision", func(t *testing.T) {
+		db := seedSelectedHumanDraft(t)
+		baseRevision, baseDraftVersion := 1, int64(1)
+		created, err := WriteSlotRevisionWithHumanArtifact(
+			t.Context(), db.DB,
+			"session-draft", "draft_document", "draft_document", "write_document", 1,
+			"single", nil, "text/plain", json.RawMessage(`"# Checkpoint\nBody"`), nil,
+			"human", &baseRevision, &baseDraftVersion,
+		)
+		if err != nil {
+			t.Fatalf("create revision: %v", err)
+		}
+		if created.Revision != 2 || created.HumanArtifactID == nil {
+			t.Fatalf("created revision = %#v", created)
+		}
+		var artifact orm.WorkflowHumanArtifact
+		if err := db.First(&artifact, "id = ?", *created.HumanArtifactID).Error; err != nil {
+			t.Fatal(err)
+		}
+		assertArtifactJSON(t, artifact.Value, `{"text":"# Checkpoint\nBody"}`)
+	})
+
+	t.Run("existing object metadata", func(t *testing.T) {
+		db := seedSelectedHumanDraft(t)
+		baseRevision, baseDraftVersion := 1, int64(1)
+		value := json.RawMessage(`{"text":"kept","language":"zh","meta":{"anchor":"intro"}}`)
+		_, _, updated, err := UpdateSelectedHumanArtifactValue(
+			t.Context(), db.DB, "session-draft", "draft_document", nil,
+			"text/markdown", value, nil, &baseRevision, &baseDraftVersion,
+		)
+		if err != nil || !updated {
+			t.Fatalf("update object: updated=%v err=%v", updated, err)
+		}
+		artifact, _ := loadSelectedHumanDraft(t, db)
+		assertArtifactJSON(t, artifact.Value, string(value))
+	})
+}
+
+func TestEnrichSlotsProjectsHistoricalRootTextWithoutMutatingHistory(t *testing.T) {
+	db := newHandlerTestDB(t)
+	if err := db.AutoMigrate(&orm.WorkflowHumanArtifact{}, &orm.WorkflowInputBinding{}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	humanID := "historical-root-text"
+	historical := json.RawMessage(`"# Historical\n\\# literal hash"`)
+	if err := db.Create(&orm.WorkflowHumanArtifact{
+		ID: humanID, SessionID: "session-history", Slot: "document", ContentType: "text",
+		Value: historical, CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	revision := orm.WorkflowSlotRevision{
+		ID: "historical-root-revision", SessionID: "session-history", SlotID: "document",
+		Slot: "document", StepID: "source", Revision: 1, Selected: true,
+		HumanArtifactID: &humanID, Validity: "effective", CreatedAt: now,
+	}
+	if err := db.Create(&revision).Error; err != nil {
+		t.Fatal(err)
+	}
+	binding := attemptInputBindingFromWitness(
+		db.DB, "session-history", "consumer-attempt",
+		graphengine.Witness{MaterialID: "document", RevisionID: revision.ID}, now,
+	)
+	if want := humanArtifactValueHash(historical); binding.ContentHash != want {
+		t.Fatalf("historical root hash = %q, want raw-byte hash %q", binding.ContentHash, want)
+	}
+
+	slots := []slotDTO{toSlotDTO(&revision)}
+	enrichSlots(t.Context(), db.DB, "session-history", slots)
+	assertArtifactJSON(t, slots[0].ArtifactValue, `{"text":"# Historical\n\\# literal hash"}`)
+
+	var stored orm.WorkflowHumanArtifact
+	if err := db.First(&stored, "id = ?", humanID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if string(stored.Value) != string(historical) {
+		t.Fatalf("historical bytes changed: got %s, want %s", stored.Value, historical)
 	}
 }
 

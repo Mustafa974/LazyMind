@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"lazymind/core/common"
 	"lazymind/core/common/orm"
 	"lazymind/core/workflow/artifactfile"
 )
@@ -28,7 +29,8 @@ func validateDeclaredArtifactType(attempt AttemptContext, artifact Artifact) err
 	if declared == "" {
 		return nil
 	}
-	valid := actual == declared
+	valid := actual == declared ||
+		(common.IsTextArtifactContentType(declared) && common.IsTextArtifactContentType(actual))
 	if declared == "file" {
 		valid = actual == "file" || actual == "file_list"
 	} else if actual == "file" && (declared == "text" || declared == "json") {
@@ -64,6 +66,7 @@ func (sink DBArtifactSink) Save(ctx context.Context, attempt AttemptContext, art
 	if err != nil {
 		return err
 	}
+	storedValue = common.CanonicalizeTextArtifactValue(artifact.ContentType, storedValue)
 	var caption *string
 	var metadata map[string]any
 	if json.Unmarshal(storedValue, &metadata) == nil {

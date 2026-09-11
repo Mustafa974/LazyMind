@@ -263,7 +263,8 @@ func (r *Repository) resolveArtifact(ctx context.Context, revision orm.WorkflowS
 		if err := r.db.WithContext(ctx).Where("id = ?", *revision.HumanArtifactID).First(&value).Error; err != nil {
 			return nil, "", nil, err
 		}
-		return append(json.RawMessage(nil), value.Value...), value.ContentType, value.Caption, nil
+		resolved := common.CanonicalizeTextArtifactValue(value.ContentType, value.Value)
+		return append(json.RawMessage(nil), resolved...), value.ContentType, value.Caption, nil
 	}
 	if revision.ArtifactSeq != nil {
 		var step orm.WorkflowSessionStep
@@ -276,7 +277,8 @@ func (r *Repository) resolveArtifact(ctx context.Context, revision orm.WorkflowS
 			step.TaskID, revision.Slot, *revision.ArtifactSeq).First(&value).Error; err != nil {
 			return nil, "", nil, err
 		}
-		return append(json.RawMessage(nil), value.Value...), value.ContentType, value.Caption, nil
+		resolved := common.CanonicalizeTextArtifactValue(value.ContentType, value.Value)
+		return append(json.RawMessage(nil), resolved...), value.ContentType, value.Caption, nil
 	}
 	return append(json.RawMessage(nil), revision.ContentSnapshot...), "json", nil, nil
 }
@@ -303,6 +305,7 @@ func (r *Repository) ReadArtifact(ctx context.Context, owner, artifactID string)
 
 func (r *Repository) PatchArtifact(ctx context.Context, owner, artifactID string, baseRevision int,
 	contentType string, value json.RawMessage, caption *string, commandID string) (Artifact, error) {
+	value = common.CanonicalizeTextArtifactValue(contentType, value)
 	current, err := r.ReadArtifact(ctx, owner, artifactID)
 	if err != nil {
 		return Artifact{}, err

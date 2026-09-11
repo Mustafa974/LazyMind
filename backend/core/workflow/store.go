@@ -1127,6 +1127,7 @@ func UpdateSelectedHumanArtifactValue(
 	contentType string, value json.RawMessage, caption *string,
 	expectedRevision *int, expectedDraftVersion *int64,
 ) (*orm.WorkflowSlotRevision, int64, bool, error) {
+	value = common.CanonicalizeTextArtifactValue(contentType, value)
 	var selected orm.WorkflowSlotRevision
 	var draftVersion int64
 	updated := false
@@ -1229,6 +1230,7 @@ func WriteSlotRevisionWithHumanArtifact(
 	if changeSource == "" {
 		changeSource = "human"
 	}
+	value = common.CanonicalizeTextArtifactValue(contentType, value)
 	now := time.Now().UTC()
 	artifactID := "pha_" + common.GenerateID()
 	humanArt := &orm.WorkflowHumanArtifact{
