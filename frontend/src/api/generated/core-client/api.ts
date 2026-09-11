@@ -1627,8 +1627,143 @@ export interface Doc {
     'update_time': string;
     'uri': string;
 }
+export interface DocumentActionArtifact {
+    'caption'?: string;
+    'content_type': string;
+    'value': any;
+}
+export interface DocumentActionErrorOpenAPIData {
+    'code': DocumentActionErrorOpenAPIDataCodeEnum;
+}
+
+export const DocumentActionErrorOpenAPIDataCodeEnum = {
+    IdentityRequired: 'IDENTITY_REQUIRED',
+    PermissionDenied: 'PERMISSION_DENIED',
+    ArtifactNotFound: 'ARTIFACT_NOT_FOUND',
+    RevisionRequired: 'REVISION_REQUIRED',
+    RevisionConflict: 'REVISION_CONFLICT',
+    DraftVersionRequired: 'DRAFT_VERSION_REQUIRED',
+    DraftVersionConflict: 'DRAFT_VERSION_CONFLICT',
+    SessionNotEditable: 'SESSION_NOT_EDITABLE',
+    DocumentActionInvalid: 'DOCUMENT_ACTION_INVALID',
+    DocumentActionUnsupported: 'DOCUMENT_ACTION_UNSUPPORTED',
+    ModelConfigRequired: 'MODEL_CONFIG_REQUIRED',
+    SelectionStale: 'SELECTION_STALE',
+    SelectionAmbiguous: 'SELECTION_AMBIGUOUS',
+    ArtifactInUse: 'ARTIFACT_IN_USE',
+    DocumentActionFailed: 'DOCUMENT_ACTION_FAILED',
+    DocumentActionResultInvalid: 'DOCUMENT_ACTION_RESULT_INVALID',
+    DocumentActionSaveFailed: 'DOCUMENT_ACTION_SAVE_FAILED'
+} as const;
+
+export type DocumentActionErrorOpenAPIDataCodeEnum = typeof DocumentActionErrorOpenAPIDataCodeEnum[keyof typeof DocumentActionErrorOpenAPIDataCodeEnum];
+
+export interface DocumentActionErrorOpenAPIResponse {
+    'code': number;
+    'data': DocumentActionErrorOpenAPIData;
+    'message': string;
+}
 export interface DocumentCreatorsResponse {
     'creators'?: Array<UserInfo>;
+}
+export interface DocumentRewriteCommit {
+    'token': string;
+}
+export interface DocumentRewriteExecuteInput {
+    'commit_token': string;
+}
+export interface DocumentRewriteExecuteOpenAPIResponse {
+    'code': number;
+    'data': DocumentRewriteExecuteResult;
+    'message': string;
+}
+export interface DocumentRewriteExecuteRequest {
+    'action': DocumentRewriteExecuteRequestActionEnum;
+    'base_draft_version'?: number;
+    'base_revision': number;
+    'input': DocumentRewriteExecuteInput;
+}
+
+export const DocumentRewriteExecuteRequestActionEnum = {
+    RewriteSelection: 'rewrite_selection'
+} as const;
+
+export type DocumentRewriteExecuteRequestActionEnum = typeof DocumentRewriteExecuteRequestActionEnum[keyof typeof DocumentRewriteExecuteRequestActionEnum];
+
+export interface DocumentRewriteExecuteResult {
+    'artifact_id': string;
+    'draft_version': number;
+    'revision': number;
+}
+export interface DocumentRewritePatch {
+    'payload': { [key: string]: any; };
+    'type': string;
+}
+export interface DocumentRewritePreview {
+    'new_text': string;
+    'old_text': string;
+}
+export interface DocumentRewritePreviewInput {
+    'instruction': string;
+    'selection': DocumentRewritePreviewInputSelection;
+}
+/**
+ * @type DocumentRewritePreviewInputSelection
+ */
+export type DocumentRewritePreviewInputSelection = DocumentRewritePreviewInputSelectionOneOf | DocumentRewritePreviewInputSelectionOneOf1;
+
+export interface DocumentRewritePreviewInputSelectionOneOf {
+    'selected_text': string;
+    'type': DocumentRewritePreviewInputSelectionOneOfTypeEnum;
+}
+
+export const DocumentRewritePreviewInputSelectionOneOfTypeEnum = {
+    Markdown: 'markdown'
+} as const;
+
+export type DocumentRewritePreviewInputSelectionOneOfTypeEnum = typeof DocumentRewritePreviewInputSelectionOneOfTypeEnum[keyof typeof DocumentRewritePreviewInputSelectionOneOfTypeEnum];
+
+export interface DocumentRewritePreviewInputSelectionOneOf1 {
+    'node_id': string;
+    'type': DocumentRewritePreviewInputSelectionOneOf1TypeEnum;
+}
+
+export const DocumentRewritePreviewInputSelectionOneOf1TypeEnum = {
+    Ir: 'ir'
+} as const;
+
+export type DocumentRewritePreviewInputSelectionOneOf1TypeEnum = typeof DocumentRewritePreviewInputSelectionOneOf1TypeEnum[keyof typeof DocumentRewritePreviewInputSelectionOneOf1TypeEnum];
+
+export interface DocumentRewritePreviewOpenAPIResponse {
+    'code': number;
+    'data': DocumentRewritePreviewResult;
+    'message': string;
+}
+export interface DocumentRewritePreviewRequest {
+    'action': DocumentRewritePreviewRequestActionEnum;
+    'base_draft_version'?: number;
+    'base_revision': number;
+    'input': DocumentRewritePreviewInput;
+}
+
+export const DocumentRewritePreviewRequestActionEnum = {
+    RewriteSelection: 'rewrite_selection'
+} as const;
+
+export type DocumentRewritePreviewRequestActionEnum = typeof DocumentRewritePreviewRequestActionEnum[keyof typeof DocumentRewritePreviewRequestActionEnum];
+
+export interface DocumentRewritePreviewResult {
+    'artifact': DocumentActionArtifact;
+    'commit': DocumentRewriteCommit;
+    'patch': DocumentRewritePatch;
+    'preview': DocumentRewritePreview;
+    'representation': string;
+    'target': DocumentRewriteTarget;
+}
+export interface DocumentRewriteTarget {
+    'block_type': string;
+    'node_id'?: string;
+    'type': string;
 }
 export interface DocumentTableColumn {
     'desc': string;
@@ -42374,6 +42509,84 @@ export const WorkflowApiAxiosParamCreator = function (configuration?: Configurat
         },
         /**
          *
+         * @summary Apply a confirmed document selection rewrite
+         * @param {string} artifactId
+         * @param {DocumentRewriteExecuteRequest} documentRewriteExecuteRequest
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePost: async (artifactId: string, documentRewriteExecuteRequest: DocumentRewriteExecuteRequest, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+            // verify required parameter 'artifactId' is not null or undefined
+            assertParamExists('apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePost', 'artifactId', artifactId)
+            // verify required parameter 'documentRewriteExecuteRequest' is not null or undefined
+            assertParamExists('apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePost', 'documentRewriteExecuteRequest', documentRewriteExecuteRequest)
+            const localVarPath = `/api/core/workflow-artifacts/{artifact_id}/document-actions:execute`
+                .replace(`{${"artifact_id"}}`, encodeURIComponent(String(artifactId)));
+            // use dummy base URL string because the URL constructor only accepts absolute URLs.
+            const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+            let baseOptions;
+            if (configuration) {
+                baseOptions = configuration.baseOptions;
+            }
+
+            const localVarRequestOptions = { method: 'POST', ...baseOptions, ...options};
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+
+            localVarHeaderParameter['Content-Type'] = 'application/json';
+            localVarHeaderParameter['Accept'] = 'application/json';
+
+            setSearchParams(localVarUrlObj, localVarQueryParameter);
+            let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
+            localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
+            localVarRequestOptions.data = serializeDataIfNeeded(documentRewriteExecuteRequest, localVarRequestOptions, configuration)
+
+            return {
+                url: toPathString(localVarUrlObj),
+                options: localVarRequestOptions,
+            };
+        },
+        /**
+         *
+         * @summary Preview a document selection rewrite
+         * @param {string} artifactId
+         * @param {DocumentRewritePreviewRequest} documentRewritePreviewRequest
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPost: async (artifactId: string, documentRewritePreviewRequest: DocumentRewritePreviewRequest, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+            // verify required parameter 'artifactId' is not null or undefined
+            assertParamExists('apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPost', 'artifactId', artifactId)
+            // verify required parameter 'documentRewritePreviewRequest' is not null or undefined
+            assertParamExists('apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPost', 'documentRewritePreviewRequest', documentRewritePreviewRequest)
+            const localVarPath = `/api/core/workflow-artifacts/{artifact_id}/document-actions:preview`
+                .replace(`{${"artifact_id"}}`, encodeURIComponent(String(artifactId)));
+            // use dummy base URL string because the URL constructor only accepts absolute URLs.
+            const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+            let baseOptions;
+            if (configuration) {
+                baseOptions = configuration.baseOptions;
+            }
+
+            const localVarRequestOptions = { method: 'POST', ...baseOptions, ...options};
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+
+            localVarHeaderParameter['Content-Type'] = 'application/json';
+            localVarHeaderParameter['Accept'] = 'application/json';
+
+            setSearchParams(localVarUrlObj, localVarQueryParameter);
+            let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
+            localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
+            localVarRequestOptions.data = serializeDataIfNeeded(documentRewritePreviewRequest, localVarRequestOptions, configuration)
+
+            return {
+                url: toPathString(localVarUrlObj),
+                options: localVarRequestOptions,
+            };
+        },
+        /**
+         *
          * @summary Read Workflow artifacts with document descriptors
          * @param {string} artifactId
          * @param {*} [options] Override http request option.
@@ -42853,6 +43066,34 @@ export const WorkflowApiFp = function(configuration?: Configuration) {
         },
         /**
          *
+         * @summary Apply a confirmed document selection rewrite
+         * @param {string} artifactId
+         * @param {DocumentRewriteExecuteRequest} documentRewriteExecuteRequest
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        async apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePost(artifactId: string, documentRewriteExecuteRequest: DocumentRewriteExecuteRequest, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<DocumentRewriteExecuteOpenAPIResponse>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePost(artifactId, documentRewriteExecuteRequest, options);
+            const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+            const localVarOperationServerBasePath = operationServerMap['WorkflowApi.apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePost']?.[localVarOperationServerIndex]?.url;
+            return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
+        },
+        /**
+         *
+         * @summary Preview a document selection rewrite
+         * @param {string} artifactId
+         * @param {DocumentRewritePreviewRequest} documentRewritePreviewRequest
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        async apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPost(artifactId: string, documentRewritePreviewRequest: DocumentRewritePreviewRequest, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<DocumentRewritePreviewOpenAPIResponse>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPost(artifactId, documentRewritePreviewRequest, options);
+            const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+            const localVarOperationServerBasePath = operationServerMap['WorkflowApi.apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPost']?.[localVarOperationServerIndex]?.url;
+            return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
+        },
+        /**
+         *
          * @summary Read Workflow artifacts with document descriptors
          * @param {string} artifactId
          * @param {*} [options] Override http request option.
@@ -43041,6 +43282,26 @@ export const WorkflowApiFactory = function (configuration?: Configuration, baseP
         },
         /**
          *
+         * @summary Apply a confirmed document selection rewrite
+         * @param {WorkflowApiApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest} requestParameters Request parameters.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePost(requestParameters: WorkflowApiApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest, options?: RawAxiosRequestConfig): AxiosPromise<DocumentRewriteExecuteOpenAPIResponse> {
+            return localVarFp.apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePost(requestParameters.artifactId, requestParameters.documentRewriteExecuteRequest, options).then((request) => request(axios, basePath));
+        },
+        /**
+         *
+         * @summary Preview a document selection rewrite
+         * @param {WorkflowApiApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest} requestParameters Request parameters.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPost(requestParameters: WorkflowApiApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest, options?: RawAxiosRequestConfig): AxiosPromise<DocumentRewritePreviewOpenAPIResponse> {
+            return localVarFp.apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPost(requestParameters.artifactId, requestParameters.documentRewritePreviewRequest, options).then((request) => request(axios, basePath));
+        },
+        /**
+         *
          * @summary Read Workflow artifacts with document descriptors
          * @param {WorkflowApiApiCoreWorkflowArtifactsArtifactIdGetRequest} requestParameters Request parameters.
          * @param {*} [options] Override http request option.
@@ -43164,6 +43425,24 @@ export interface WorkflowApiApiCoreConversationsConversationIdWorkflowSessionsAc
  */
 export interface WorkflowApiApiCoreConversationsConversationIdWorkflowSessionsLatestGetRequest {
     readonly conversationId: string
+}
+
+/**
+ * Request parameters for apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePost operation in WorkflowApi.
+ */
+export interface WorkflowApiApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest {
+    readonly artifactId: string
+
+    readonly documentRewriteExecuteRequest: DocumentRewriteExecuteRequest
+}
+
+/**
+ * Request parameters for apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPost operation in WorkflowApi.
+ */
+export interface WorkflowApiApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest {
+    readonly artifactId: string
+
+    readonly documentRewritePreviewRequest: DocumentRewritePreviewRequest
 }
 
 /**
@@ -43299,6 +43578,28 @@ export class WorkflowApi extends BaseAPI {
      */
     public apiCoreConversationsConversationIdWorkflowSessionsLatestGet(requestParameters: WorkflowApiApiCoreConversationsConversationIdWorkflowSessionsLatestGetRequest, options?: RawAxiosRequestConfig) {
         return WorkflowApiFp(this.configuration).apiCoreConversationsConversationIdWorkflowSessionsLatestGet(requestParameters.conversationId, options).then((request) => request(this.axios, this.basePath));
+    }
+
+    /**
+     *
+     * @summary Apply a confirmed document selection rewrite
+     * @param {WorkflowApiApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest} requestParameters Request parameters.
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    public apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePost(requestParameters: WorkflowApiApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest, options?: RawAxiosRequestConfig) {
+        return WorkflowApiFp(this.configuration).apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePost(requestParameters.artifactId, requestParameters.documentRewriteExecuteRequest, options).then((request) => request(this.axios, this.basePath));
+    }
+
+    /**
+     *
+     * @summary Preview a document selection rewrite
+     * @param {WorkflowApiApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest} requestParameters Request parameters.
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    public apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPost(requestParameters: WorkflowApiApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest, options?: RawAxiosRequestConfig) {
+        return WorkflowApiFp(this.configuration).apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPost(requestParameters.artifactId, requestParameters.documentRewritePreviewRequest, options).then((request) => request(this.axios, this.basePath));
     }
 
     /**

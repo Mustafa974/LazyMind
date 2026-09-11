@@ -6,6 +6,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 	"lazymind/core/common/orm"
+	"lazymind/core/modelconfig"
 	"lazymind/core/workflow/artifactgraph"
 	"lazymind/core/workflow/document"
 )
@@ -25,35 +26,9 @@ func (r *Repository) DescribeArtifact(ctx context.Context, owner string, artifac
 		artifact.DocumentError = document.Unavailable()
 		return
 	}
-	writable := allowSave && artifact.Selected && artifact.Validity == "effective" && !session.Dismissed
-	switch session.Status {
-	case "active", "waiting", "completed", "failed":
-	default:
-		writable = false
-	}
+	writable := allowSave && artifact.Selected && artifact.Validity == "effective" && DocumentSessionEditable(&session)
 	artifact.Document, artifact.DocumentError = document.Project(ctx, artifact.Value, artifact.ContentType, writable, func() (bool, error) {
-		if session.WorkflowRevisionID == "" {
-			return false, nil
-		}
-		ref := session.WorkflowRef
-		if ref == "" {
-			ref = session.WorkflowID
-		}
-		pkg, err := r.GetWorkflowPackage(ctx, owner, ref, session.WorkflowRevisionID)
-		if err != nil {
-			return false, err
-		}
-		var manifest struct {
-			UI struct {
-				Slots map[string]struct {
-					WidgetType string `yaml:"widgetType"`
-				} `yaml:"slots"`
-			} `yaml:"ui"`
-		}
-		if err := yaml.Unmarshal(pkg.Files["workflow.yaml"], &manifest); err != nil {
-			return false, err
-		}
-		return manifest.UI.Slots[artifact.SlotID].WidgetType == "text-markdown", nil
+		return r.PinnedMarkdownHint(ctx, &session, artifact.SlotID)
 	})
 	if artifact.Document != nil && writable {
 		err := artifactgraph.CheckConsumers(ctx, r.db, session.ID, artifact.ID)
@@ -66,4 +41,56 @@ func (r *Repository) DescribeArtifact(ctx context.Context, owner string, artifac
 		}
 	}
 
+	if artifact.Document != nil && artifact.Document.Editable {
+		config, err := modelconfig.LoadLLMConfig(ctx, r.db, owner)
+		if err == nil && RewriteModelAvailable(config) {
+			artifact.Document.Capabilities = append(artifact.Document.Capabilities, "rewrite_selection")
+		}
+	}
+
+}
+
+func DocumentSessionEditable(session *orm.WorkflowSession) bool {
+	if session.Dismissed {
+		return false
+	}
+	switch session.Status {
+	case "active", "waiting", "completed", "failed":
+		return true
+	default:
+		return false
+	}
+}
+
+func RewriteModelAvailable(config map[string]any) bool {
+	llm, ok := config["llm"].(map[string]any)
+	model, _ := llm["model"].(string)
+	return ok && model != ""
+}
+
+// PinnedMarkdownHint reads only the immutable revision associated with this
+// authorized Session; it does not select an Action or grant write permission.
+func (r *Repository) PinnedMarkdownHint(ctx context.Context, session *orm.WorkflowSession, slotID string) (bool, error) {
+	if session.WorkflowRevisionID == "" {
+		return false, nil
+	}
+	ref := session.WorkflowRef
+	if ref == "" {
+		ref = session.WorkflowID
+	}
+	pkg, err := r.GetWorkflowPackage(ctx, session.CreateUserID, ref, session.WorkflowRevisionID)
+	if err != nil {
+		return false, err
+	}
+	var manifest struct {
+		UI struct {
+			Slots map[string]struct {
+				WidgetType string `yaml:"widgetType"`
+			} `yaml:"slots"`
+		} `yaml:"ui"`
+	}
+	if err := yaml.Unmarshal(pkg.Files["workflow.yaml"], &manifest); err != nil {
+		return false, err
+	}
+	return manifest.UI.Slots[slotID].WidgetType == "text-markdown", nil
 }

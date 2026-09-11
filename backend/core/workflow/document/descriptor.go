@@ -36,6 +36,27 @@ func unreadable() *ProjectionError { return &ProjectionError{Code: "DOCUMENT_REA
 // Project never rewrites the carrier. hint is read lazily, only when generic text
 // needs its pinned workflow presentation metadata to establish Markdown intent.
 func Project(ctx context.Context, raw json.RawMessage, contentType string, writable bool, hint func() (bool, error)) (*Descriptor, *ProjectionError) {
+	content, projectionError := InspectContent(ctx, raw, contentType, hint)
+	if content == nil {
+		return nil, projectionError
+	}
+
+	capabilities := []string{}
+	if writable {
+		capabilities = append(capabilities, "save")
+	}
+	return &Descriptor{Representation: content.Representation, Schema: content.Schema, Editable: writable, Capabilities: capabilities}, nil
+}
+
+// Content is the confirmed logical document, never a file locator. Action
+// callers must put Value inside a data envelope at the Algorithm boundary.
+type Content struct {
+	Value          json.RawMessage
+	Representation string
+	Schema         string
+}
+
+func InspectContent(ctx context.Context, raw json.RawMessage, contentType string, hint func() (bool, error)) (*Content, *ProjectionError) {
 	value, schema, candidate, projectionError := prepare(raw, contentType, hint)
 	if projectionError != nil || !candidate {
 		return nil, projectionError
@@ -59,11 +80,7 @@ func Project(ctx context.Context, raw json.RawMessage, contentType string, writa
 	if schema == "" && *result.Representation != "ir" {
 		return nil, nil
 	}
-	capabilities := []string{}
-	if writable {
-		capabilities = append(capabilities, "save")
-	}
-	return &Descriptor{Representation: *result.Representation, Schema: *result.Schema, Editable: writable, Capabilities: capabilities}, nil
+	return &Content{Value: value, Representation: *result.Representation, Schema: *result.Schema}, nil
 }
 
 func schemaName(value string) string {

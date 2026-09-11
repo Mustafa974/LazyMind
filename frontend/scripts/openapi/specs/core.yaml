@@ -2277,12 +2277,180 @@ components:
                 - update_time
                 - uri
             type: object
+        DocumentActionArtifact:
+            properties:
+                caption:
+                    type: string
+                content_type:
+                    type: string
+                value: {}
+            required:
+                - content_type
+                - value
+            type: object
         DocumentCreatorsResponse:
             properties:
                 creators:
                     items:
                         $ref: '#/components/schemas/UserInfo'
                     type: array
+            type: object
+        DocumentRewriteCommit:
+            properties:
+                token:
+                    type: string
+            required:
+                - token
+            type: object
+        DocumentRewriteExecuteInput:
+            properties:
+                commit_token:
+                    type: string
+            required:
+                - commit_token
+            type: object
+        DocumentRewriteExecuteRequest:
+            properties:
+                action:
+                    enum:
+                        - rewrite_selection
+                    type: string
+                base_draft_version:
+                    format: int64
+                    type: integer
+                base_revision:
+                    type: integer
+                input:
+                    $ref: '#/components/schemas/DocumentRewriteExecuteInput'
+            required:
+                - action
+                - base_revision
+                - input
+            type: object
+        DocumentRewriteExecuteResult:
+            properties:
+                artifact_id:
+                    type: string
+                draft_version:
+                    format: int64
+                    type: integer
+                revision:
+                    type: integer
+            required:
+                - artifact_id
+                - draft_version
+                - revision
+            type: object
+        DocumentRewritePatch:
+            properties:
+                payload:
+                    additionalProperties: {}
+                    type: object
+                type:
+                    type: string
+            required:
+                - payload
+                - type
+            type: object
+        DocumentRewritePreview:
+            properties:
+                new_text:
+                    type: string
+                old_text:
+                    type: string
+            required:
+                - new_text
+                - old_text
+            type: object
+        DocumentRewritePreviewInput:
+            properties:
+                instruction:
+                    type: string
+                selection:
+                    discriminator:
+                        propertyName: type
+                    oneOf:
+                        - additionalProperties: false
+                          properties:
+                            selected_text:
+                                minLength: 1
+                                type: string
+                            type:
+                                enum:
+                                    - markdown
+                                type: string
+                          required:
+                            - type
+                            - selected_text
+                          type: object
+                        - additionalProperties: false
+                          properties:
+                            node_id:
+                                minLength: 1
+                                type: string
+                            type:
+                                enum:
+                                    - ir
+                                type: string
+                          required:
+                            - type
+                            - node_id
+                          type: object
+            required:
+                - instruction
+                - selection
+            type: object
+        DocumentRewritePreviewRequest:
+            properties:
+                action:
+                    enum:
+                        - rewrite_selection
+                    type: string
+                base_draft_version:
+                    format: int64
+                    type: integer
+                base_revision:
+                    type: integer
+                input:
+                    $ref: '#/components/schemas/DocumentRewritePreviewInput'
+            required:
+                - action
+                - base_revision
+                - input
+            type: object
+        DocumentRewritePreviewResult:
+            properties:
+                artifact:
+                    $ref: '#/components/schemas/DocumentActionArtifact'
+                commit:
+                    $ref: '#/components/schemas/DocumentRewriteCommit'
+                patch:
+                    $ref: '#/components/schemas/DocumentRewritePatch'
+                preview:
+                    $ref: '#/components/schemas/DocumentRewritePreview'
+                representation:
+                    type: string
+                target:
+                    $ref: '#/components/schemas/DocumentRewriteTarget'
+            required:
+                - artifact
+                - commit
+                - patch
+                - preview
+                - representation
+                - target
+            type: object
+        DocumentRewriteTarget:
+            properties:
+                block_type:
+                    type: string
+                node_id:
+                    type: string
+                type:
+                    type: string
+            required:
+                - block_type
+                - type
             type: object
         DocumentTableColumn:
             properties:
@@ -5920,6 +6088,70 @@ components:
                     type: string
             required:
                 - cache_written
+            type: object
+        documentActionErrorOpenAPIData:
+            properties:
+                code:
+                    enum:
+                        - IDENTITY_REQUIRED
+                        - PERMISSION_DENIED
+                        - ARTIFACT_NOT_FOUND
+                        - REVISION_REQUIRED
+                        - REVISION_CONFLICT
+                        - DRAFT_VERSION_REQUIRED
+                        - DRAFT_VERSION_CONFLICT
+                        - SESSION_NOT_EDITABLE
+                        - DOCUMENT_ACTION_INVALID
+                        - DOCUMENT_ACTION_UNSUPPORTED
+                        - MODEL_CONFIG_REQUIRED
+                        - SELECTION_STALE
+                        - SELECTION_AMBIGUOUS
+                        - ARTIFACT_IN_USE
+                        - DOCUMENT_ACTION_FAILED
+                        - DOCUMENT_ACTION_RESULT_INVALID
+                        - DOCUMENT_ACTION_SAVE_FAILED
+                    type: string
+            required:
+                - code
+            type: object
+        documentActionErrorOpenAPIResponse:
+            properties:
+                code:
+                    type: integer
+                data:
+                    $ref: '#/components/schemas/documentActionErrorOpenAPIData'
+                message:
+                    type: string
+            required:
+                - code
+                - data
+                - message
+            type: object
+        documentRewriteExecuteOpenAPIResponse:
+            properties:
+                code:
+                    type: integer
+                data:
+                    $ref: '#/components/schemas/DocumentRewriteExecuteResult'
+                message:
+                    type: string
+            required:
+                - code
+                - data
+                - message
+            type: object
+        documentRewritePreviewOpenAPIResponse:
+            properties:
+                code:
+                    type: integer
+                data:
+                    $ref: '#/components/schemas/DocumentRewritePreviewResult'
+                message:
+                    type: string
+            required:
+                - code
+                - data
+                - message
             type: object
         evalSetImportPreviewOpenAPIRequest:
             properties:
@@ -17334,6 +17566,138 @@ paths:
                 "200":
                     description: OK
             summary: PATCH /workflow-artifacts/{artifact_id}
+    /api/core/workflow-artifacts/{artifact_id}/document-actions:execute:
+        post:
+            parameters:
+                - in: path
+                  name: artifact_id
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/DocumentRewriteExecuteRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentRewriteExecuteOpenAPIResponse'
+                    description: Document rewrite result
+                "400":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
+                    description: Invalid input or missing baseline/model
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
+                    description: Permission denied
+                "404":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
+                    description: Artifact not found
+                "409":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
+                    description: Stale baseline, preview or unavailable mutation
+                "422":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
+                    description: Unsupported document action
+                "500":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
+                    description: Document action could not be saved
+                "502":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
+                    description: Document action service failed
+            summary: Apply a confirmed document selection rewrite
+            tags:
+                - workflow
+    /api/core/workflow-artifacts/{artifact_id}/document-actions:preview:
+        post:
+            parameters:
+                - in: path
+                  name: artifact_id
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/DocumentRewritePreviewRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentRewritePreviewOpenAPIResponse'
+                    description: Document rewrite result
+                "400":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
+                    description: Invalid input or missing baseline/model
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
+                    description: Permission denied
+                "404":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
+                    description: Artifact not found
+                "409":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
+                    description: Stale baseline, preview or unavailable mutation
+                "422":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
+                    description: Unsupported document action
+                "500":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
+                    description: Document action could not be saved
+                "502":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
+                    description: Document action service failed
+            summary: Preview a document selection rewrite
+            tags:
+                - workflow
     /api/core/workflow-authoring/v1/drafts:
         post:
             responses:
