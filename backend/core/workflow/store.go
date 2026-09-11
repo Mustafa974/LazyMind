@@ -16,6 +16,7 @@ import (
 
 	"lazymind/core/common"
 	"lazymind/core/common/orm"
+	"lazymind/core/workflow/artifactgraph"
 )
 
 // Session status constants. Interrupted attempts remain resumable as waiting, while
@@ -415,6 +416,30 @@ func ListStepIntents(ctx context.Context, db *gorm.DB, sessionID string) ([]orm.
 // cardinality=list, listIndex!=nil: partial retry — replaces the revision at the given
 // list_index by deselecting the old row for that index and inserting a new selected row.
 // Revisions at other indices are untouched.
+func selectedRevisionIDsForReplacement(
+	tx *gorm.DB,
+	sessionID, slotID, cardinality string,
+	listIndex *int,
+) ([]string, error) {
+	if cardinality == "list" && listIndex == nil {
+		return nil, nil
+	}
+	query := tx.Model(&orm.WorkflowSlotRevision{}).
+		Where("session_id = ? AND slot_id = ? AND selected = ?", sessionID, slotID, true)
+	if cardinality == "list" {
+		query = query.Where("list_index = ?", *listIndex)
+	}
+	var rows []orm.WorkflowSlotRevision
+	if err := query.Select("id").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.ID)
+	}
+	return ids, nil
+}
+
 func WriteSlotRevision(ctx context.Context, db *gorm.DB,
 	sessionID, slotID, artifactKey, stepID string, attempt int,
 	cardinality string, listIndex *int) (*orm.WorkflowSlotRevision, error) {
@@ -449,6 +474,15 @@ func WriteSlotRevision(ctx context.Context, db *gorm.DB,
 		finalListIndex = nil
 		session, err := lockArtifactMutationSession(tx, sessionID)
 		if err != nil {
+			return err
+		}
+		replacedRevisionIDs, err := selectedRevisionIDsForReplacement(
+			tx, sessionID, slotID, cardinality, listIndex,
+		)
+		if err != nil {
+			return err
+		}
+		if err := artifactgraph.InvalidateConsumers(ctx, tx, sessionID, replacedRevisionIDs...); err != nil {
 			return err
 		}
 		// Compute next revision number scoped to (session, slot, list_index) so each
@@ -709,6 +743,7 @@ var (
 	ErrRevisionRequired     = errors.New("revision required")
 	ErrDraftVersionConflict = errors.New("draft version conflict")
 	ErrDraftVersionRequired = errors.New("draft version required")
+	ErrArtifactInUse        = artifactgraph.ErrArtifactInUse
 )
 
 func ReorderSlot(ctx context.Context, db *gorm.DB,
@@ -1195,6 +1230,9 @@ func UpdateSelectedHumanArtifactValue(
 			}
 			return nil
 		}
+		if err := artifactgraph.InvalidateConsumers(ctx, tx, sessionID, selected.ID); err != nil {
+			return err
+		}
 
 		updates := map[string]any{
 			"content_type":  contentType,
@@ -1298,6 +1336,15 @@ func WriteSlotRevisionWithHumanArtifact(
 					return ErrDraftVersionConflict
 				}
 			}
+		}
+		replacedRevisionIDs, err := selectedRevisionIDsForReplacement(
+			tx, sessionID, slotID, cardinality, listIndex,
+		)
+		if err != nil {
+			return err
+		}
+		if err := artifactgraph.InvalidateConsumers(ctx, tx, sessionID, replacedRevisionIDs...); err != nil {
+			return err
 		}
 		if err := tx.Create(humanArt).Error; err != nil {
 			return err

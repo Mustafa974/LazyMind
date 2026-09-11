@@ -683,6 +683,7 @@ func init() {
 	registerAdditionalErrorPattern("Tencent translation returned HTTP %d", "Tencent translation returned an invalid response", http.StatusBadGateway, 2002382)
 	registerAdditionalErrorPattern("Tencent translation failed: %s", "Tencent translation failed", http.StatusBadGateway, 2002383)
 	registerAdditionalErrorAlias("Tencent translation failed", "Tencent translation failed", http.StatusBadGateway, 2002383)
+	registerAdditionalError("artifact is in use by a running workflow attempt", http.StatusConflict, 2002384)
 }
 
 func registerAdditionalError(message string, status, code int) {

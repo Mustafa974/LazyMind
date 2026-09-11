@@ -19,6 +19,7 @@ import (
 	"lazymind/core/common"
 	"lazymind/core/common/orm"
 	"lazymind/core/taskcenter"
+	"lazymind/core/workflow/artifactgraph"
 )
 
 var (
@@ -26,6 +27,7 @@ var (
 	ErrPermissionDenied    error = repositoryError("PERMISSION_DENIED")
 	ErrIdempotencyConflict error = repositoryError("IDEMPOTENCY_CONFLICT")
 	ErrSessionConflict     error = repositoryError("WORKFLOW_SESSION_CONFLICT")
+	ErrArtifactInUse       error = artifactgraph.ErrArtifactInUse
 )
 
 func normalizeWorkflowMode(value string) string {
@@ -316,7 +318,12 @@ func (r *Repository) PatchArtifact(ctx context.Context, owner, artifactID string
 	now := time.Now().UTC()
 	humanID, revisionID := uuid.NewString(), uuid.NewString()
 	var created orm.WorkflowSlotRevision
-	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = common.TransactionWithSQLiteBusyRetry(ctx, r.db, func(tx *gorm.DB) error {
+		created = orm.WorkflowSlotRevision{}
+		session, err := artifactgraph.LockSession(tx, current.SessionID)
+		if err != nil {
+			return err
+		}
 		query := tx.Model(&orm.WorkflowSlotRevision{}).Where(
 			"session_id = ? AND slot_id = ? AND selected = ?", current.SessionID, current.SlotID, true)
 		if current.ListIndex == nil {
@@ -331,6 +338,9 @@ func (r *Repository) PatchArtifact(ctx context.Context, owner, artifactID string
 		if result.RowsAffected != 1 {
 			return ErrIdempotencyConflict
 		}
+		if err := artifactgraph.InvalidateConsumers(ctx, tx, current.SessionID, current.ID); err != nil {
+			return err
+		}
 		if err := tx.Create(&orm.WorkflowHumanArtifact{ID: humanID, SessionID: current.SessionID,
 			Slot: current.Slot, ContentType: contentType, Value: value, Caption: caption, CreatedAt: now}).Error; err != nil {
 			return err
@@ -343,12 +353,8 @@ func (r *Repository) PatchArtifact(ctx context.Context, owner, artifactID string
 		if err := tx.Create(&created).Error; err != nil {
 			return err
 		}
-		var session orm.WorkflowSession
-		if err := tx.Where("id = ?", current.SessionID).First(&session).Error; err != nil {
-			return err
-		}
 		stateVersion := session.StateVersion + 1
-		if err := tx.Model(&session).Updates(map[string]any{"state_version": stateVersion, "updated_at": now}).Error; err != nil {
+		if err := tx.Model(session).Updates(map[string]any{"state_version": stateVersion, "updated_at": now}).Error; err != nil {
 			return err
 		}
 		payload, _ := json.Marshal(map[string]any{"artifact_id": created.ID, "slot_id": created.SlotID,
@@ -377,7 +383,12 @@ func (r *Repository) DeleteArtifact(ctx context.Context, owner, artifactID strin
 	now := time.Now().UTC()
 	humanID, revisionID := uuid.NewString(), uuid.NewString()
 	var created orm.WorkflowSlotRevision
-	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = common.TransactionWithSQLiteBusyRetry(ctx, r.db, func(tx *gorm.DB) error {
+		created = orm.WorkflowSlotRevision{}
+		session, err := artifactgraph.LockSession(tx, current.SessionID)
+		if err != nil {
+			return err
+		}
 		query := tx.Model(&orm.WorkflowSlotRevision{}).Where(
 			"session_id = ? AND slot_id = ? AND selected = ?", current.SessionID, current.SlotID, true)
 		if current.ListIndex == nil {
@@ -391,6 +402,9 @@ func (r *Repository) DeleteArtifact(ctx context.Context, owner, artifactID strin
 		}
 		if result.RowsAffected != 1 {
 			return ErrIdempotencyConflict
+		}
+		if err := artifactgraph.InvalidateConsumers(ctx, tx, current.SessionID, current.ID); err != nil {
+			return err
 		}
 		caption := "deleted"
 		if err := tx.Create(&orm.WorkflowHumanArtifact{ID: humanID, SessionID: current.SessionID,
@@ -406,12 +420,8 @@ func (r *Repository) DeleteArtifact(ctx context.Context, owner, artifactID strin
 		if err := tx.Create(&created).Error; err != nil {
 			return err
 		}
-		var session orm.WorkflowSession
-		if err := tx.Where("id = ?", current.SessionID).First(&session).Error; err != nil {
-			return err
-		}
 		stateVersion := session.StateVersion + 1
-		if err := tx.Model(&session).Updates(map[string]any{
+		if err := tx.Model(session).Updates(map[string]any{
 			"state_version": stateVersion, "updated_at": now,
 		}).Error; err != nil {
 			return err

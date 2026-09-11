@@ -1045,6 +1045,9 @@ func SaveArtifactByKey(w http.ResponseWriter, r *http.Request) {
 		sessionID, slotID, body.Slot, stepID, attempt, cardinality, listIndex,
 		body.ContentType, body.Value, body.Caption, "human", nil, nil)
 	if err != nil {
+		if replyDraftVersionPreconditionError(w, err) {
+			return
+		}
 		common.ReplyErr(w, "write slot revision failed", http.StatusInternalServerError)
 		return
 	}

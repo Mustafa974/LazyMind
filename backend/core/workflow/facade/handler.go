@@ -418,6 +418,10 @@ func (h Handler) PatchArtifact(w http.ResponseWriter, r *http.Request) {
 	}
 	value, err := h.Store.PatchArtifact(r.Context(), owner, mux.Vars(r)["artifact_id"],
 		body.BaseRevision, body.ContentType, body.Value, body.Caption, body.CommandID)
+	if errors.Is(err, workflowstore.ErrArtifactInUse) {
+		fail(w, http.StatusConflict, "ARTIFACT_IN_USE", "artifact is in use by a running workflow attempt", false)
+		return
+	}
 	if errors.Is(err, workflowstore.ErrIdempotencyConflict) {
 		fail(w, http.StatusConflict, "ARTIFACT_REVISION_CONFLICT", "artifact revision is no longer selected", false)
 		return
@@ -451,6 +455,10 @@ func (h Handler) DeleteArtifact(w http.ResponseWriter, r *http.Request) {
 	}
 	value, err := h.Store.DeleteArtifact(r.Context(), owner, mux.Vars(r)["artifact_id"],
 		body.BaseRevision, body.CommandID)
+	if errors.Is(err, workflowstore.ErrArtifactInUse) {
+		fail(w, http.StatusConflict, "ARTIFACT_IN_USE", "artifact is in use by a running workflow attempt", false)
+		return
+	}
 	if errors.Is(err, workflowstore.ErrIdempotencyConflict) {
 		fail(w, http.StatusConflict, "ARTIFACT_REVISION_CONFLICT", "artifact revision is no longer selected", false)
 		return

@@ -1519,5 +1519,6 @@
   "2002380": { "en-US": "Invalid Tencent translation endpoint", "zh-CN": "腾讯翻译服务地址无效" },
   "2002381": { "en-US": "Tencent translation request failed", "zh-CN": "请求腾讯翻译服务失败" },
   "2002382": { "en-US": "Tencent translation returned an invalid response", "zh-CN": "腾讯翻译返回了无效响应" },
-  "2002383": { "en-US": "Tencent translation failed", "zh-CN": "腾讯翻译失败" }
+  "2002383": { "en-US": "Tencent translation failed", "zh-CN": "腾讯翻译失败" },
+  "2002384": { "en-US": "The artifact is in use by a running workflow attempt", "zh-CN": "该产物正在被运行中的工作流步骤使用" }
 }

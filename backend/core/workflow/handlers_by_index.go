@@ -304,6 +304,11 @@ func replyDraftVersionPreconditionError(w http.ResponseWriter, err error) bool {
 			"code": "DRAFT_VERSION_CONFLICT",
 		}, http.StatusConflict)
 		return true
+	case errors.Is(err, ErrArtifactInUse):
+		common.ReplyErrWithData(w, "artifact is in use by a running workflow attempt", map[string]any{
+			"code": "ARTIFACT_IN_USE",
+		}, http.StatusConflict)
+		return true
 	default:
 		return false
 	}

@@ -280,7 +280,8 @@ func SyncWriterDocument(w http.ResponseWriter, r *http.Request) {
 	if createErr != nil {
 		if errors.Is(createErr, workflow.ErrConflict) ||
 			errors.Is(createErr, workflow.ErrDraftVersionConflict) ||
-			errors.Is(createErr, workflow.ErrDraftVersionRequired) {
+			errors.Is(createErr, workflow.ErrDraftVersionRequired) ||
+			errors.Is(createErr, workflow.ErrArtifactInUse) {
 			replyWriterProviderLocalConflict(w, current.Revision, result)
 			return
 		}
@@ -870,7 +871,8 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, workflow.ErrConflict) ||
 			errors.Is(err, workflow.ErrDraftVersionConflict) ||
-			errors.Is(err, workflow.ErrDraftVersionRequired) {
+			errors.Is(err, workflow.ErrDraftVersionRequired) ||
+			errors.Is(err, workflow.ErrArtifactInUse) {
 			replyWriterProviderLocalConflict(w, draft.Revision.Revision, result)
 			return
 		}
@@ -891,6 +893,10 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 			"json", targetValue, nil, "provider_sync", nil, nil,
 		)
 		if saveErr != nil {
+			if errors.Is(saveErr, workflow.ErrArtifactInUse) {
+				replyWriterProviderTargetLocalConflict(w, result)
+				return
+			}
 			common.ReplyErrWithData(w, "target artifact save failed", map[string]any{
 				"code":   "PROVIDER_SYNC_TARGET_PERSIST_FAILED",
 				"status": "artifact_save_failed", "provider_synced": true,
@@ -1653,6 +1659,11 @@ func replyWriterDraftVersionError(w http.ResponseWriter, err error) bool {
 			"code": "DRAFT_VERSION_CONFLICT",
 		}, http.StatusConflict)
 		return true
+	case errors.Is(err, workflow.ErrArtifactInUse):
+		common.ReplyErrWithData(w, "artifact is in use by a running workflow attempt", map[string]any{
+			"code": "ARTIFACT_IN_USE",
+		}, http.StatusConflict)
+		return true
 	default:
 		return false
 	}
@@ -1685,6 +1696,19 @@ func replyWriterProviderLocalConflict(
 		"current_revision": currentRevision,
 		"patch_result":     result.PatchResult,
 		"document":         result.PersistedDocument,
+	}, http.StatusConflict)
+}
+
+func replyWriterProviderTargetLocalConflict(w http.ResponseWriter, result *algo.WriterDocumentSyncResponse) {
+	common.ReplyErrWithData(w, "provider sync succeeded but local artifact changed", map[string]any{
+		"code":                  "PROVIDER_SYNC_LOCAL_CONFLICT",
+		"provider":              result.Provider,
+		"provider_synced":       true,
+		"artifact_saved":        true,
+		"target_artifact_saved": false,
+		"retryable":             false,
+		"patch_result":          result.PatchResult,
+		"document":              result.PersistedDocument,
 	}, http.StatusConflict)
 }
 

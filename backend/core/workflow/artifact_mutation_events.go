@@ -5,19 +5,13 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"lazymind/core/common/orm"
+	"lazymind/core/workflow/artifactgraph"
 )
 
 func lockArtifactMutationSession(tx *gorm.DB, sessionID string) (*orm.WorkflowSession, error) {
-	var session orm.WorkflowSession
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Select("id", "create_user_id", "state_version").
-		Where("id = ?", sessionID).First(&session).Error; err != nil {
-		return nil, err
-	}
-	return &session, nil
+	return artifactgraph.LockSession(tx, sessionID)
 }
 
 func appendArtifactUpsertEvent(
