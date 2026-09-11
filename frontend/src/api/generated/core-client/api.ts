@@ -393,6 +393,11 @@ export interface ApiCoreKbPermissionBatchPost200Response {
     'data'?: Array<PermissionBatchItem>;
     'message'?: string;
 }
+/**
+ * @type ApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest
+ */
+export type ApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest = DocumentConvertPreviewRequest | DocumentRewritePreviewRequest;
+
 export interface AppendEvalSetImportRequest {
     'import_token': string;
 }
@@ -1663,6 +1668,53 @@ export interface DocumentActionErrorOpenAPIResponse {
     'data': DocumentActionErrorOpenAPIData;
     'message': string;
 }
+export interface DocumentActionPreviewOpenAPIResponse {
+    'code': number;
+    'data': DocumentActionPreviewOpenAPIResponseData;
+    'message': string;
+}
+/**
+ * @type DocumentActionPreviewOpenAPIResponseData
+ */
+export type DocumentActionPreviewOpenAPIResponseData = DocumentConvertResult | DocumentRewritePreviewResult;
+
+export interface DocumentConvertPreviewInput {
+    'document'?: DocumentConvertPreviewInputDocument;
+    'output_format': DocumentConvertPreviewInputOutputFormatEnum;
+}
+
+export const DocumentConvertPreviewInputOutputFormatEnum = {
+    Markdown: 'markdown',
+    Latex: 'latex',
+    Text: 'text'
+} as const;
+
+export type DocumentConvertPreviewInputOutputFormatEnum = typeof DocumentConvertPreviewInputOutputFormatEnum[keyof typeof DocumentConvertPreviewInputOutputFormatEnum];
+
+/**
+ * @type DocumentConvertPreviewInputDocument
+ * Inline Markdown text or Writer IR object; never a file locator.
+ */
+export type DocumentConvertPreviewInputDocument = string | { [key: string]: any; };
+
+export interface DocumentConvertPreviewRequest {
+    'action': DocumentConvertPreviewRequestActionEnum;
+    'base_draft_version'?: number;
+    'base_revision': number;
+    'input': DocumentConvertPreviewInput;
+}
+
+export const DocumentConvertPreviewRequestActionEnum = {
+    ConvertDocument: 'convert_document'
+} as const;
+
+export type DocumentConvertPreviewRequestActionEnum = typeof DocumentConvertPreviewRequestActionEnum[keyof typeof DocumentConvertPreviewRequestActionEnum];
+
+export interface DocumentConvertResult {
+    'content': string;
+    'format': string;
+    'provider': string;
+}
 export interface DocumentCreatorsResponse {
     'creators'?: Array<UserInfo>;
 }
@@ -1734,11 +1786,6 @@ export const DocumentRewritePreviewInputSelectionOneOf1TypeEnum = {
 
 export type DocumentRewritePreviewInputSelectionOneOf1TypeEnum = typeof DocumentRewritePreviewInputSelectionOneOf1TypeEnum[keyof typeof DocumentRewritePreviewInputSelectionOneOf1TypeEnum];
 
-export interface DocumentRewritePreviewOpenAPIResponse {
-    'code': number;
-    'data': DocumentRewritePreviewResult;
-    'message': string;
-}
 export interface DocumentRewritePreviewRequest {
     'action': DocumentRewritePreviewRequestActionEnum;
     'base_draft_version'?: number;
@@ -42548,17 +42595,17 @@ export const WorkflowApiAxiosParamCreator = function (configuration?: Configurat
         },
         /**
          *
-         * @summary Preview a document selection rewrite
+         * @summary Preview a document rewrite or portable conversion
          * @param {string} artifactId
-         * @param {DocumentRewritePreviewRequest} documentRewritePreviewRequest
+         * @param {ApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest} apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
-        apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPost: async (artifactId: string, documentRewritePreviewRequest: DocumentRewritePreviewRequest, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+        apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPost: async (artifactId: string, apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest: ApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
             // verify required parameter 'artifactId' is not null or undefined
             assertParamExists('apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPost', 'artifactId', artifactId)
-            // verify required parameter 'documentRewritePreviewRequest' is not null or undefined
-            assertParamExists('apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPost', 'documentRewritePreviewRequest', documentRewritePreviewRequest)
+            // verify required parameter 'apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest' is not null or undefined
+            assertParamExists('apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPost', 'apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest', apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest)
             const localVarPath = `/api/core/workflow-artifacts/{artifact_id}/document-actions:preview`
                 .replace(`{${"artifact_id"}}`, encodeURIComponent(String(artifactId)));
             // use dummy base URL string because the URL constructor only accepts absolute URLs.
@@ -42578,7 +42625,7 @@ export const WorkflowApiAxiosParamCreator = function (configuration?: Configurat
             setSearchParams(localVarUrlObj, localVarQueryParameter);
             let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
             localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
-            localVarRequestOptions.data = serializeDataIfNeeded(documentRewritePreviewRequest, localVarRequestOptions, configuration)
+            localVarRequestOptions.data = serializeDataIfNeeded(apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest, localVarRequestOptions, configuration)
 
             return {
                 url: toPathString(localVarUrlObj),
@@ -43080,14 +43127,14 @@ export const WorkflowApiFp = function(configuration?: Configuration) {
         },
         /**
          *
-         * @summary Preview a document selection rewrite
+         * @summary Preview a document rewrite or portable conversion
          * @param {string} artifactId
-         * @param {DocumentRewritePreviewRequest} documentRewritePreviewRequest
+         * @param {ApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest} apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
-        async apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPost(artifactId: string, documentRewritePreviewRequest: DocumentRewritePreviewRequest, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<DocumentRewritePreviewOpenAPIResponse>> {
-            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPost(artifactId, documentRewritePreviewRequest, options);
+        async apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPost(artifactId: string, apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest: ApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<DocumentActionPreviewOpenAPIResponse>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPost(artifactId, apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest, options);
             const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
             const localVarOperationServerBasePath = operationServerMap['WorkflowApi.apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPost']?.[localVarOperationServerIndex]?.url;
             return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
@@ -43292,13 +43339,13 @@ export const WorkflowApiFactory = function (configuration?: Configuration, baseP
         },
         /**
          *
-         * @summary Preview a document selection rewrite
+         * @summary Preview a document rewrite or portable conversion
          * @param {WorkflowApiApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest} requestParameters Request parameters.
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
-        apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPost(requestParameters: WorkflowApiApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest, options?: RawAxiosRequestConfig): AxiosPromise<DocumentRewritePreviewOpenAPIResponse> {
-            return localVarFp.apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPost(requestParameters.artifactId, requestParameters.documentRewritePreviewRequest, options).then((request) => request(axios, basePath));
+        apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPost(requestParameters: WorkflowApiApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest, options?: RawAxiosRequestConfig): AxiosPromise<DocumentActionPreviewOpenAPIResponse> {
+            return localVarFp.apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPost(requestParameters.artifactId, requestParameters.apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest, options).then((request) => request(axios, basePath));
         },
         /**
          *
@@ -43442,7 +43489,7 @@ export interface WorkflowApiApiCoreWorkflowArtifactsArtifactIdDocumentActionsExe
 export interface WorkflowApiApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest {
     readonly artifactId: string
 
-    readonly documentRewritePreviewRequest: DocumentRewritePreviewRequest
+    readonly apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest: ApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest
 }
 
 /**
@@ -43593,13 +43640,13 @@ export class WorkflowApi extends BaseAPI {
 
     /**
      *
-     * @summary Preview a document selection rewrite
+     * @summary Preview a document rewrite or portable conversion
      * @param {WorkflowApiApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest} requestParameters Request parameters.
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
      */
     public apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPost(requestParameters: WorkflowApiApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest, options?: RawAxiosRequestConfig) {
-        return WorkflowApiFp(this.configuration).apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPost(requestParameters.artifactId, requestParameters.documentRewritePreviewRequest, options).then((request) => request(this.axios, this.basePath));
+        return WorkflowApiFp(this.configuration).apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPost(requestParameters.artifactId, requestParameters.apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest, options).then((request) => request(this.axios, this.basePath));
     }
 
     /**

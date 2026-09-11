@@ -165,7 +165,7 @@ func (s *descriptorInspectSpy) calls() []map[string]json.RawMessage {
 	defer s.mu.Unlock()
 	return append([]map[string]json.RawMessage(nil), s.requests...)
 }
-func requireDescriptor(t *testing.T, record map[string]any, representation string, editable bool) {
+func requireDescriptor(t *testing.T, record map[string]any, representation string, editable bool, copyEligibility ...bool) {
 	t.Helper()
 	doc, ok := record["document"].(map[string]any)
 	if !ok {
@@ -178,9 +178,16 @@ func requireDescriptor(t *testing.T, record map[string]any, representation strin
 	if doc["representation"] != representation || doc["schema"] != schema || doc["editable"] != editable {
 		t.Errorf("document=%#v", doc)
 	}
+	copyable := editable
+	if len(copyEligibility) > 0 {
+		copyable = copyEligibility[0]
+	}
 	want := []any{}
 	if editable {
 		want = []any{"save"}
+	}
+	if copyable {
+		want = append(want, "convert_document")
 	}
 	if !reflect.DeepEqual(doc["capabilities"], want) {
 		t.Errorf("capabilities=%#v want=%#v", doc["capabilities"], want)

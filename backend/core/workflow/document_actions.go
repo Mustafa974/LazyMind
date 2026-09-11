@@ -152,13 +152,13 @@ func decodeDocumentJSON(reader io.Reader, target any) error {
 	return nil
 }
 
-type documentRewriteRequest struct {
+type documentActionRequest struct {
 	baseRevision     *int
 	baseDraftVersion *int64
 	arguments        any
 	selectionType    string
 }
-type documentRewriteContext struct {
+type documentActionContext struct {
 	db       *gorm.DB
 	owner    string
 	session  *orm.WorkflowSession
@@ -168,13 +168,13 @@ type documentRewriteContext struct {
 }
 
 func PreviewDocumentAction(w http.ResponseWriter, r *http.Request) {
-	runDocumentRewrite(w, r, "preview")
+	runDocumentAction(w, r, "preview")
 }
 func ExecuteDocumentAction(w http.ResponseWriter, r *http.Request) {
-	runDocumentRewrite(w, r, "execute")
+	runDocumentAction(w, r, "execute")
 }
 
-func runDocumentRewrite(w http.ResponseWriter, r *http.Request, phase string) {
+func runDocumentAction(w http.ResponseWriter, r *http.Request, phase string) {
 	owner := strings.TrimSpace(corestore.UserID(r))
 	if owner == "" {
 		replyDocumentFailure(w, documentFailure("IDENTITY_REQUIRED", 400))
@@ -185,12 +185,35 @@ func runDocumentRewrite(w http.ResponseWriter, r *http.Request, phase string) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, documentActionMaxBytes)
-	var request documentRewriteRequest
+	raw, err := io.ReadAll(r.Body)
+	var dispatch struct {
+		Action string `json:"action"`
+	}
+	if err != nil || json.Unmarshal(raw, &dispatch) != nil {
+		replyDocumentFailure(w, documentFailure("DOCUMENT_ACTION_INVALID", 400))
+		return
+	}
+	switch dispatch.Action {
+	case "rewrite_selection":
+		runDocumentRewrite(w, r, phase, owner, raw)
+	case "convert_document":
+		if phase != "preview" {
+			replyDocumentFailure(w, documentFailure("DOCUMENT_ACTION_UNSUPPORTED", 422))
+			return
+		}
+		runDocumentConvert(w, r, owner, raw)
+	default:
+		replyDocumentFailure(w, documentFailure("DOCUMENT_ACTION_UNSUPPORTED", 422))
+	}
+}
+
+func runDocumentRewrite(w http.ResponseWriter, r *http.Request, phase, owner string, raw []byte) {
+	var request documentActionRequest
 	action := ""
 	invalid := false
 	if phase == "preview" {
 		var body DocumentRewritePreviewRequest
-		invalid = decodeDocumentJSON(r.Body, &body) != nil || body.Input == nil
+		invalid = decodeDocumentJSON(bytes.NewReader(raw), &body) != nil || body.Input == nil
 		action = body.Action
 		request.baseRevision = body.BaseRevision
 		request.baseDraftVersion = body.BaseDraftVersion
@@ -203,7 +226,7 @@ func runDocumentRewrite(w http.ResponseWriter, r *http.Request, phase string) {
 		}
 	} else {
 		var body DocumentRewriteExecuteRequest
-		invalid = decodeDocumentJSON(r.Body, &body) != nil || body.Input == nil
+		invalid = decodeDocumentJSON(bytes.NewReader(raw), &body) != nil || body.Input == nil
 		action = body.Action
 		request.baseRevision = body.BaseRevision
 		request.baseDraftVersion = body.BaseDraftVersion
@@ -228,7 +251,7 @@ func runDocumentRewrite(w http.ResponseWriter, r *http.Request, phase string) {
 		replyDocumentFailure(w, documentFailure("DOCUMENT_ACTION_INVALID", 400))
 		return
 	}
-	target, err := prepareDocumentRewrite(r.Context(), owner, common.PathVar(r, "artifact_id"), request)
+	target, err := prepareDocumentAction(r.Context(), owner, common.PathVar(r, "artifact_id"), request, true)
 	if err != nil {
 		replyDocumentFailure(w, err)
 		return
@@ -288,7 +311,7 @@ func runDocumentRewrite(w http.ResponseWriter, r *http.Request, phase string) {
 	common.ReplyOK(w, DocumentRewriteExecuteResult{ArtifactID: saved.ID, Revision: saved.Revision, DraftVersion: 1})
 }
 
-func prepareDocumentRewrite(ctx context.Context, owner, id string, request documentRewriteRequest) (*documentRewriteContext, error) {
+func prepareDocumentAction(ctx context.Context, owner, id string, request documentActionRequest, checkLive bool) (*documentActionContext, error) {
 	db := corestore.DB()
 	if db == nil {
 		return nil, documentFailure("DOCUMENT_ACTION_FAILED", 500)
@@ -329,11 +352,13 @@ func prepareDocumentRewrite(ctx context.Context, owner, id string, request docum
 			return nil, documentFailure("DRAFT_VERSION_CONFLICT", 409)
 		}
 	}
-	if err := artifactgraph.CheckConsumers(ctx, db, session.ID, revision.ID); err != nil {
-		if errors.Is(err, ErrArtifactInUse) {
-			return nil, documentFailure("ARTIFACT_IN_USE", 409)
+	if checkLive {
+		if err := artifactgraph.CheckConsumers(ctx, db, session.ID, revision.ID); err != nil {
+			if errors.Is(err, ErrArtifactInUse) {
+				return nil, documentFailure("ARTIFACT_IN_USE", 409)
+			}
+			return nil, documentFailure("DOCUMENT_ACTION_FAILED", 500)
 		}
-		return nil, documentFailure("DOCUMENT_ACTION_FAILED", 500)
 	}
 	content, inspectionError := document.InspectContent(ctx, artifact.Value, artifact.ContentType, func() (bool, error) { return repo.PinnedMarkdownHint(ctx, session, revision.SlotID) })
 	if inspectionError != nil {
@@ -342,10 +367,10 @@ func prepareDocumentRewrite(ctx context.Context, owner, id string, request docum
 	if content == nil {
 		return nil, documentFailure("DOCUMENT_ACTION_UNSUPPORTED", 422)
 	}
-	return &documentRewriteContext{db: db, owner: owner, session: session, revision: revision, artifact: artifact, content: content}, nil
+	return &documentActionContext{db: db, owner: owner, session: session, revision: revision, artifact: artifact, content: content}, nil
 }
 
-func checkDocumentTarget(session *orm.WorkflowSession, revision orm.WorkflowSlotRevision, owner string, request documentRewriteRequest) error {
+func checkDocumentTarget(session *orm.WorkflowSession, revision orm.WorkflowSlotRevision, owner string, request documentActionRequest) error {
 	if session.CreateUserID != owner {
 		return documentFailure("PERMISSION_DENIED", 403)
 	}
@@ -425,7 +450,7 @@ func documentUpstreamFailure(status int, err error) error {
 	return documentFailure("DOCUMENT_ACTION_FAILED", 502)
 }
 
-func commitDocumentRewrite(ctx context.Context, target *documentRewriteContext, request documentRewriteRequest, artifact *DocumentActionArtifact) (*orm.WorkflowSlotRevision, error) {
+func commitDocumentRewrite(ctx context.Context, target *documentActionContext, request documentActionRequest, artifact *DocumentActionArtifact) (*orm.WorkflowSlotRevision, error) {
 	contentType := "text/markdown"
 	value := artifact.Value
 	if target.content.Representation == "ir" {

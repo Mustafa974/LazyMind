@@ -2288,6 +2288,54 @@ components:
                 - content_type
                 - value
             type: object
+        DocumentConvertPreviewInput:
+            properties:
+                document:
+                    description: Inline Markdown text or Writer IR object; never a file locator.
+                    oneOf:
+                        - type: string
+                        - additionalProperties: true
+                          type: object
+                output_format:
+                    enum:
+                        - markdown
+                        - latex
+                        - text
+                    type: string
+            required:
+                - output_format
+            type: object
+        DocumentConvertPreviewRequest:
+            properties:
+                action:
+                    enum:
+                        - convert_document
+                    type: string
+                base_draft_version:
+                    format: int64
+                    type: integer
+                base_revision:
+                    type: integer
+                input:
+                    $ref: '#/components/schemas/DocumentConvertPreviewInput'
+            required:
+                - action
+                - base_revision
+                - input
+            type: object
+        DocumentConvertResult:
+            properties:
+                content:
+                    type: string
+                format:
+                    type: string
+                provider:
+                    type: string
+            required:
+                - content
+                - format
+                - provider
+            type: object
         DocumentCreatorsResponse:
             properties:
                 creators:
@@ -6127,12 +6175,14 @@ components:
                 - data
                 - message
             type: object
-        documentRewriteExecuteOpenAPIResponse:
+        documentActionPreviewOpenAPIResponse:
             properties:
                 code:
                     type: integer
                 data:
-                    $ref: '#/components/schemas/DocumentRewriteExecuteResult'
+                    oneOf:
+                        - $ref: '#/components/schemas/DocumentRewritePreviewResult'
+                        - $ref: '#/components/schemas/DocumentConvertResult'
                 message:
                     type: string
             required:
@@ -6140,12 +6190,12 @@ components:
                 - data
                 - message
             type: object
-        documentRewritePreviewOpenAPIResponse:
+        documentRewriteExecuteOpenAPIResponse:
             properties:
                 code:
                     type: integer
                 data:
-                    $ref: '#/components/schemas/DocumentRewritePreviewResult'
+                    $ref: '#/components/schemas/DocumentRewriteExecuteResult'
                 message:
                     type: string
             required:
@@ -17644,15 +17694,19 @@ paths:
                 content:
                     application/json:
                         schema:
-                            $ref: '#/components/schemas/DocumentRewritePreviewRequest'
+                            discriminator:
+                                propertyName: action
+                            oneOf:
+                                - $ref: '#/components/schemas/DocumentRewritePreviewRequest'
+                                - $ref: '#/components/schemas/DocumentConvertPreviewRequest'
                 required: true
             responses:
                 "200":
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/documentRewritePreviewOpenAPIResponse'
-                    description: Document rewrite result
+                                $ref: '#/components/schemas/documentActionPreviewOpenAPIResponse'
+                    description: Document preview result
                 "400":
                     content:
                         application/json:
@@ -17695,7 +17749,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
                     description: Document action service failed
-            summary: Preview a document selection rewrite
+            summary: Preview a document rewrite or portable conversion
             tags:
                 - workflow
     /api/core/workflow-authoring/v1/drafts:

@@ -47,7 +47,11 @@ func (r *Repository) DescribeArtifact(ctx context.Context, owner string, artifac
 			artifact.Document.Capabilities = append(artifact.Document.Capabilities, "rewrite_selection")
 		}
 	}
-
+	// Portable conversion has the same resource/actor eligibility but does
+	// not mutate the revision, so live consumers do not disable copying.
+	if artifact.Document != nil && writable {
+		artifact.Document.Capabilities = append(artifact.Document.Capabilities, "convert_document")
+	}
 }
 
 func DocumentSessionEditable(session *orm.WorkflowSession) bool {

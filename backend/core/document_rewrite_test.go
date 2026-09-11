@@ -711,7 +711,7 @@ func TestDocumentRewriteCapabilitiesAndOpenAPI(t *testing.T) {
 	found := false
 	for _, capability := range caps {
 		found = found || capability == "rewrite_selection"
-		if capability != "rewrite_selection" && capability != "save" {
+		if capability != "rewrite_selection" && capability != "save" && capability != "convert_document" {
 			t.Errorf("unsupported capability=%v", capability)
 		}
 	}
@@ -729,7 +729,7 @@ func TestDocumentRewriteCapabilitiesAndOpenAPI(t *testing.T) {
 			t.Error("rewrite advertised without model")
 		}
 	}
-	if !reflect.DeepEqual(caps, []any{"save"}) || doc["editable"] != true {
+	if !reflect.DeepEqual(caps, []any{"save", "convert_document"}) || doc["editable"] != true {
 		t.Errorf("missing model removed ordinary save: %#v", doc)
 	}
 
@@ -1029,7 +1029,7 @@ func TestDocumentRewriteOpenAPITypes(t *testing.T) {
 			op := openAPIOperationForTest(t, spec, "post", "/api/core/workflow-artifacts/{artifact_id}/document-actions:"+phase)
 			body := op["requestBody"].(map[string]any)
 			content := body["content"].(map[string]any)["application/json"].(map[string]any)
-			request := resolve(content["schema"])
+			request := documentActionRequestSchemaForTest(t, content["schema"], schemas, "rewrite_selection")
 			props, _ := request["properties"].(map[string]any)
 			for field, want := range map[string]string{"action": "string", "base_revision": "integer", "base_draft_version": "integer", "input": "object"} {
 				if resolve(props[field])["type"] != want {
@@ -1094,6 +1094,9 @@ func TestDocumentRewriteOpenAPITypes(t *testing.T) {
 			responseSchema := resolve(response["content"].(map[string]any)["application/json"].(map[string]any)["schema"])
 			responseProps, _ := responseSchema["properties"].(map[string]any)
 			data := resolve(responseProps["data"])
+			if phase == "preview" {
+				data = documentActionResultSchemaForTest(t, responseProps["data"], schemas, "rewrite_selection")
+			}
 			dataProps, _ := data["properties"].(map[string]any)
 			if phase == "execute" {
 				for field, want := range map[string]string{"artifact_id": "string", "revision": "integer", "draft_version": "integer"} {
@@ -1361,7 +1364,11 @@ func TestDocumentRewriteCapabilityRequiresMutableState(t *testing.T) {
 						if !ok {
 							t.Fatalf("restricted document missing=%#v", record)
 						}
-						if doc["editable"] != false || !reflect.DeepEqual(doc["capabilities"], []any{}) {
+						want := []any{}
+						if state == "live" {
+							want = []any{"convert_document"}
+						}
+						if doc["editable"] != false || !reflect.DeepEqual(doc["capabilities"], want) {
 							t.Errorf("model enabled blocked capability: %#v", doc)
 						}
 					}

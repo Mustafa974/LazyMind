@@ -97,7 +97,7 @@ func TestDocumentDescriptorLiveConsumerBlocksSave(t *testing.T) {
 					for _, record := range records {
 						if record["artifact_id"] == "descriptor-artifact" {
 							found = true
-							requireDescriptor(t, record, "markdown", !blocked)
+							requireDescriptor(t, record, "markdown", !blocked, true)
 						}
 					}
 					if !found {
