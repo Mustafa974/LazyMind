@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -427,6 +428,167 @@ func TestFacadeArtifactMutationSerializesWithConcurrentConsumerBinding(t *testin
 			if !old.Selected || consumer.Validity != "effective" || revisions != 1 || events != 0 ||
 				artifacts != 1 || !reflect.DeepEqual(originalValue, map[string]any{"text": "source"}) || session.StateVersion != 1 {
 				t.Fatalf("race mutation leaked: old=%#v consumer=%#v original=%#v revisions=%d events=%d artifacts=%d state=%d", old, consumer, original, revisions, events, artifacts, session.StateVersion)
+			}
+		})
+	}
+}
+
+func TestFacadeMutationAfterRollbackUsesHistoricalMaxRevision(t *testing.T) {
+	for _, operation := range []string{"patch", "delete"} {
+		t.Run(operation, func(t *testing.T) {
+			repo := testRepo(t)
+			now := time.Now().UTC()
+			if err := repo.db.AutoMigrate(
+				&orm.WorkflowSession{}, &orm.WorkflowHumanArtifact{}, &orm.WorkflowSlotRevision{},
+			); err != nil {
+				t.Fatal(err)
+			}
+			if err := repo.db.Create(&orm.WorkflowSession{
+				ID: "rollback-history-session", CreateUserID: "u1", WorkflowID: "workflow",
+				Status: "active", StateVersion: 1, CreatedAt: now, UpdatedAt: now,
+			}).Error; err != nil {
+				t.Fatal(err)
+			}
+			for revision := 1; revision <= 3; revision++ {
+				humanID := fmt.Sprintf("rollback-history-human-%d", revision)
+				if err := repo.db.Create(&orm.WorkflowHumanArtifact{
+					ID: humanID, SessionID: "rollback-history-session", Slot: "document",
+					ContentType: "text", Value: json.RawMessage(fmt.Sprintf(`{"text":"revision-%d"}`, revision)),
+					CreatedAt: now,
+				}).Error; err != nil {
+					t.Fatal(err)
+				}
+				selected := revision == 1
+				rowID := fmt.Sprintf("rollback-history-revision-%d", revision)
+				if err := repo.db.Create(&orm.WorkflowSlotRevision{
+					ID: rowID, SessionID: "rollback-history-session", SlotID: "document",
+					Revision: revision, Selected: selected, HumanArtifactID: &humanID,
+					Slot: "document", StepID: "source", Attempt: revision,
+					Validity: "effective", ChangeSource: "agent", CreatedAt: now,
+				}).Error; err != nil {
+					t.Fatal(err)
+				}
+				if !selected {
+					if err := repo.db.Model(&orm.WorkflowSlotRevision{}).Where("id = ?", rowID).
+						Update("selected", false).Error; err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+
+			var result Artifact
+			var err error
+			if operation == "patch" {
+				result, err = repo.PatchArtifact(
+					t.Context(), "u1", "rollback-history-revision-1", 1,
+					"text", json.RawMessage(`{"text":"new"}`), nil, "cmd-patch",
+				)
+			} else {
+				result, err = repo.DeleteArtifact(
+					t.Context(), "u1", "rollback-history-revision-1", 1, "cmd-delete",
+				)
+			}
+			if err != nil {
+				t.Fatalf("%s after rollback: %v", operation, err)
+			}
+			if result.Revision != 4 || !result.Selected {
+				t.Fatalf("%s result=%#v, want revision 4 selected", operation, result)
+			}
+			var selected []orm.WorkflowSlotRevision
+			if err := repo.db.Where(
+				"session_id = ? AND slot_id = ? AND selected = ?",
+				"rollback-history-session", "document", true,
+			).Find(&selected).Error; err != nil {
+				t.Fatal(err)
+			}
+			if len(selected) != 1 || selected[0].ID != result.ID {
+				t.Fatalf("selected revisions=%#v", selected)
+			}
+		})
+	}
+}
+
+func TestFacadeListMutationAfterRollbackUsesItemHistoricalMaxRevision(t *testing.T) {
+	for _, operation := range []string{"patch", "delete"} {
+		t.Run(operation, func(t *testing.T) {
+			repo := testRepo(t)
+			now := time.Now().UTC()
+			if err := repo.db.AutoMigrate(
+				&orm.WorkflowSession{}, &orm.WorkflowHumanArtifact{}, &orm.WorkflowSlotRevision{},
+			); err != nil {
+				t.Fatal(err)
+			}
+			if err := repo.db.Create(&orm.WorkflowSession{
+				ID: "rollback-list-session", CreateUserID: "u1", WorkflowID: "workflow",
+				Status: "active", StateVersion: 1, CreatedAt: now, UpdatedAt: now,
+			}).Error; err != nil {
+				t.Fatal(err)
+			}
+			index0, index1 := 0, 1
+			type revisionSeed struct {
+				id        string
+				listIndex *int
+				revision  int
+				selected  bool
+			}
+			seeds := []revisionSeed{
+				{id: "list-current-0", listIndex: &index0, revision: 1, selected: true},
+				{id: "list-history-0-2", listIndex: &index0, revision: 2},
+				{id: "list-history-0-3", listIndex: &index0, revision: 3},
+				{id: "list-current-1", listIndex: &index1, revision: 1, selected: true},
+				{id: "list-history-1-10", listIndex: &index1, revision: 10},
+			}
+			for _, seed := range seeds {
+				humanID := seed.id + "-human"
+				if err := repo.db.Create(&orm.WorkflowHumanArtifact{
+					ID: humanID, SessionID: "rollback-list-session", Slot: "items",
+					ContentType: "text", Value: json.RawMessage(`{"text":"value"}`), CreatedAt: now,
+				}).Error; err != nil {
+					t.Fatal(err)
+				}
+				if err := repo.db.Create(&orm.WorkflowSlotRevision{
+					ID: seed.id, SessionID: "rollback-list-session", SlotID: "items",
+					ListIndex: seed.listIndex, Revision: seed.revision, Selected: seed.selected,
+					HumanArtifactID: &humanID, Slot: "items", StepID: "source", Attempt: seed.revision,
+					Validity: "effective", ChangeSource: "agent", CreatedAt: now,
+				}).Error; err != nil {
+					t.Fatal(err)
+				}
+				if !seed.selected {
+					if err := repo.db.Model(&orm.WorkflowSlotRevision{}).Where("id = ?", seed.id).
+						Update("selected", false).Error; err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+
+			var result Artifact
+			var err error
+			if operation == "patch" {
+				result, err = repo.PatchArtifact(
+					t.Context(), "u1", "list-current-0", 1,
+					"text", json.RawMessage(`{"text":"new"}`), nil, "cmd-patch-list",
+				)
+			} else {
+				result, err = repo.DeleteArtifact(
+					t.Context(), "u1", "list-current-0", 1, "cmd-delete-list",
+				)
+			}
+			if err != nil {
+				t.Fatalf("%s list item after rollback: %v", operation, err)
+			}
+			if result.Revision != 4 || result.ListIndex == nil || *result.ListIndex != 0 || !result.Selected {
+				t.Fatalf("%s list result=%#v", operation, result)
+			}
+			var selected []orm.WorkflowSlotRevision
+			if err := repo.db.Where(
+				"session_id = ? AND slot_id = ? AND selected = ?",
+				"rollback-list-session", "items", true,
+			).Order("list_index ASC").Find(&selected).Error; err != nil {
+				t.Fatal(err)
+			}
+			if len(selected) != 2 || selected[0].ID != result.ID || selected[1].ID != "list-current-1" {
+				t.Fatalf("selected list revisions=%#v", selected)
 			}
 		})
 	}

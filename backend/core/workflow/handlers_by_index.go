@@ -502,6 +502,9 @@ func RollbackSlotItemByIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	newRev, err := RollbackSlotRevision(ctx, db, sessionID, slotID, liPtr, body.Revision, anyRev.Slot)
+	if replyDraftVersionPreconditionError(w, err) {
+		return
+	}
 	if err != nil {
 		if IsNotFound(err) {
 			common.ReplyErr(w, "target revision not found", http.StatusNotFound)

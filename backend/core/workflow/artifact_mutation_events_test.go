@@ -18,6 +18,7 @@ type artifactUpsertPayload struct {
 	SlotID       string `json:"slot_id"`
 	Slot         string `json:"slot"`
 	Revision     int    `json:"revision"`
+	ListIndex    *int   `json:"list_index"`
 	DraftVersion int64  `json:"draft_version"`
 	ChangeSource string `json:"change_source"`
 	StateVersion int64  `json:"state_version"`

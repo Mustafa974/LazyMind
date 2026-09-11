@@ -305,6 +305,21 @@ func (r *Repository) ReadArtifact(ctx context.Context, owner, artifactID string)
 		Caption: caption, Deleted: revision.Validity == "deleted", CreatedAt: revision.CreatedAt}, nil
 }
 
+// artifactItemMaxRevision includes unselected history and tombstones for this item.
+// The caller must hold the Session lock while allocating and inserting a revision.
+func artifactItemMaxRevision(tx *gorm.DB, current Artifact) (int, error) {
+	query := tx.Model(&orm.WorkflowSlotRevision{}).Select("COALESCE(MAX(revision), 0)").
+		Where("session_id = ? AND slot_id = ?", current.SessionID, current.SlotID)
+	if current.ListIndex == nil {
+		query = query.Where("list_index IS NULL")
+	} else {
+		query = query.Where("list_index = ?", *current.ListIndex)
+	}
+	var maxRevision int
+	err := query.Scan(&maxRevision).Error
+	return maxRevision, err
+}
+
 func (r *Repository) PatchArtifact(ctx context.Context, owner, artifactID string, baseRevision int,
 	contentType string, value json.RawMessage, caption *string, commandID string) (Artifact, error) {
 	value = common.CanonicalizeTextArtifactValue(contentType, value)
@@ -345,8 +360,12 @@ func (r *Repository) PatchArtifact(ctx context.Context, owner, artifactID string
 			Slot: current.Slot, ContentType: contentType, Value: value, Caption: caption, CreatedAt: now}).Error; err != nil {
 			return err
 		}
+		maxRevision, err := artifactItemMaxRevision(tx, current)
+		if err != nil {
+			return err
+		}
 		created = orm.WorkflowSlotRevision{ID: revisionID, SessionID: current.SessionID,
-			SlotID: current.SlotID, Revision: baseRevision + 1, ListIndex: current.ListIndex, Selected: true,
+			SlotID: current.SlotID, Revision: maxRevision + 1, ListIndex: current.ListIndex, Selected: true,
 			HumanArtifactID: &humanID, ChangeSource: "agent", ProducerAttemptID: current.ProducerAttemptID,
 			Slot: current.Slot, StepID: current.StepID,
 			Attempt: current.Attempt, Validity: "effective", CreatedAt: now}
@@ -412,8 +431,12 @@ func (r *Repository) DeleteArtifact(ctx context.Context, owner, artifactID strin
 			Value: json.RawMessage(`null`), Caption: &caption, CreatedAt: now}).Error; err != nil {
 			return err
 		}
+		maxRevision, err := artifactItemMaxRevision(tx, current)
+		if err != nil {
+			return err
+		}
 		created = orm.WorkflowSlotRevision{ID: revisionID, SessionID: current.SessionID,
-			SlotID: current.SlotID, Revision: baseRevision + 1, ListIndex: current.ListIndex, Selected: true,
+			SlotID: current.SlotID, Revision: maxRevision + 1, ListIndex: current.ListIndex, Selected: true,
 			HumanArtifactID: &humanID, ChangeSource: "agent", ProducerAttemptID: current.ProducerAttemptID,
 			Slot: current.Slot, StepID: current.StepID,
 			Attempt: current.Attempt, Validity: "deleted", CreatedAt: now}

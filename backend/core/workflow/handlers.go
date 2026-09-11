@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 	"lazymind/core/common"
 	"lazymind/core/common/orm"
 	"lazymind/core/store"
@@ -587,23 +586,10 @@ func PatchSessionSlot(w http.ResponseWriter, r *http.Request) {
 	}
 	// This endpoint selects a version of a cardinality=single slot. List items use
 	// the list_index rollback endpoint, which avoids an ambiguous revision number.
-	var selected orm.WorkflowSlotRevision
-	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("session_id = ? AND slot_id = ? AND list_index IS NULL AND revision = ? AND validity = ?",
-				sessionID, slotID, body.SelectedRevision, "effective").
-			First(&selected).Error; err != nil {
-			return err
-		}
-		if err := tx.Model(&orm.WorkflowSlotRevision{}).
-			Where("session_id = ? AND slot_id = ? AND list_index IS NULL AND selected = ?", sessionID, slotID, true).
-			Update("selected", false).Error; err != nil {
-			return err
-		}
-		return tx.Model(&orm.WorkflowSlotRevision{}).
-			Where("id = ?", selected.ID).
-			Update("selected", true).Error
-	})
+	selected, err := selectSlotRevision(ctx, db, sessionID, slotID, nil, body.SelectedRevision, "selection")
+	if replyDraftVersionPreconditionError(w, err) {
+		return
+	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		common.ReplyErr(w, "target revision not found", http.StatusNotFound)
 		return

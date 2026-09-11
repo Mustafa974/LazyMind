@@ -942,41 +942,68 @@ func RollbackSlotRevision(ctx context.Context, db *gorm.DB,
 	sessionID, slotID string, listIndex *int,
 	targetRevision int, _ string) (*orm.WorkflowSlotRevision, error) {
 
-	// Load the target revision to verify it exists.
-	tq := db.WithContext(ctx).
-		Where("session_id = ? AND slot_id = ? AND revision = ?", sessionID, slotID, targetRevision)
-	if listIndex == nil {
-		tq = tq.Where("list_index IS NULL")
-	} else {
-		tq = tq.Where("list_index = ?", *listIndex)
-	}
-	var target orm.WorkflowSlotRevision
-	if err := tq.First(&target).Error; err != nil {
-		return nil, err
-	}
+	return selectSlotRevision(ctx, db, sessionID, slotID, listIndex, targetRevision, "rollback")
+}
 
-	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Deselect current selected revision.
-		deselectQ := tx.Model(&orm.WorkflowSlotRevision{}).
-			Where("session_id = ? AND slot_id = ? AND selected = ?", sessionID, slotID, true)
-		if listIndex == nil {
-			deselectQ = deselectQ.Where("list_index IS NULL")
-		} else {
-			deselectQ = deselectQ.Where("list_index = ?", *listIndex)
-		}
-		if err := deselectQ.Update("selected", false).Error; err != nil {
+func selectSlotRevision(ctx context.Context, db *gorm.DB,
+	sessionID, slotID string, listIndex *int,
+	targetRevision int, changeSource string) (*orm.WorkflowSlotRevision, error) {
+	var target orm.WorkflowSlotRevision
+	err := common.TransactionWithSQLiteBusyRetry(ctx, db, func(tx *gorm.DB) error {
+		target = orm.WorkflowSlotRevision{}
+		session, err := lockArtifactMutationSession(tx, sessionID)
+		if err != nil {
 			return err
 		}
-
-		// Select the target revision.
-		return tx.Model(&orm.WorkflowSlotRevision{}).
-			Where("id = ?", target.ID).
-			Update("selected", true).Error
-	}); err != nil {
+		itemQuery := func() *gorm.DB {
+			q := tx.Model(&orm.WorkflowSlotRevision{}).
+				Where("session_id = ? AND slot_id = ?", sessionID, slotID)
+			if listIndex == nil {
+				return q.Where("list_index IS NULL")
+			}
+			return q.Where("list_index = ?", *listIndex)
+		}
+		if err := itemQuery().Where("revision = ? AND validity = ?", targetRevision, "effective").
+			First(&target).Error; err != nil {
+			return err
+		}
+		if target.Selected {
+			return nil
+		}
+		var currentIDs []string
+		if err := itemQuery().Where("selected = ?", true).Pluck("id", &currentIDs).Error; err != nil {
+			return err
+		}
+		if err := artifactgraph.InvalidateConsumers(ctx, tx, sessionID, currentIDs...); err != nil {
+			return err
+		}
+		if err := itemQuery().Where("selected = ?", true).Update("selected", false).Error; err != nil {
+			return err
+		}
+		selected := tx.Model(&orm.WorkflowSlotRevision{}).
+			Where("id = ? AND validity = ?", target.ID, "effective").Update("selected", true)
+		if selected.Error != nil {
+			return selected.Error
+		}
+		if selected.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		target.Selected = true
+		var draftVersion int64
+		if target.HumanArtifactID != nil && *target.HumanArtifactID != "" {
+			var human orm.WorkflowHumanArtifact
+			if err := tx.First(&human, "id = ?", *target.HumanArtifactID).Error; err != nil {
+				return err
+			}
+			draftVersion = human.DraftVersion
+		}
+		eventRevision := target
+		eventRevision.ChangeSource = changeSource
+		return appendArtifactUpsertEvent(tx, session, &eventRevision, draftVersion, time.Now().UTC())
+	})
+	if err != nil {
 		return nil, err
 	}
-
-	target.Selected = true
 	return &target, nil
 }
 
