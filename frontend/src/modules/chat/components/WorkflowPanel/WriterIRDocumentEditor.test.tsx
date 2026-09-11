@@ -450,6 +450,59 @@ describe('WriterIRDocumentEditor image preview', () => {
   });
 });
 
+describe('WriterIRDocumentEditor tables', () => {
+  it('renders and saves structured table cells', async () => {
+    const onDocumentChange = vi.fn();
+    const tableDocument: WriterDocument = {
+      ...document,
+      blocks: [{
+        node_id: 'table-1',
+        type: 'table',
+        content: '指标表',
+        children: [{
+          node_id: 'row-1',
+          type: 'table_row',
+          children: [
+            {
+              node_id: 'cell-1',
+              type: 'table_cell',
+              content: '指标',
+              numbering: { header: true, align: 'center', column_span: 2 },
+            },
+            { node_id: 'cell-2', type: 'table_cell', content: '100' },
+          ],
+        }],
+      }],
+    };
+    const { container } = render(
+      <ControlledWriter
+        initialDocument={tableDocument}
+        onDocumentChange={onDocumentChange}
+      />,
+    );
+
+    const header = container.querySelector<HTMLElement>('[data-node-id="cell-1"]');
+    const value = container.querySelector<HTMLElement>('[data-node-id="cell-2"]');
+    expect(header?.tagName).toBe('TH');
+    expect(header).toHaveAttribute('data-table-align', 'center');
+    expect(header).toHaveAttribute('colspan', '2');
+    expect(value?.tagName).toBe('TD');
+    expect(container.querySelector('.writer-ir__table-caption')).toHaveTextContent('指标表');
+
+    value!.textContent = '200';
+    fireEvent.input(value!);
+
+    await waitFor(() => expect(onDocumentChange).toHaveBeenCalled());
+    const updated = onDocumentChange.mock.calls.at(-1)?.[0] as WriterDocument;
+    expect(updated.blocks[0].children?.[0].children?.[1].content).toBe('200');
+    expect(updated.blocks[0].content).toBe('指标表');
+    expect(updated.blocks[0].children?.[0].children?.[0].numbering).toEqual({
+      header: true, align: 'center', column_span: 2,
+    });
+    expect(container.querySelector('[data-node-id="cell-2"]')).toHaveTextContent('200');
+  });
+});
+
 describe('WriterIRDocumentEditor cross-reference menu', () => {
   it('keeps the selected text highlighted and applies the reference without rewriting it', async () => {
     Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
