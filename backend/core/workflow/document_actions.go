@@ -107,6 +107,24 @@ type DocumentRewritePreviewResult struct {
 	Artifact       *DocumentActionArtifact `json:"artifact" required:"true"`
 	Commit         *DocumentRewriteCommit  `json:"commit" required:"true"`
 }
+
+// Algorithm accepts ranges and returns per-block results. Keep this wire
+// contract separate from the public single-selection API.
+type documentRewritePreviewAlgorithmResult struct {
+	Representation string `json:"representation"`
+	Results        []struct {
+		Target *struct {
+			DocumentRewriteTarget
+			TargetStart *int `json:"target_start,omitempty"`
+			TargetEnd   *int `json:"target_end,omitempty"`
+		} `json:"target"`
+		Preview *DocumentRewritePreview `json:"preview"`
+		Patch   *DocumentRewritePatch   `json:"patch"`
+	} `json:"results"`
+	Artifact *DocumentActionArtifact `json:"artifact"`
+	Commit   *DocumentRewriteCommit  `json:"commit"`
+}
+
 type documentRewriteAlgorithmResult struct {
 	Representation string                  `json:"representation"`
 	Artifact       *DocumentActionArtifact `json:"artifact"`
@@ -222,8 +240,15 @@ func runDocumentRewrite(w http.ResponseWriter, r *http.Request, phase, owner str
 		if !invalid {
 			invalid = strings.TrimSpace(body.Input.Instruction) == "" || body.Input.Selection == nil
 			if !invalid {
-				request.arguments = body.Input
 				request.selectionType = body.Input.Selection.Type
+				selection := map[string]string{"node_id": body.Input.Selection.NodeID}
+				if request.selectionType == "markdown" {
+					selection = map[string]string{"selected_text": body.Input.Selection.SelectedText}
+				}
+				request.arguments = map[string]any{
+					"type": request.selectionType, "instruction": body.Input.Instruction,
+					"selection_ranges": []map[string]string{selection},
+				}
 			}
 		}
 	} else {
@@ -287,8 +312,17 @@ func runDocumentRewrite(w http.ResponseWriter, r *http.Request, phase, owner str
 		return
 	}
 	if phase == "preview" {
-		var preview DocumentRewritePreviewResult
-		if decodeDocumentJSON(bytes.NewReader(response.Result), &preview) != nil || !validDocumentPreview(preview, target.content.Representation) || !validDocumentResult(r.Context(), preview.Artifact, target.content.Representation) {
+		var result documentRewritePreviewAlgorithmResult
+		if decodeDocumentJSON(bytes.NewReader(response.Result), &result) != nil || len(result.Results) != 1 || result.Results[0].Target == nil {
+			replyDocumentFailure(w, documentFailure("DOCUMENT_ACTION_RESULT_INVALID", 502))
+			return
+		}
+		item := result.Results[0]
+		preview := DocumentRewritePreviewResult{
+			Representation: result.Representation, Target: &item.Target.DocumentRewriteTarget,
+			Preview: item.Preview, Patch: item.Patch, Artifact: result.Artifact, Commit: result.Commit,
+		}
+		if !validDocumentPreview(preview, target.content.Representation) || !validDocumentResult(r.Context(), preview.Artifact, target.content.Representation) {
 			replyDocumentFailure(w, documentFailure("DOCUMENT_ACTION_RESULT_INVALID", 502))
 			return
 		}

@@ -217,7 +217,7 @@ func newRewriteServer(t *testing.T, f rewriteFixture) *rewriteServer {
 			return
 		}
 		if req.Phase == "preview" {
-			if !reflect.DeepEqual(source, f.source) || !reflect.DeepEqual(req.Arguments, map[string]any{"instruction": "Make it clearer", "selection": f.selection}) {
+			if !reflect.DeepEqual(source, f.source) || !reflect.DeepEqual(req.Arguments, rewriteCompatibilityArguments(f)) {
 				t.Errorf("preview content/args=%#v / %#v", source, req.Arguments)
 			}
 			llm, ok := req.LLMConfig["llm"].(map[string]any)
@@ -229,7 +229,7 @@ func newRewriteServer(t *testing.T, f rewriteFixture) *rewriteServer {
 			artifact := map[string]any{"content_type": map[bool]string{true: "text", false: "json"}[f.representation == "markdown"], "value": f.candidate}
 			server.manifests[req.ArtifactStore+"/"+token] = rewriteManifest{source: source, artifact: artifact, representation: f.representation}
 			server.mu.Unlock()
-			result := map[string]any{"representation": f.representation, "target": map[string]any{"type": "block", "block_type": "paragraph", "node_id": "p"}, "preview": map[string]any{"old_text": rewriteSelectedText(f), "new_text": "Rewritten."}, "patch": map[string]any{"type": map[bool]string{true: "string_replace_set", false: "writer_ir_patch"}[f.representation == "markdown"], "payload": map[string]any{}}, "artifact": artifact, "commit": map[string]any{"token": token}}
+			result := map[string]any{"representation": f.representation, "results": []any{map[string]any{"target": map[string]any{"type": "block", "block_type": "paragraph", "node_id": "p"}, "preview": map[string]any{"old_text": rewriteSelectedText(f), "new_text": "Rewritten."}, "patch": map[string]any{"type": map[bool]string{true: "string_replace_set", false: "writer_ir_patch"}[f.representation == "markdown"], "payload": map[string]any{}}}}, "artifact": artifact, "commit": map[string]any{"token": token}}
 			if override != nil {
 				result = override
 			}
@@ -1204,7 +1204,7 @@ func TestDocumentRewriteServerFixtureControl(t *testing.T) {
 		}
 		return response.StatusCode, value
 	}
-	status, result := call("preview", "/fixture/a", f.source, f.body("preview", "")["input"].(map[string]any))
+	status, result := call("preview", "/fixture/a", f.source, rewriteCompatibilityArguments(f))
 	if status != 200 {
 		t.Fatalf("fixture preview status=%d", status)
 	}

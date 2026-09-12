@@ -68,6 +68,14 @@ func transactionWithSQLiteBusyRetry(
 	if db.Dialector.Name() != "sqlite" {
 		return db.WithContext(ctx).Transaction(fn)
 	}
+	// An existing transaction must keep its caller's commit/retry ownership.
+	// GORM uses a savepoint here; acquiring the gate again would deadlock a
+	// transaction already started by this helper. Never retry a partial snapshot.
+	if !immediate {
+		if committer, ok := db.Statement.ConnPool.(gorm.TxCommitter); ok && committer != nil {
+			return db.WithContext(ctx).Transaction(fn)
+		}
+	}
 	select {
 	case sqliteWriterGate <- struct{}{}:
 		defer func() { <-sqliteWriterGate }()
