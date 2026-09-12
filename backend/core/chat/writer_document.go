@@ -183,7 +183,7 @@ func SyncWriterDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	session, err := workflow.GetSession(ctx, db, sessionID)
 	if err != nil || session == nil || session.WorkflowID != "writer-workflow" || session.Dismissed ||
-		(session.CreateUserID != "" && session.CreateUserID != userID) {
+		(strings.TrimSpace(session.CreateUserID) == "" || session.CreateUserID != userID) {
 		common.ReplyErr(w, "writer session not found", http.StatusNotFound)
 		return
 	}
@@ -227,7 +227,7 @@ func SyncWriterDocument(w http.ResponseWriter, r *http.Request) {
 		ok             bool
 	)
 	if writerProviderRequiresToolConfig(provider) {
-		toolConfig, err := loadChatToolConfig(ctx, db, userID)
+		toolConfig, err := modelconfig.LoadWriterProviderToolConfig(ctx, provider, userID)
 		if err != nil {
 			common.ReplyErr(w, "load cloud document authorization failed", http.StatusBadGateway)
 			return
@@ -627,13 +627,17 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	userID := strings.TrimSpace(store.UserID(r))
+	if userID == "" {
+		common.ReplyErr(w, "missing X-User-Id", http.StatusBadRequest)
+		return
+	}
 	session, err := workflow.GetSession(ctx, db, sessionID)
 	if err != nil || session == nil || session.WorkflowID != "writer-workflow" || session.Dismissed {
 		common.ReplyErr(w, "writer session not found", http.StatusNotFound)
 		return
 	}
-	userID := store.UserID(r)
-	if session.CreateUserID != "" && userID != "" && session.CreateUserID != userID {
+	if strings.TrimSpace(session.CreateUserID) == "" || session.CreateUserID != userID {
 		common.ReplyErr(w, "writer session not found", http.StatusNotFound)
 		return
 	}
@@ -793,7 +797,7 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 	syncRequest.Adapter = provider
 	var providerConfig map[string]any
 	if writerProviderRequiresToolConfig(provider) {
-		toolConfig, err := loadChatToolConfig(ctx, db, userID)
+		toolConfig, err := modelconfig.LoadWriterProviderToolConfig(ctx, provider, userID)
 		if err != nil {
 			common.ReplyErr(w, "load cloud document authorization failed", http.StatusBadGateway)
 			return

@@ -125,9 +125,9 @@ func TestSyncWriterDocumentPersistsProviderSyncRevision(t *testing.T) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/v1/cloud/connections/internal/chat-enabled") &&
 			r.URL.Query().Get("provider") == "notion":
-			_, _ = w.Write([]byte(`{"data":{"items":[{"connection_id":"notion-1"}]}}`))
+			_, _ = w.Write([]byte(`{"data":{"items":[{"connection_id":"notion-1","provider":"notion","owner_user_id":"user-1","status":"ACTIVE"}]}}`))
 		case strings.HasSuffix(r.URL.Path, "/v1/cloud/connections/notion-1/token"):
-			_, _ = w.Write([]byte(`{"data":{"access_token":"notion-token"}}`))
+			_, _ = w.Write([]byte(`{"data":{"connection_id":"notion-1","provider":"notion","status":"ACTIVE","access_token":"notion-token"}}`))
 		case r.URL.Path == "/api/workflow/actions:invoke":
 			providerCalls.Add(1)
 			_, _ = w.Write([]byte(`{"result":{
@@ -551,9 +551,9 @@ func TestWriteBackWriterDocumentPersistsFirstMarkdownTarget(t *testing.T) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/v1/cloud/connections/internal/chat-enabled") &&
 			r.URL.Query().Get("provider") == "notion":
-			_, _ = w.Write([]byte(`{"data":{"items":[{"connection_id":"notion-1"}]}}`))
+			_, _ = w.Write([]byte(`{"data":{"items":[{"connection_id":"notion-1","provider":"notion","owner_user_id":"user-1","status":"ACTIVE"}]}}`))
 		case strings.HasSuffix(r.URL.Path, "/v1/cloud/connections/notion-1/token"):
-			_, _ = w.Write([]byte(`{"data":{"access_token":"notion-token"}}`))
+			_, _ = w.Write([]byte(`{"data":{"connection_id":"notion-1","provider":"notion","status":"ACTIVE","access_token":"notion-token"}}`))
 		case r.URL.Path == "/api/workflow/actions:invoke":
 			var request struct {
 				Action string `json:"action"`
@@ -660,9 +660,9 @@ func TestWriteBackWriterDocumentReportsProviderSuccessWhenLocalDraftChanged(t *t
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/v1/cloud/connections/internal/chat-enabled") &&
 			r.URL.Query().Get("provider") == "notion":
-			_, _ = w.Write([]byte(`{"data":{"items":[{"connection_id":"notion-1"}]}}`))
+			_, _ = w.Write([]byte(`{"data":{"items":[{"connection_id":"notion-1","provider":"notion","owner_user_id":"user-1","status":"ACTIVE"}]}}`))
 		case strings.HasSuffix(r.URL.Path, "/v1/cloud/connections/notion-1/token"):
-			_, _ = w.Write([]byte(`{"data":{"access_token":"notion-token"}}`))
+			_, _ = w.Write([]byte(`{"data":{"connection_id":"notion-1","provider":"notion","status":"ACTIVE","access_token":"notion-token"}}`))
 		case r.URL.Path == "/api/workflow/actions:invoke":
 			var request struct {
 				Action string `json:"action"`
@@ -786,9 +786,9 @@ func TestWriteBackWriterDocumentReportsProviderSuccessWhenArtifactIsInUse(t *tes
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/v1/cloud/connections/internal/chat-enabled") &&
 			r.URL.Query().Get("provider") == "notion":
-			_, _ = w.Write([]byte(`{"data":{"items":[{"connection_id":"notion-1"}]}}`))
+			_, _ = w.Write([]byte(`{"data":{"items":[{"connection_id":"notion-1","provider":"notion","owner_user_id":"user-1","status":"ACTIVE"}]}}`))
 		case strings.HasSuffix(r.URL.Path, "/v1/cloud/connections/notion-1/token"):
-			_, _ = w.Write([]byte(`{"data":{"access_token":"notion-token"}}`))
+			_, _ = w.Write([]byte(`{"data":{"connection_id":"notion-1","provider":"notion","status":"ACTIVE","access_token":"notion-token"}}`))
 		case r.URL.Path == "/api/workflow/actions:invoke":
 			providerCalls.Add(1)
 			var request struct {
