@@ -1,3 +1,4 @@
+import type { ApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest, ApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest, DocumentPublishRequest, DocumentPublishResult, DocumentArtifactPatchRequest, DocumentProviderCatalog, WorkflowArtifactReadResponse, DocumentActionPreviewOpenAPIResponse, DocumentRewriteExecuteOpenAPIResponse } from "@/api/generated/core-client";
 import {
   Configuration,
   type BatchChatJob,
@@ -247,7 +248,7 @@ export interface WriteBackWriterDocumentResult {
   write_result?: Record<string, unknown>;
 }
 
-export type WriterWriteBackProvider = 'feishu' | 'notion' | 'github' | 'wechat' | 'obsidian';
+export type WriterWriteBackProvider = string;
 
 export interface WriteBackWriterDocumentRequest {
   base_revision: number;
@@ -407,6 +408,26 @@ export interface ExecuteArtifactActionResult {
 // Workflow Session API.
 export function WorkflowSessionApi() {
   return {
+    listDocumentProviders(options?: RawAxiosRequestConfig) {
+      return axiosInstance.get<{ data: DocumentProviderCatalog }>(`${coreApiBaseUrl}/document-providers`, options);
+    },
+    publishDocument(artifactId: string, body: DocumentPublishRequest, options?: RawAxiosRequestConfig) {
+      return axiosInstance.post<{ data: DocumentPublishResult }>(`${coreApiBaseUrl}/workflow-artifacts/${encodeURIComponent(artifactId)}/document-actions:execute`, body, options);
+    },
+    saveDocumentArtifact(artifactId: string, body: DocumentArtifactPatchRequest, options?: RawAxiosRequestConfig) {
+      return axiosInstance.patch<WorkflowArtifactReadResponse>(`${coreApiBaseUrl}/workflow-artifacts/${encodeURIComponent(artifactId)}`, body,
+        { ...options, headers: { ...options?.headers, 'Workflow-Contract-Version': 'workflow.v1' } });
+    },
+    getDocumentArtifact(artifactId: string, options?: RawAxiosRequestConfig) {
+      return axiosInstance.get<WorkflowArtifactReadResponse>(`${coreApiBaseUrl}/workflow-artifacts/${encodeURIComponent(artifactId)}`,
+        { ...options, headers: { ...options?.headers, 'Workflow-Contract-Version': 'workflow.v1' } });
+    },
+    previewDocumentAction(artifactId: string, body: ApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest, options?: RawAxiosRequestConfig) {
+      return axiosInstance.post<DocumentActionPreviewOpenAPIResponse>(`${coreApiBaseUrl}/workflow-artifacts/${encodeURIComponent(artifactId)}/document-actions:preview`, body, options);
+    },
+    executeDocumentAction(artifactId: string, body: ApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest, options?: RawAxiosRequestConfig) {
+      return axiosInstance.post<DocumentRewriteExecuteOpenAPIResponse>(`${coreApiBaseUrl}/workflow-artifacts/${encodeURIComponent(artifactId)}/document-actions:execute`, body, options);
+    },
     getLatestSession(conversationId: string, options?: RawAxiosRequestConfig) {
       return axiosInstance.get(
         `${coreApiBaseUrl}/conversations/${encodeURIComponent(conversationId)}/workflow-sessions:latest`,

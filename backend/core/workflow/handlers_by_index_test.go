@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"sort"
@@ -717,6 +719,11 @@ func TestPatchSlotItemDraftCASAllowsExactlyOneConcurrentSave(t *testing.T) {
 }
 
 func TestPatchSlotItemByIndexHonorsBaseRevision(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("LAZYMIND_UPLOAD_ROOT", root)
+	if err := os.WriteFile(filepath.Join(root, "draft.md"), []byte("# Draft"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	db := newHandlerTestDB(t)
 	if err := db.AutoMigrate(&orm.WorkflowHumanArtifact{}); err != nil {
 		t.Fatalf("migrate human artifacts: %v", err)

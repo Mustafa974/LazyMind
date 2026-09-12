@@ -170,40 +170,6 @@ func PatchSlotItemByIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	cleaned := resolveValuePaths(body.Value)
 
-	if mode == "draft" {
-		updated, draftVersion, updatedInPlace, err := UpdateSelectedHumanArtifactValue(
-			ctx, db, sessionID, slotID, liPtr, body.ContentType, cleaned, body.Caption,
-			body.BaseRevision, body.BaseDraftVersion,
-		)
-		if err != nil {
-			if replyDraftVersionPreconditionError(w, err) {
-				return
-			}
-			if errors.Is(err, ErrConflict) {
-				common.ReplyErrWithData(w, "revision conflict; refresh and retry", map[string]any{
-					"code": "REVISION_CONFLICT",
-				}, http.StatusConflict)
-				return
-			}
-			common.ReplyErr(w, "patch item failed", http.StatusInternalServerError)
-			return
-		}
-		if updatedInPlace {
-			NotifyWorkflowArtifactUpdated(ctx, db, sessionID, updated.StepID, updated.SlotID, updated.Slot, updated.Revision, updated.ListIndex, "human")
-			common.ReplyOK(w, map[string]any{
-				"type":          "slot_item_patched",
-				"session_id":    sessionID,
-				"slot_id":       slotID,
-				"list_index":    listIndex,
-				"revision":      updated.Revision,
-				"draft_version": draftVersion,
-				"mode":          "draft",
-			})
-			return
-		}
-		// Selected revision is not an updatable human artifact; fall through to create one.
-	}
-
 	// listIndex == -1 means single slot (list_index IS NULL)
 	var existing orm.WorkflowSlotRevision
 	q := db.WithContext(ctx).Where("session_id = ? AND slot_id = ? AND selected = ?", sessionID, slotID, true)
@@ -226,12 +192,12 @@ func PatchSlotItemByIndex(w http.ResponseWriter, r *http.Request) {
 	if existing.ListIndex != nil {
 		slotType = "list"
 	}
-	newRev, err := WriteSlotRevisionWithHumanArtifact(ctx, db,
+	newRev, draftVersion, _, err := SaveHumanArtifactValue(ctx, db,
 		sessionID, slotID, existing.Slot, existing.StepID, existing.Attempt,
 		slotType,
 		liPtr,
-		body.ContentType, cleaned, body.Caption, "human", body.BaseRevision,
-		body.BaseDraftVersion,
+		body.ContentType, cleaned, body.Caption, body.BaseRevision,
+		body.BaseDraftVersion, mode == "draft",
 	)
 	if err != nil {
 		if replyDraftVersionPreconditionError(w, err) {
@@ -253,7 +219,7 @@ func PatchSlotItemByIndex(w http.ResponseWriter, r *http.Request) {
 		"slot_id":       slotID,
 		"list_index":    listIndex,
 		"revision":      newRev.Revision,
-		"draft_version": int64(1),
+		"draft_version": draftVersion,
 		"mode":          mode,
 	})
 }

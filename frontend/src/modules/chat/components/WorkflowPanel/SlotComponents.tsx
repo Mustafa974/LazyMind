@@ -1,3 +1,6 @@
+import { WriterProviderChoice } from "./DocumentProviderChoice";
+export { WriterProviderChoice } from "./DocumentProviderChoice";
+import { DocumentArtifactEditor } from "./DocumentArtifactEditor";
 import { useState, useCallback, useLayoutEffect, useRef, useEffect, useMemo, createContext, useContext } from "react";
 import ReactDOM from "react-dom";
 import type { SlotRevision, SlotVersionEntry, SlotWidgetConfig } from "@/modules/chat/store/workflowPanel";
@@ -62,9 +65,7 @@ import { SlotHtmlSlide } from './ppt/SlotHtmlSlide';
 import { SlotJsonSlide } from './ppt/SlotJsonSlide';
 import { isSlideSpecArtifact } from './ppt/slideSchema';
 import type { TaskArtifactStream } from '@/modules/chat/store/taskCenter';
-import { Image as AntImage, Modal, Radio, type RadioChangeEvent } from 'antd';
-import { FolderOpenOutlined, GithubOutlined } from '@ant-design/icons';
-import { cloudProviderOptions } from '@/modules/modelProvider/constants/cloudProviderOptions';
+import { Image as AntImage, Modal } from 'antd';
 import { isVideoArtifactValue } from './artifactMedia';
 
 export { SlotEditingContext } from './slotEditingContext';
@@ -2730,81 +2731,7 @@ function isWriterWriteBackDisabled(
 
 export type { WriterWriteBackProvider } from '@/modules/chat/utils/request';
 
-const writerWriteBackProviders = ['feishu', 'notion', 'github', 'wechat', 'obsidian'] as const;
-const obsidianLogoUrl = 'https://obsidian.md/images/obsidian-logo-gradient.svg';
-
-function ObsidianWriterProviderIcon() {
-  const [failed, setFailed] = useState(false);
-
-  return failed
-    ? <FolderOpenOutlined aria-hidden='true' />
-    : (
-      <img
-        src={obsidianLogoUrl}
-        alt=''
-        aria-hidden='true'
-        onError={() => setFailed(true)}
-      />
-    );
-}
-
-function writerWriteBackProvider(provider?: string): WriterWriteBackProvider {
-  return provider === 'notion' || provider === 'github' || provider === 'wechat' || provider === 'obsidian'
-    ? provider
-    : 'feishu';
-}
-
-export function WriterProviderChoice({
-  initialProvider,
-  githubEnabled,
-  onChange,
-}: {
-  initialProvider: WriterWriteBackProvider;
-  githubEnabled: boolean;
-  onChange: (provider: WriterWriteBackProvider) => void;
-}) {
-  const [value, setValue] = useState<WriterWriteBackProvider>(initialProvider);
-  const option = (provider: WriterWriteBackProvider) =>
-    provider === 'github'
-      ? undefined
-      : cloudProviderOptions.find((item) => item.type === provider);
-  return (
-    <div className='workflow-writer-provider-picker'>
-      <div className='workflow-writer-provider-picker__hint'>
-        {tr('chat.writerIR.providerPickerHint')}
-      </div>
-      <Radio.Group
-        value={value}
-        onChange={(event: RadioChangeEvent) => {
-          const next = event.target.value as WriterWriteBackProvider;
-          setValue(next);
-          onChange(next);
-        }}
-        className='workflow-writer-provider-picker__options'
-      >
-        {writerWriteBackProviders.map((item) => {
-          const config = option(item);
-          const disabled = item === 'github' && !githubEnabled;
-          return (
-            <Radio key={item} value={item} disabled={disabled}>
-              <span className='workflow-writer-provider-picker__option'>
-                {item === 'github'
-                  ? <GithubOutlined aria-hidden='true' />
-                  : item === 'obsidian'
-                    ? <ObsidianWriterProviderIcon />
-                  : config?.logoUrl
-                    ? <img src={config.logoUrl} alt='' aria-hidden='true' />
-                    : config?.icon}
-                <span>{tr(`chat.writerIR.providers.${item}`)}</span>
-                {disabled && <small>{tr('chat.writerIR.githubTargetRequired')}</small>}
-              </span>
-            </Radio>
-          );
-        })}
-      </Radio.Group>
-    </div>
-  );
-}
+function writerWriteBackProvider(provider?: string): WriterWriteBackProvider {return provider || 'feishu';}
 
 function useRegisterWriterWriteBack({
   enabled,
@@ -5396,6 +5323,9 @@ export function SlotRenderer({
     return <SlotPending type={expectedType ?? 'text'} cardMode={cardMode} />;
   }
 
+  if (slot.artifact_id && slot.document) {
+    return <DocumentArtifactEditor slot={slot} sessionId={sessionId ?? ''} readOnly={readOnly || widget?.readOnly} onRefresh={onRefresh} />;
+  }
   const effectiveReadOnly = readOnly || widget?.readOnly;
   const resolvedWidgetSlotId = slotId ?? slot.slot;
   if (

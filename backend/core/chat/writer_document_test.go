@@ -91,7 +91,7 @@ func TestWriterProviderTargetInUseReportsAccuratePartialSuccess(t *testing.T) {
 func TestValidateWriterDraftVersionUsesArtifactBacking(t *testing.T) {
 	for _, changeSource := range []string{"human", "provider_sync", "host"} {
 		t.Run(changeSource, func(t *testing.T) {
-			db := orm.MigrateTestDB(t, &orm.WorkflowHumanArtifact{})
+			db := orm.MigrateTestDB(t, &orm.DocumentPublicationOperation{}, &orm.DocumentPublicationBinding{}, &orm.WorkflowHumanArtifact{}, &orm.WorkflowSessionStep{}, &orm.WorkflowEvent{}, &orm.WorkflowAttemptInputBinding{}, &orm.WorkflowRouteDecision{}, &orm.WorkflowHumanArtifact{})
 			humanID := "artifact-" + changeSource
 			if err := db.Create(&orm.WorkflowHumanArtifact{
 				ID: humanID, SessionID: "session", Slot: "draft_document",
@@ -120,7 +120,7 @@ func TestValidateWriterDraftVersionUsesArtifactBacking(t *testing.T) {
 
 func TestSyncWriterDocumentPersistsProviderSyncRevision(t *testing.T) {
 	var providerCalls atomic.Int64
-	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	service := httptest.NewServer(adaptLegacyWriterFixture(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/v1/cloud/connections/internal/chat-enabled") &&
@@ -139,12 +139,12 @@ func TestSyncWriterDocumentPersistsProviderSyncRevision(t *testing.T) {
 		default:
 			_, _ = w.Write([]byte(`{"data":{"items":[]}}`))
 		}
-	}))
+	})))
 	t.Cleanup(service.Close)
 	t.Setenv("LAZYMIND_AUTH_SERVICE_URL", service.URL)
 	t.Setenv("LAZYMIND_CHAT_SERVICE_URL", service.URL)
 
-	db := orm.MigrateTestDB(t,
+	db := orm.MigrateTestDB(t, &orm.DocumentPublicationOperation{}, &orm.DocumentPublicationBinding{}, &orm.WorkflowHumanArtifact{}, &orm.WorkflowSessionStep{}, &orm.WorkflowEvent{}, &orm.WorkflowAttemptInputBinding{}, &orm.WorkflowRouteDecision{},
 		&orm.WorkflowSession{}, &orm.WorkflowSlotRevision{}, &orm.WorkflowHumanArtifact{},
 		&orm.WorkflowEvent{}, &orm.WorkflowAttemptInputBinding{}, &orm.WorkflowRouteDecision{},
 		&orm.UserModelProvider{}, &orm.UserModelProviderGroup{}, &orm.UserSelectedProvider{},
@@ -217,7 +217,7 @@ func TestSyncWriterDocumentPersistsProviderSyncRevision(t *testing.T) {
 		strings.NewReader(`{
 			"base_revision":1,"base_draft_version":1,"mode":"draft",
 			"source_document":{"document_id":"doc-1","provider_binding":{"provider":"notion","document_id":"page-1"},"blocks":[]},
-			"revised_document":{"document_id":"doc-1","provider_binding":{"provider":"notion","document_id":"page-1"},"blocks":[]}
+			"revised_document":{"document_id":"doc-1","title":"stale edit","provider_binding":{"provider":"notion","document_id":"page-1"},"blocks":[]}
 		}`),
 	)
 	staleReq.Header.Set("X-User-Id", "user-1")
@@ -366,7 +366,7 @@ func TestAttachWriterMediaURLs(t *testing.T) {
 	}
 	t.Setenv("LAZYMIND_UPLOAD_ROOT", uploadRoot)
 
-	db := orm.MigrateTestDB(t, &orm.WorkflowSlotRevision{})
+	db := orm.MigrateTestDB(t, &orm.DocumentPublicationOperation{}, &orm.DocumentPublicationBinding{}, &orm.WorkflowHumanArtifact{}, &orm.WorkflowSessionStep{}, &orm.WorkflowEvent{}, &orm.WorkflowAttemptInputBinding{}, &orm.WorkflowRouteDecision{}, &orm.WorkflowSlotRevision{})
 	digest := strings.Repeat("a", 64)
 	sourceURI := "https://example.test/diagram.png"
 	mediaArtifact, err := json.Marshal(map[string]any{
@@ -445,7 +445,7 @@ func TestAttachWriterMediaURLs(t *testing.T) {
 }
 
 func TestWriteBackWriterDocumentRequiresExplicitProvider(t *testing.T) {
-	db := orm.MigrateTestDB(t,
+	db := orm.MigrateTestDB(t, &orm.DocumentPublicationOperation{}, &orm.DocumentPublicationBinding{}, &orm.WorkflowHumanArtifact{}, &orm.WorkflowSessionStep{}, &orm.WorkflowEvent{}, &orm.WorkflowAttemptInputBinding{}, &orm.WorkflowRouteDecision{},
 		&orm.WorkflowSession{},
 		&orm.WorkflowSlotRevision{},
 		&orm.UserModelProvider{},
@@ -504,14 +504,18 @@ func TestWriteBackWriterDocumentRequiresExplicitProvider(t *testing.T) {
 }
 
 func TestWriteBackWriterDocumentUsesBoundGitHubProvider(t *testing.T) {
-	authService := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	requestedProvider := ""
+	authService := httptest.NewServer(adaptLegacyWriterFixture(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":{"items":[]}}`))
-	}))
+		requestedProvider = r.URL.Query().Get("provider")
+		w.WriteHeader(503)
+		_, _ = w.Write([]byte(`{"message":"fixture authorization unavailable"}`))
+	})))
 	t.Cleanup(authService.Close)
 	t.Setenv("LAZYMIND_AUTH_SERVICE_URL", authService.URL)
+	t.Setenv("LAZYMIND_CHAT_SERVICE_URL", authService.URL)
 
-	db := orm.MigrateTestDB(t,
+	db := orm.MigrateTestDB(t, &orm.DocumentPublicationOperation{}, &orm.DocumentPublicationBinding{}, &orm.WorkflowHumanArtifact{}, &orm.WorkflowSessionStep{}, &orm.WorkflowEvent{}, &orm.WorkflowAttemptInputBinding{}, &orm.WorkflowRouteDecision{},
 		&orm.WorkflowSession{}, &orm.WorkflowSlotRevision{},
 		&orm.UserModelProvider{}, &orm.UserModelProviderGroup{},
 		&orm.UserSelectedProvider{},
@@ -538,15 +542,15 @@ func TestWriteBackWriterDocumentUsesBoundGitHubProvider(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	WriteBackWriterDocument(recorder, req)
 
-	if recorder.Code != http.StatusBadRequest ||
-		!strings.Contains(recorder.Body.String(), "github_configuration_required") {
+	if recorder.Code != http.StatusBadGateway || requestedProvider != "github" ||
+		!strings.Contains(recorder.Body.String(), "PROVIDER_CREDENTIALS_UNAVAILABLE") {
 		t.Fatalf("unexpected GitHub credential response: %d %s", recorder.Code, recorder.Body.String())
 	}
 }
 
 func TestWriteBackWriterDocumentPersistsFirstMarkdownTarget(t *testing.T) {
 	actions := []string{}
-	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	service := httptest.NewServer(adaptLegacyWriterFixture(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/v1/cloud/connections/internal/chat-enabled") &&
@@ -586,12 +590,12 @@ func TestWriteBackWriterDocumentPersistsFirstMarkdownTarget(t *testing.T) {
 		default:
 			_, _ = w.Write([]byte(`{"data":{"items":[]}}`))
 		}
-	}))
+	})))
 	t.Cleanup(service.Close)
 	t.Setenv("LAZYMIND_AUTH_SERVICE_URL", service.URL)
 	t.Setenv("LAZYMIND_CHAT_SERVICE_URL", service.URL)
 
-	db := orm.MigrateTestDB(t,
+	db := orm.MigrateTestDB(t, &orm.DocumentPublicationOperation{}, &orm.DocumentPublicationBinding{}, &orm.WorkflowHumanArtifact{}, &orm.WorkflowSessionStep{}, &orm.WorkflowEvent{}, &orm.WorkflowAttemptInputBinding{}, &orm.WorkflowRouteDecision{},
 		&orm.WorkflowSession{}, &orm.WorkflowSlotRevision{}, &orm.WorkflowHumanArtifact{},
 		&orm.WorkflowEvent{}, &orm.WorkflowAttemptInputBinding{}, &orm.WorkflowRouteDecision{},
 		&orm.UserModelProvider{}, &orm.UserModelProviderGroup{}, &orm.UserSelectedProvider{},
@@ -655,7 +659,7 @@ func TestWriteBackWriterDocumentReportsProviderSuccessWhenLocalDraftChanged(t *t
 	providerStarted := make(chan struct{})
 	releaseProvider := make(chan struct{})
 	var providerOnce sync.Once
-	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	service := httptest.NewServer(adaptLegacyWriterFixture(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/v1/cloud/connections/internal/chat-enabled") &&
@@ -681,12 +685,12 @@ func TestWriteBackWriterDocumentReportsProviderSuccessWhenLocalDraftChanged(t *t
 		default:
 			_, _ = w.Write([]byte(`{"data":{"items":[]}}`))
 		}
-	}))
+	})))
 	t.Cleanup(service.Close)
 	t.Setenv("LAZYMIND_AUTH_SERVICE_URL", service.URL)
 	t.Setenv("LAZYMIND_CHAT_SERVICE_URL", service.URL)
 
-	db := orm.MigrateTestDB(t,
+	db := orm.MigrateTestDB(t, &orm.DocumentPublicationOperation{}, &orm.DocumentPublicationBinding{}, &orm.WorkflowHumanArtifact{}, &orm.WorkflowSessionStep{}, &orm.WorkflowEvent{}, &orm.WorkflowAttemptInputBinding{}, &orm.WorkflowRouteDecision{},
 		&orm.WorkflowSession{}, &orm.WorkflowSlotRevision{}, &orm.WorkflowHumanArtifact{},
 		&orm.UserModelProvider{}, &orm.UserModelProviderGroup{}, &orm.UserSelectedProvider{},
 	)
@@ -781,7 +785,8 @@ func TestWriteBackWriterDocumentReportsProviderSuccessWhenLocalDraftChanged(t *t
 
 func TestWriteBackWriterDocumentReportsProviderSuccessWhenArtifactIsInUse(t *testing.T) {
 	var providerCalls atomic.Int64
-	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var startConsumer func()
+	service := httptest.NewServer(adaptLegacyWriterFixture(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/v1/cloud/connections/internal/chat-enabled") &&
@@ -802,16 +807,17 @@ func TestWriteBackWriterDocumentReportsProviderSuccessWhenArtifactIsInUse(t *tes
 				_, _ = w.Write([]byte(`{"result":{"provider":"notion","format":"notion_blocks","content":[],"source_document":{"document_id":"local-1"},"media_references":{}}}`))
 				return
 			}
+			startConsumer() // The consumer starts after preflight and the external call.
 			_, _ = w.Write([]byte(`{"result":{"success":true,"changed":true,"provider_synced":true,"patch_result":{"success":true},"persisted_document":"# Published","representation":"markdown","provider":"notion","write_result":{"doc_id":"page-1"},"target_document":{"adapter":"notion","doc_id":"page-1","uri":"notion:/~page/page-1"}}}`))
 		default:
 			_, _ = w.Write([]byte(`{"data":{"items":[]}}`))
 		}
-	}))
+	})))
 	t.Cleanup(service.Close)
 	t.Setenv("LAZYMIND_AUTH_SERVICE_URL", service.URL)
 	t.Setenv("LAZYMIND_CHAT_SERVICE_URL", service.URL)
 
-	db := orm.MigrateTestDB(t,
+	db := orm.MigrateTestDB(t, &orm.DocumentPublicationOperation{}, &orm.DocumentPublicationBinding{}, &orm.WorkflowHumanArtifact{}, &orm.WorkflowSessionStep{}, &orm.WorkflowEvent{}, &orm.WorkflowAttemptInputBinding{}, &orm.WorkflowRouteDecision{},
 		&orm.WorkflowSession{}, &orm.WorkflowSlotRevision{}, &orm.WorkflowHumanArtifact{},
 		&orm.WorkflowSessionStep{}, &orm.WorkflowAttemptInputBinding{}, &orm.WorkflowRouteDecision{},
 		&orm.WorkflowEvent{}, &orm.UserModelProvider{}, &orm.UserModelProviderGroup{},
@@ -841,18 +847,21 @@ func TestWriteBackWriterDocumentReportsProviderSuccessWhenArtifactIsInUse(t *tes
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Create(&orm.WorkflowSessionStep{
-		ID: "running-consumer", SessionID: "session", StepID: "consumer", Attempt: 1,
-		TaskID: "consumer-task", Status: "running", Validity: "effective", CreatedAt: now, UpdatedAt: now,
-	}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&orm.WorkflowAttemptInputBinding{
-		ID: "running-binding", SessionID: "session", AttemptID: "running-consumer",
-		MaterialID: "draft_document", MaterialRevisionID: "revision-1",
-		SourceType: "artifact", CreatedAt: now,
-	}).Error; err != nil {
-		t.Fatal(err)
+	startConsumer = func() {
+		if err := db.Create(&orm.WorkflowSessionStep{
+			ID: "running-consumer", SessionID: "session", StepID: "consumer", Attempt: 1,
+			TaskID: "consumer-task", Status: "running", Validity: "effective", CreatedAt: now, UpdatedAt: now,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Create(&orm.WorkflowAttemptInputBinding{
+			ID: "running-binding", SessionID: "session", AttemptID: "running-consumer",
+			MaterialID: "draft_document", MaterialRevisionID: "revision-1",
+			SourceType: "artifact", CreatedAt: now,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+
 	}
 
 	req := httptest.NewRequest(
@@ -937,15 +946,15 @@ func TestWriteBackWriterDocumentRejectsInvalidDraftBaselineBeforeProviderCall(t 
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			var providerCalls atomic.Int64
-			service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			service := httptest.NewServer(adaptLegacyWriterFixture(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				providerCalls.Add(1)
 				w.WriteHeader(http.StatusInternalServerError)
-			}))
+			})))
 			t.Cleanup(service.Close)
 			t.Setenv("LAZYMIND_AUTH_SERVICE_URL", service.URL)
 			t.Setenv("LAZYMIND_CHAT_SERVICE_URL", service.URL)
 
-			db := orm.MigrateTestDB(t,
+			db := orm.MigrateTestDB(t, &orm.DocumentPublicationOperation{}, &orm.DocumentPublicationBinding{}, &orm.WorkflowHumanArtifact{}, &orm.WorkflowSessionStep{}, &orm.WorkflowEvent{}, &orm.WorkflowAttemptInputBinding{}, &orm.WorkflowRouteDecision{},
 				&orm.WorkflowSession{}, &orm.WorkflowSlotRevision{}, &orm.WorkflowHumanArtifact{},
 				&orm.UserModelProvider{}, &orm.UserModelProviderGroup{}, &orm.UserSelectedProvider{},
 			)
@@ -1006,7 +1015,7 @@ func TestWriteBackWriterDocumentRejectsInvalidDraftBaselineBeforeProviderCall(t 
 }
 
 func TestRenderWriterDocumentKeepsIRCanonicalForPinnedWorkflow(t *testing.T) {
-	chatService := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	chatService := httptest.NewServer(adaptLegacyWriterFixture(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"result": map[string]any{
 				"title":          "Document",
@@ -1024,11 +1033,11 @@ func TestRenderWriterDocumentKeepsIRCanonicalForPinnedWorkflow(t *testing.T) {
 				},
 			},
 		})
-	}))
+	})))
 	t.Cleanup(chatService.Close)
 	t.Setenv("LAZYMIND_CHAT_SERVICE_URL", chatService.URL)
 
-	db := orm.MigrateTestDB(t,
+	db := orm.MigrateTestDB(t, &orm.DocumentPublicationOperation{}, &orm.DocumentPublicationBinding{}, &orm.WorkflowHumanArtifact{}, &orm.WorkflowSessionStep{}, &orm.WorkflowEvent{}, &orm.WorkflowAttemptInputBinding{}, &orm.WorkflowRouteDecision{},
 		&orm.WorkflowSession{},
 		&orm.WorkflowSlotRevision{},
 		&orm.WorkflowHumanArtifact{},
@@ -1090,7 +1099,7 @@ func TestRenderWriterDocumentKeepsIRCanonicalForPinnedWorkflow(t *testing.T) {
 }
 
 func TestSaveWriterDocumentDraftUpdatesInPlaceAndCheckpointCreatesRevision(t *testing.T) {
-	chatService := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	chatService := httptest.NewServer(adaptLegacyWriterFixture(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/workflow/actions:invoke" {
 			t.Errorf("path = %q, want workflow action invoke", r.URL.Path)
 			http.NotFound(w, r)
@@ -1121,11 +1130,11 @@ func TestSaveWriterDocumentDraftUpdatesInPlaceAndCheckpointCreatesRevision(t *te
 				"title":           "Draft",
 			},
 		})
-	}))
+	})))
 	t.Cleanup(chatService.Close)
 	t.Setenv("LAZYMIND_CHAT_SERVICE_URL", chatService.URL)
 
-	db := orm.MigrateTestDB(t,
+	db := orm.MigrateTestDB(t, &orm.DocumentPublicationOperation{}, &orm.DocumentPublicationBinding{}, &orm.WorkflowHumanArtifact{}, &orm.WorkflowSessionStep{}, &orm.WorkflowEvent{}, &orm.WorkflowAttemptInputBinding{}, &orm.WorkflowRouteDecision{},
 		&orm.WorkflowSession{},
 		&orm.WorkflowSlotRevision{},
 		&orm.WorkflowHumanArtifact{},
@@ -1482,7 +1491,7 @@ func TestWriterGitHubSyncedMarkdownUnchanged(t *testing.T) {
 }
 
 func TestLoadWriterWriteBackBaseline_UsesSourceDocumentForInitialSync(t *testing.T) {
-	db := orm.MigrateTestDB(t, &orm.WorkflowSlotRevision{})
+	db := orm.MigrateTestDB(t, &orm.DocumentPublicationOperation{}, &orm.DocumentPublicationBinding{}, &orm.WorkflowHumanArtifact{}, &orm.WorkflowSessionStep{}, &orm.WorkflowEvent{}, &orm.WorkflowAttemptInputBinding{}, &orm.WorkflowRouteDecision{}, &orm.WorkflowSlotRevision{})
 	source := json.RawMessage(`{"data":{"document_id":"feishu-doc","provider_binding":{"provider":"feishu","document_id":"feishu-doc"}}}`)
 	seedWriterRevision(t, db, "source", "source_document", 1, true, "ai", source)
 	seedWriterRevision(t, db, "draft-1", "draft_document", 1, false, "ai", source)
@@ -1501,7 +1510,7 @@ func TestLoadWriterWriteBackBaseline_UsesSourceDocumentForInitialSync(t *testing
 }
 
 func TestLoadWriterWriteBackBaseline_PrefersLatestSyncedDraft(t *testing.T) {
-	db := orm.MigrateTestDB(t, &orm.WorkflowSlotRevision{})
+	db := orm.MigrateTestDB(t, &orm.DocumentPublicationOperation{}, &orm.DocumentPublicationBinding{}, &orm.WorkflowHumanArtifact{}, &orm.WorkflowSessionStep{}, &orm.WorkflowEvent{}, &orm.WorkflowAttemptInputBinding{}, &orm.WorkflowRouteDecision{}, &orm.WorkflowSlotRevision{})
 	source := json.RawMessage(`{"data":{"document_id":"source-doc","provider_binding":{"provider":"feishu","document_id":"source-doc"}}}`)
 	syncedDraft := json.RawMessage(`{"data":{"document_id":"synced-doc","provider_binding":{"provider":"feishu","document_id":"synced-doc"}},"meta":{"lazymind_provider_sync":{"confirmed":true}}}`)
 	seedWriterRevision(t, db, "source", "source_document", 1, true, "ai", source)

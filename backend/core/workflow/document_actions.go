@@ -212,6 +212,12 @@ func runDocumentAction(w http.ResponseWriter, r *http.Request, phase string) {
 		return
 	}
 	switch dispatch.Action {
+	case "publish_document":
+		if phase != "execute" {
+			replyDocumentFailure(w, documentFailure("DOCUMENT_ACTION_UNSUPPORTED", 422))
+			return
+		}
+		runDocumentPublication(w, r, owner, raw)
 	case "rewrite_selection":
 		runDocumentRewrite(w, r, phase, owner, raw)
 	case "cross_reference":

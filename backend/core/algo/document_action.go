@@ -14,6 +14,7 @@ type DocumentActionInvokeRequest struct {
 	Artifact      json.RawMessage `json:"artifact"`
 	Arguments     any             `json:"arguments"`
 	ArtifactStore string          `json:"artifact_store"`
+	ToolConfig    map[string]any  `json:"tool_config,omitempty"`
 	LLMConfig     map[string]any  `json:"llm_config,omitempty"`
 }
 

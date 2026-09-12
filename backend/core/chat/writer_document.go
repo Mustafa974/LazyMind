@@ -2,6 +2,8 @@ package chat
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -17,7 +20,6 @@ import (
 	"lazymind/core/common"
 	"lazymind/core/common/orm"
 	"lazymind/core/doc"
-	"lazymind/core/log"
 	"lazymind/core/modelconfig"
 	"lazymind/core/store"
 	"lazymind/core/workflow"
@@ -118,14 +120,7 @@ func writerProviderRequiresToolConfig(provider string) bool {
 	return modelconfig.IsCloudToolProvider(canonicalWriterProvider(provider))
 }
 
-func writerDocumentProviderSupported(provider string) bool {
-	switch canonicalWriterProvider(provider) {
-	case "feishu", "notion", "wechat", "github", "obsidian":
-		return true
-	default:
-		return false
-	}
-}
+func writerDocumentProviderSupported(provider string) bool { return strings.TrimSpace(provider) != "" }
 
 func writerDocumentSlot(slot string) (string, bool) {
 	if slot == "" {
@@ -145,168 +140,83 @@ func writerDocumentRenderSlot(slot string) (string, bool) {
 // the provider-confirmed document as a human artifact revision.
 func SyncWriterDocument(w http.ResponseWriter, r *http.Request) {
 	sessionID, slotID := common.PathVar(r, "session_id"), common.PathVar(r, "slot_id")
-	listIndex, err := strconv.Atoi(common.PathVar(r, "list_index"))
-	if err != nil || listIndex < -1 || sessionID == "" || slotID == "" {
-		common.ReplyErr(w, "invalid request", http.StatusBadRequest)
+	index, err := strconv.Atoi(common.PathVar(r, "list_index"))
+	if err != nil || index < -1 {
+		common.ReplyErr(w, "invalid request", 400)
 		return
 	}
-
+	r.Body = http.MaxBytesReader(w, r.Body, 20<<20)
 	var body writerDocumentSyncBody
-	if json.NewDecoder(r.Body).Decode(&body) != nil ||
-		len(body.SourceDocument) == 0 || len(body.RevisedDocument) == 0 {
-		common.ReplyErr(w, "invalid body", http.StatusBadRequest)
+	if json.NewDecoder(r.Body).Decode(&body) != nil || len(body.SourceDocument) == 0 || len(body.RevisedDocument) == 0 {
+		common.ReplyErr(w, "invalid body", 400)
 		return
 	}
-	if body.BaseRevision <= 0 {
+	if body.BaseRevision < 1 {
 		replyWriterRevisionRequired(w)
 		return
 	}
-	mode := body.Mode
-	if mode == "" {
-		mode = "checkpoint"
-	}
-	if mode != "draft" && mode != "checkpoint" {
-		common.ReplyErr(w, "invalid mode: must be draft or checkpoint", http.StatusBadRequest)
-		return
-	}
-
 	db := store.DB()
+	owner := strings.TrimSpace(store.UserID(r))
+	if owner == "" {
+		common.ReplyErr(w, "missing X-User-Id", 400)
+		return
+	}
 	if db == nil {
-		common.ReplyErr(w, "store not initialized", http.StatusInternalServerError)
+		common.ReplyErr(w, "store not initialized", 500)
 		return
 	}
-	ctx := r.Context()
-	userID := strings.TrimSpace(store.UserID(r))
-	if userID == "" {
-		common.ReplyErr(w, "missing X-User-Id", http.StatusBadRequest)
+	session, err := workflow.GetSession(r.Context(), db, sessionID)
+	if err != nil || session.WorkflowID != "writer-workflow" || session.CreateUserID != owner || session.Dismissed {
+		common.ReplyErr(w, "writer session not found", 404)
 		return
-	}
-	session, err := workflow.GetSession(ctx, db, sessionID)
-	if err != nil || session == nil || session.WorkflowID != "writer-workflow" || session.Dismissed ||
-		(strings.TrimSpace(session.CreateUserID) == "" || session.CreateUserID != userID) {
-		common.ReplyErr(w, "writer session not found", http.StatusNotFound)
-		return
-	}
-	var index *int
-	if listIndex >= 0 {
-		index = &listIndex
 	}
 	var current orm.WorkflowSlotRevision
-	query := db.WithContext(ctx).Where(
-		"session_id = ? AND slot_id = ? AND selected = ?", sessionID, slotID, true,
-	)
-	if index == nil {
-		query = query.Where("list_index IS NULL")
+	q := db.WithContext(r.Context()).Where("session_id = ? AND slot_id = ?", sessionID, slotID)
+	if index < 0 {
+		q = q.Where("list_index IS NULL")
 	} else {
-		query = query.Where("list_index = ?", listIndex)
+		q = q.Where("list_index = ?", index)
 	}
-	if query.First(&current).Error != nil {
-		common.ReplyErr(w, "slot revision not found", http.StatusNotFound)
+	if q.Session(&gorm.Session{}).Where("selected = ?", true).First(&current).Error != nil {
+		common.ReplyErr(w, "slot revision not found", 404)
 		return
 	}
 	if current.Revision != body.BaseRevision {
-		replyWriterRevisionConflict(w, current.Revision)
-		return
-	}
-	if err := validateWriterDraftVersion(ctx, db, current, body.BaseDraftVersion); err != nil {
-		if !replyWriterDraftVersionError(w, err) {
-			common.ReplyErr(w, "load draft version failed", http.StatusInternalServerError)
+		var original orm.WorkflowSlotRevision
+		err := q.Session(&gorm.Session{}).Where("revision = ?", body.BaseRevision).First(&original).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			replyWriterRevisionConflict(w, current.Revision)
+			return
 		}
-		return
-	}
-
-	provider := writerDocumentProvider(body.SourceDocument, body.RevisedDocument)
-	if provider == "" {
-		common.ReplyErrWithData(w, "bound provider required", map[string]any{
-			"code": "PROVIDER_BINDING_REQUIRED", "retryable": false,
-		}, http.StatusConflict)
-		return
-	}
-	var (
-		providerConfig map[string]any
-		ok             bool
-	)
-	if writerProviderRequiresToolConfig(provider) {
-		toolConfig, err := modelconfig.LoadWriterProviderToolConfig(ctx, provider, userID)
 		if err != nil {
-			common.ReplyErr(w, "load cloud document authorization failed", http.StatusBadGateway)
+			common.ReplyErr(w, "slot revision not found", 404)
 			return
 		}
-		providerConfig, ok = writerProviderToolConfig(toolConfig, provider)
-		if !ok {
-			common.ReplyErrWithData(w, "cloud document authorization required", map[string]any{
-				"status": provider + "_configuration_required", "provider": provider,
-			}, http.StatusUnauthorized)
-			return
-		}
+		current = original
 	}
-	result, status, err := algo.SyncWriterDocument(ctx, algo.WriterDocumentSyncRequest{
-		WorkflowID: session.WorkflowID, RevisionID: session.WorkflowRevisionID,
-		TreeHash: session.WorkflowTreeHash, UserID: userID,
-		SourceDocument: body.SourceDocument, RevisedDocument: body.RevisedDocument,
-		ToolConfig: providerConfig,
-	})
+	raw, err := workflow.LoadSlotRevisionValue(r.Context(), db, current)
 	if err != nil {
-		common.ReplyErrWithData(w, "writer document sync failed", writerActionErrorData(err, map[string]any{
-			"status": "sync_failed", "provider_synced": false, "artifact_saved": false,
-		}), writerSyncStatus(status))
+		common.ReplyErr(w, "slot revision not found", 404)
 		return
 	}
-	if !result.Success || !result.ProviderSynced || len(result.PersistedDocument) == 0 {
-		common.ReplyErr(w, "writer document sync failed", http.StatusBadGateway)
-		return
-	}
-	// Draft with no Feishu delta: nothing to persist. Checkpoint still wants a
-	// versioned snapshot even when the provider reports no_change.
-	if !result.Changed && mode != "checkpoint" {
-		writerSyncReply(
-			w, "no_change", current.Revision,
-			draftVersionValue(body.BaseDraftVersion), false, result,
-		)
-		return
-	}
-
-	artifact, err := json.Marshal(map[string]any{
-		"schema":         "lazyllm.tools.writer.data_models.writer_ir.WriterDocument",
-		"schema_version": "0.1",
-		"data":           result.PersistedDocument,
-		"meta": map[string]any{
-			"created_by": "writer-sync-api", "created_at": time.Now().UTC().Format(time.RFC3339Nano),
-		},
-	})
+	server, err := writerArtifactData(raw, true)
 	if err != nil {
-		common.ReplyErr(w, "marshal WriterDocument artifact failed", http.StatusInternalServerError)
+		common.ReplyErr(w, "invalid body", 400)
 		return
 	}
-
-	cardinality := "single"
-	if current.ListIndex != nil {
-		cardinality = "list"
-	}
-	revision, createErr := workflow.WriteSlotRevisionWithHumanArtifact(
-		ctx, db, sessionID, slotID, current.Slot, current.StepID, current.Attempt,
-		cardinality, index, "json", artifact, nil,
-		"provider_sync", &body.BaseRevision, body.BaseDraftVersion,
-	)
-	if createErr != nil {
-		if errors.Is(createErr, workflow.ErrConflict) ||
-			errors.Is(createErr, workflow.ErrDraftVersionConflict) ||
-			errors.Is(createErr, workflow.ErrDraftVersionRequired) ||
-			errors.Is(createErr, workflow.ErrArtifactInUse) {
-			replyWriterProviderLocalConflict(w, current.Revision, result)
-			return
-		}
-		common.ReplyErrWithData(w, "artifact save failed", map[string]any{
-			"status": "artifact_save_failed", "provider_synced": true, "artifact_saved": false,
-			"patch_result": result.PatchResult, "document": result.PersistedDocument,
-		}, http.StatusInternalServerError)
+	if !sameWriterPublicationIdentity(server, body.SourceDocument) || !sameWriterPublicationIdentity(server, body.RevisedDocument) {
+		common.ReplyErrWithData(w, "writer document sync failed", map[string]any{"code": "PROVIDER_BINDING_CONFLICT", "retryable": false}, 409)
 		return
 	}
-	workflow.NotifyWorkflowArtifactUpdated(
-		ctx, db, sessionID, revision.StepID, revision.SlotID, revision.Slot,
-		revision.Revision, revision.ListIndex, "provider_sync",
-	)
-	writerSyncReply(w, "synced", revision.Revision, 1, true, result)
+	provider := writerDocumentProvider(server)
+	if provider == "" {
+		common.ReplyErrWithData(w, "bound provider required", map[string]any{"code": "PROVIDER_BINDING_REQUIRED", "retryable": false}, 409)
+		return
+	}
+	key := legacyWriterPublicationKey(owner, sessionID, slotID, body)
+	request := workflow.DocumentPublishRequest{Action: "publish_document", BaseRevision: &body.BaseRevision, BaseDraftVersion: body.BaseDraftVersion, Input: &workflow.DocumentPublishInput{Provider: provider, Mode: "replace", IdempotencyKey: key}}
+	result, operation, err := workflow.PublishDocumentArtifact(r.Context(), db, owner, current.ID, request, &workflow.DocumentPublicationOptions{Candidate: body.RevisedDocument, SkipUnchangedDraft: body.Mode == "draft"})
+	workflow.ReplyDocumentPublication(w, result, operation, err)
 }
 
 // RenderWriterDocument renders a source, outline, or draft with automatic numbering.
@@ -340,7 +250,7 @@ func RenderWriterDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	session, err := workflow.GetSession(ctx, db, sessionID)
 	if err != nil || session == nil || session.WorkflowID != "writer-workflow" || session.Dismissed ||
-		(session.CreateUserID != "" && session.CreateUserID != userID) {
+		(session.CreateUserID == "" || session.CreateUserID != userID) {
 		common.ReplyErr(w, "writer session not found", http.StatusNotFound)
 		return
 	}
@@ -349,16 +259,10 @@ func RenderWriterDocument(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "active "+slot+" not found", http.StatusNotFound)
 		return
 	}
-	response, status, err := algo.InvokeWorkflowAction(ctx, algo.WorkflowActionInvokeRequest{
-		WorkflowID: session.WorkflowID,
-		RevisionID: session.WorkflowRevisionID,
-		TreeHash:   session.WorkflowTreeHash,
-		UserID:     userID,
-		Action:     "render_document",
-		Phase:      "execute",
-		Slot:       slot,
-		Artifact:   draft.Value,
-		Arguments:  map[string]any{},
+	response, status, err := algo.InvokeDocumentAction(ctx, algo.DocumentActionInvokeRequest{
+		Reference: "builtin:document.render_document.v1", Phase: "preview",
+		Artifact:  draft.Value,
+		Arguments: map[string]any{},
 	})
 	if err != nil {
 		if status < 400 || status > 599 {
@@ -433,7 +337,7 @@ func SaveWriterDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	session, err := workflow.GetSession(ctx, db, sessionID)
 	if err != nil || session == nil || session.WorkflowID != "writer-workflow" || session.Dismissed ||
-		(session.CreateUserID != "" && session.CreateUserID != userID) {
+		(session.CreateUserID == "" || session.CreateUserID != userID) {
 		common.ReplyErr(w, "writer session not found", http.StatusNotFound)
 		return
 	}
@@ -461,16 +365,9 @@ func SaveWriterDocument(w http.ResponseWriter, r *http.Request) {
 	if len(body.NumberingUpdate) > 0 {
 		arguments["numbering_update"] = body.NumberingUpdate
 	}
-	response, status, err := algo.InvokeWorkflowAction(ctx, algo.WorkflowActionInvokeRequest{
-		WorkflowID: session.WorkflowID,
-		RevisionID: session.WorkflowRevisionID,
-		TreeHash:   session.WorkflowTreeHash,
-		UserID:     userID,
-		Action:     "save_document",
-		Phase:      "execute",
-		Slot:       slot,
-		Artifact:   editedArtifact,
-		Arguments:  arguments,
+	response, status, err := algo.InvokeDocumentAction(ctx, algo.DocumentActionInvokeRequest{Reference: "builtin:document.save_document.v1", Phase: "execute",
+		Artifact:  editedArtifact,
+		Arguments: arguments,
 	})
 	if err != nil {
 		if status < 400 || status > 599 {
@@ -530,29 +427,10 @@ func SaveWriterDocument(w http.ResponseWriter, r *http.Request) {
 	if unchangedGitHubSync {
 		revision = &draft.Revision
 		draftVersion = draftVersionValue(body.BaseDraftVersion)
-	} else if mode == "draft" {
-		updated, updatedDraftVersion, updatedInPlace, updateErr := workflow.UpdateSelectedHumanArtifactValue(
-			ctx, db, sessionID, draft.Revision.SlotID, nil,
-			"json", artifact, nil, &body.BaseRevision, body.BaseDraftVersion,
-		)
-		if updateErr != nil {
-			err = updateErr
-		} else if updatedInPlace {
-			revision = updated
-			draftVersion = updatedDraftVersion
-		}
+	} else {
+		revision, draftVersion, _, err = workflow.SaveHumanArtifactValue(ctx, db, sessionID, draft.Revision.SlotID, draft.Revision.Slot, draft.Revision.StepID, draft.Revision.Attempt, "single", nil, "json", artifact, nil, &body.BaseRevision, body.BaseDraftVersion, mode == "draft")
 	}
-	if revision == nil && err == nil {
-		revision, err = workflow.WriteSlotRevisionWithHumanArtifact(
-			ctx, db, sessionID, draft.Revision.SlotID, draft.Revision.Slot,
-			draft.Revision.StepID, draft.Revision.Attempt, "single", nil,
-			"json", artifact, nil,
-			"human", &body.BaseRevision, body.BaseDraftVersion,
-		)
-		if err == nil {
-			draftVersion = 1
-		}
-	}
+
 	if err != nil {
 		if replyWriterDraftVersionError(w, err) {
 			return
@@ -598,349 +476,84 @@ func SaveWriterDocument(w http.ResponseWriter, r *http.Request) {
 // provider and saves the provider-confirmed IR as a new revision.
 func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 	sessionID := common.PathVar(r, "session_id")
-	if sessionID == "" {
-		common.ReplyErr(w, "session_id required", http.StatusBadRequest)
-		return
-	}
 	var body writerDocumentWriteBackBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		log.Logger.Warn().Err(err).Str("session_id", sessionID).
-			Int64("content_length", r.ContentLength).
-			Msg("decode writer document write-back request failed")
-		common.ReplyErr(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+	r.Body = http.MaxBytesReader(w, r.Body, 20<<20)
+	if json.NewDecoder(r.Body).Decode(&body) != nil {
+		common.ReplyErr(w, "invalid body", 400)
 		return
 	}
-	if body.BaseRevision <= 0 {
-		log.Logger.Warn().Str("session_id", sessionID).Int("base_revision", body.BaseRevision).
-			Msg("invalid writer document write-back base revision")
+	if body.BaseRevision < 1 {
 		replyWriterRevisionRequired(w)
 		return
 	}
 	slot, ok := writerDocumentSlot(body.Slot)
 	if !ok || slot == "outline_document" {
-		common.ReplyErr(w, "invalid body", http.StatusBadRequest)
+		common.ReplyErr(w, "invalid body", 400)
 		return
 	}
 	db := store.DB()
+	owner := strings.TrimSpace(store.UserID(r))
+	if owner == "" {
+		common.ReplyErr(w, "missing X-User-Id", 400)
+		return
+	}
 	if db == nil {
-		common.ReplyErr(w, "store not initialized", http.StatusInternalServerError)
+		common.ReplyErr(w, "store not initialized", 500)
 		return
 	}
-	ctx := r.Context()
-	userID := strings.TrimSpace(store.UserID(r))
-	if userID == "" {
-		common.ReplyErr(w, "missing X-User-Id", http.StatusBadRequest)
+	session, err := workflow.GetSession(r.Context(), db, sessionID)
+	if err != nil || session.WorkflowID != "writer-workflow" || session.CreateUserID != owner || session.Dismissed {
+		common.ReplyErr(w, "writer session not found", 404)
 		return
 	}
-	session, err := workflow.GetSession(ctx, db, sessionID)
-	if err != nil || session == nil || session.WorkflowID != "writer-workflow" || session.Dismissed {
-		common.ReplyErr(w, "writer session not found", http.StatusNotFound)
-		return
-	}
-	if strings.TrimSpace(session.CreateUserID) == "" || session.CreateUserID != userID {
-		common.ReplyErr(w, "writer session not found", http.StatusNotFound)
-		return
-	}
-	draft, err := loadSelectedWriterArtifact(ctx, db, sessionID, slot)
+	draft, err := loadSelectedWriterArtifact(r.Context(), db, sessionID, slot)
 	if err != nil {
-		common.ReplyErr(w, "active "+slot+" not found", http.StatusNotFound)
+		common.ReplyErr(w, "writer session not found", 404)
 		return
 	}
 	if draft.Revision.Revision != body.BaseRevision {
-		replyWriterRevisionConflict(w, draft.Revision.Revision)
-		return
-	}
-	if err := validateWriterDraftVersion(ctx, db, draft.Revision, body.BaseDraftVersion); err != nil {
-		if !replyWriterDraftVersionError(w, err) {
-			common.ReplyErr(w, "load draft version failed", http.StatusInternalServerError)
-		}
-		return
-	}
-	activeDraft, err := loadWriterWriteBackArtifact(draft.Value)
-	if err != nil {
-		common.ReplyErr(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if writerArtifactRevisionSynced(draft) {
-		common.ReplyErrWithData(w, fmt.Sprintf("current %s revision is already synchronized", slot), map[string]any{
-			"status": "already_synced", "current_revision": draft.Revision.Revision,
-		}, http.StatusConflict)
-		return
-	}
-	provider := canonicalWriterProvider(body.Provider)
-	if provider != "" && !writerDocumentProviderSupported(provider) {
-		common.ReplyErr(w, "unsupported writer document provider", http.StatusBadRequest)
-		return
-	}
-	syncRequest := algo.WriterDocumentSyncRequest{
-		WorkflowID: session.WorkflowID, RevisionID: session.WorkflowRevisionID,
-		TreeHash: session.WorkflowTreeHash, UserID: userID,
-		Template: strings.TrimSpace(body.Template),
-	}
-	var targetArtifact *selectedWriterArtifact
-	mediaSlot := "resolved_media_assets"
-	if slot == "flat_draft_document" {
-		mediaSlot = "flat_resolved_media_assets"
-	}
-	if activeDraft.Format == "markdown" {
-		target, targetErr := loadSelectedWriterArtifact(ctx, db, sessionID, "target_document")
-		if targetErr == nil {
-			targetArtifact = target
-			syncRequest.TargetDocument, err = writerArtifactData(target.Value, false)
-			if err != nil {
-				common.ReplyErr(w, "invalid target_document: "+err.Error(), http.StatusConflict)
-				return
-			}
-		} else if targetErr != gorm.ErrRecordNotFound {
-			common.ReplyErr(w, "load target_document failed", http.StatusInternalServerError)
+		var source orm.WorkflowSlotRevision
+		err = db.WithContext(r.Context()).Where("session_id = ? AND slot_id = ? AND list_index IS NULL AND revision = ?", sessionID, slot, body.BaseRevision).First(&source).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			replyWriterRevisionConflict(w, draft.Revision.Revision)
 			return
 		}
-		syncRequest.MarkdownContent = activeDraft.Markdown
-		syncRequest.Title = activeDraft.Title
-		mediaAssets, mediaErr := loadSelectedWriterArtifact(ctx, db, sessionID, mediaSlot)
-		if mediaErr == nil {
-			syncRequest.MediaAssets, mediaErr = writerArtifactData(mediaAssets.Value, false)
-			if mediaErr != nil {
-				common.ReplyErr(w, "invalid resolved_media_assets", http.StatusConflict)
-				return
-			}
-		} else if !errors.Is(mediaErr, gorm.ErrRecordNotFound) {
-			common.ReplyErr(w, "load resolved_media_assets failed", http.StatusInternalServerError)
-			return
+		if err == nil {
+			draft, err = loadWriterArtifactRevision(r.Context(), db, source)
 		}
-	} else {
-		revisedDocument, normalizeErr := normalizeWriterDocumentForSync(activeDraft.Document)
-		if normalizeErr != nil {
-			common.ReplyErr(w, "invalid current WriterDocument: "+normalizeErr.Error(), http.StatusBadRequest)
-			return
-		}
-		mediaAssets, mediaErr := loadSelectedWriterArtifact(ctx, db, sessionID, mediaSlot)
-		if mediaErr == nil {
-			syncRequest.MediaAssets, mediaErr = writerArtifactData(mediaAssets.Value, false)
-			if mediaErr != nil {
-				common.ReplyErr(w, "invalid resolved_media_assets", http.StatusConflict)
-				return
-			}
-		} else if !errors.Is(mediaErr, gorm.ErrRecordNotFound) {
-			common.ReplyErr(w, "load resolved_media_assets failed", http.StatusInternalServerError)
-			return
-		}
-		if writerDocumentIsUnbound(revisedDocument) {
-			syncRequest.RevisedDocument = revisedDocument
-		} else {
-			baseline, baselineErr := loadWriterWriteBackBaseline(
-				ctx, db, sessionID, slot, draft.Revision.Revision,
-			)
-			if baselineErr != nil {
-				common.ReplyErrWithData(w, "initial provider write-back has not completed", map[string]any{
-					"status": "baseline_not_found", "current_revision": draft.Revision.Revision,
-				}, http.StatusConflict)
-				return
-			}
-			baselineDocument, baselineErr := writerArtifactData(baseline.Value, true)
-			if baselineErr != nil {
-				common.ReplyErr(w, "invalid synchronized WriterDocument baseline", http.StatusConflict)
-				return
-			}
-			baselineDocument, baselineErr = normalizeWriterDocumentForSync(baselineDocument)
-			if baselineErr != nil {
-				common.ReplyErr(w, "invalid synchronized WriterDocument baseline", http.StatusConflict)
-				return
-			}
-			revisedDocument, normalizeErr = preserveExistingWriterImageBlocks(
-				baselineDocument, revisedDocument,
-			)
-			if normalizeErr != nil {
-				common.ReplyErr(w, "invalid current WriterDocument: "+normalizeErr.Error(), http.StatusBadRequest)
-				return
-			}
-			if pairErr := validateWriterWriteBackPair(baselineDocument, revisedDocument); pairErr != nil {
-				common.ReplyErr(w, pairErr.Error(), http.StatusConflict)
-				return
-			}
-			syncRequest.SourceDocument = baselineDocument
-			syncRequest.RevisedDocument = revisedDocument
-		}
-	}
-	boundProvider := writerDocumentProvider(
-		syncRequest.SourceDocument,
-		syncRequest.RevisedDocument,
-		syncRequest.TargetDocument,
-	)
-	if provider == "" {
-		provider = boundProvider
-	}
-	if provider == "" {
-		common.ReplyErrWithData(w, "writer document provider selection required", map[string]any{
-			"status":    "provider_selection_required",
-			"code":      "PROVIDER_SELECTION_REQUIRED",
-			"retryable": false,
-		}, http.StatusBadRequest)
-		return
-	}
-	if !writerDocumentProviderSupported(provider) {
-		common.ReplyErr(w, "unsupported writer document provider", http.StatusBadRequest)
-		return
-	}
-	if boundProvider != "" && provider != boundProvider {
-		if len(syncRequest.RevisedDocument) > 0 {
-			unbound, unbindErr := unbindWriterDocument(syncRequest.RevisedDocument)
-			if unbindErr != nil {
-				common.ReplyErr(w, "invalid current WriterDocument: "+unbindErr.Error(), http.StatusBadRequest)
-				return
-			}
-			syncRequest.RevisedDocument = unbound
-		}
-		syncRequest.SourceDocument = nil
-		syncRequest.TargetDocument = nil
-	}
-	syncRequest.Adapter = provider
-	var providerConfig map[string]any
-	if writerProviderRequiresToolConfig(provider) {
-		toolConfig, err := modelconfig.LoadWriterProviderToolConfig(ctx, provider, userID)
 		if err != nil {
-			common.ReplyErr(w, "load cloud document authorization failed", http.StatusBadGateway)
-			return
-		}
-		providerConfig, ok = writerProviderToolConfig(toolConfig, provider)
-		if !ok {
-			common.ReplyErrWithData(w, "cloud document authorization required", map[string]any{
-				"status": provider + "_configuration_required", "provider": provider,
-			}, http.StatusBadRequest)
+			common.ReplyErr(w, "writer session not found", 404)
 			return
 		}
 	}
-	syncRequest.ToolConfig = providerConfig
-	result, status, err := algo.SyncWriterDocument(ctx, syncRequest)
-	if err != nil {
-		common.ReplyErrWithData(w, "writer document write-back failed", writerActionErrorData(err, map[string]any{
-			"status": "write_back_failed", "provider_synced": false,
-		}), writerSyncStatus(status))
+	provider := strings.TrimSpace(body.Provider)
+	if provider == "" {
+		provider = writerDocumentProvider(draft.Value)
+		if target, err := loadSelectedWriterArtifact(r.Context(), db, sessionID, "target_document"); provider == "" && err == nil {
+			provider = writerDocumentProvider(target.Value)
+		}
+	}
+	if provider == "" {
+		common.ReplyErrWithData(w, "writer document provider selection required", map[string]any{"code": "PROVIDER_SELECTION_REQUIRED", "status": "provider_selection_required", "retryable": false}, 400)
 		return
 	}
-	if !result.Success || !result.ProviderSynced || len(result.PersistedDocument) == 0 {
-		common.ReplyErr(w, "writer document write-back failed", http.StatusBadGateway)
-		return
-	}
+	key := legacyWriterPublicationKey(owner, sessionID, slot, body)
+	request := workflow.DocumentPublishRequest{Action: "publish_document", BaseRevision: &body.BaseRevision, BaseDraftVersion: body.BaseDraftVersion, Input: &workflow.DocumentPublishInput{Provider: provider, Mode: "replace", IdempotencyKey: key, Template: body.Template}}
+	result, operation, err := workflow.PublishDocumentArtifact(r.Context(), db, owner, draft.Revision.ID, request, nil)
+	workflow.ReplyDocumentPublication(w, result, operation, err)
+}
 
-	representation := strings.ToLower(strings.TrimSpace(result.Representation))
-	if representation == "" {
-		if activeDraft.Format == "markdown" {
-			representation = "markdown"
-		} else {
-			representation = "ir"
-		}
+func legacyWriterPublicationKey(owner, session, slot string, body any) string {
+	raw, _ := json.Marshal([]any{owner, session, slot, body})
+	sum := sha256.Sum256(raw)
+	return "legacy-" + hex.EncodeToString(sum[:])
+}
+func sameWriterPublicationIdentity(a, b json.RawMessage) bool {
+	var left, right struct {
+		ID      string         `json:"document_id"`
+		Binding map[string]any `json:"provider_binding"`
 	}
-	confirmedProvider := canonicalWriterProvider(result.Provider)
-	if confirmedProvider == "" {
-		confirmedProvider = provider
-	}
-	schema := "lazyllm.tools.writer.data_models.writer_ir.WriterDocument"
-	if representation == "markdown" {
-		schema = "text/markdown"
-	}
-	var targetValue json.RawMessage
-	targetSlotID, targetSlot, targetStepID, targetAttempt :=
-		"target_document", "target_document", draft.Revision.StepID, draft.Revision.Attempt
-	if len(result.TargetDocument) > 0 {
-		targetValue, err = json.Marshal(map[string]any{
-			"schema":         "lazyllm.tools.writer.data_models.task.TargetDocument",
-			"schema_version": "0.1",
-			"data":           result.TargetDocument,
-			"meta": map[string]any{
-				"created_by": "writer-write-back-api",
-				"created_at": time.Now().UTC().Format(time.RFC3339Nano),
-			},
-		})
-		if err != nil {
-			common.ReplyErr(w, "marshal target_document artifact failed", http.StatusInternalServerError)
-			return
-		}
-		if targetArtifact != nil {
-			targetSlotID = targetArtifact.Revision.SlotID
-			targetSlot = targetArtifact.Revision.Slot
-			targetStepID = targetArtifact.Revision.StepID
-			targetAttempt = targetArtifact.Revision.Attempt
-		}
-	}
-	artifact, err := json.Marshal(map[string]any{
-		"schema":         schema,
-		"schema_version": "0.1",
-		"data":           result.PersistedDocument,
-		"meta": map[string]any{
-			"created_by": "writer-write-back-api",
-			"created_at": time.Now().UTC().Format(time.RFC3339Nano),
-			"lazymind_provider_sync": map[string]any{
-				"confirmed": true,
-				"provider":  confirmedProvider,
-				"source":    "manual",
-			},
-		},
-	})
-	if err != nil {
-		common.ReplyErr(w, "marshal WriterDocument artifact failed", http.StatusInternalServerError)
-		return
-	}
-	revision, err := workflow.WriteSlotRevisionWithHumanArtifact(
-		ctx, db, sessionID, draft.Revision.SlotID, draft.Revision.Slot,
-		draft.Revision.StepID, draft.Revision.Attempt, "single", nil,
-		"json", artifact, nil, "provider_sync", &body.BaseRevision, body.BaseDraftVersion,
-	)
-	if err != nil {
-		if errors.Is(err, workflow.ErrConflict) ||
-			errors.Is(err, workflow.ErrDraftVersionConflict) ||
-			errors.Is(err, workflow.ErrDraftVersionRequired) ||
-			errors.Is(err, workflow.ErrArtifactInUse) {
-			replyWriterProviderLocalConflict(w, draft.Revision.Revision, result)
-			return
-		}
-		common.ReplyErrWithData(w, "artifact save failed", map[string]any{
-			"status": "artifact_save_failed", "provider_synced": true,
-			"artifact_saved": false,
-		}, http.StatusInternalServerError)
-		return
-	}
-	workflow.NotifyWorkflowArtifactUpdated(
-		ctx, db, sessionID, revision.StepID, revision.SlotID, revision.Slot,
-		revision.Revision, revision.ListIndex, "provider_sync",
-	)
-	if len(targetValue) > 0 {
-		targetRevision, saveErr := workflow.WriteSlotRevisionWithHumanArtifact(
-			ctx, db, sessionID, targetSlotID, targetSlot,
-			targetStepID, targetAttempt, "single", nil,
-			"json", targetValue, nil, "provider_sync", nil, nil,
-		)
-		if saveErr != nil {
-			if errors.Is(saveErr, workflow.ErrArtifactInUse) {
-				replyWriterProviderTargetLocalConflict(w, result)
-				return
-			}
-			common.ReplyErrWithData(w, "target artifact save failed", map[string]any{
-				"code":   "PROVIDER_SYNC_TARGET_PERSIST_FAILED",
-				"status": "artifact_save_failed", "provider_synced": true,
-				"artifact_saved": true, "target_artifact_saved": false,
-				"retryable": false,
-			}, http.StatusInternalServerError)
-			return
-		}
-		workflow.NotifyWorkflowArtifactUpdated(
-			ctx, db, sessionID, targetRevision.StepID, targetRevision.SlotID,
-			targetRevision.Slot, targetRevision.Revision, targetRevision.ListIndex,
-			"provider_sync",
-		)
-	}
-	reply := map[string]any{
-		"status": "synced", "revision": revision.Revision, "draft_version": int64(1),
-		"provider_synced": true, "artifact_saved": true,
-		"patch_result":    result.PatchResult,
-		"document":        result.PersistedDocument,
-		"provider":        confirmedProvider,
-		"representation":  representation,
-		"write_result":    result.WriteResult,
-		"target_document": result.TargetDocument,
-	}
-	attachWriterMediaURLs(ctx, db, sessionID, slot, reply)
-	common.ReplyOK(w, reply)
+	return json.Unmarshal(a, &left) == nil && json.Unmarshal(b, &right) == nil && left.ID != "" && left.ID == right.ID && len(left.Binding) > 0 && reflect.DeepEqual(left.Binding, right.Binding)
 }
 
 func loadSelectedWriterArtifact(

@@ -2957,6 +2957,100 @@ components:
             required:
                 - providers
             type: object
+        DocumentPublicationStatus:
+            properties:
+                artifact_id:
+                    type: string
+                error_code:
+                    type: string
+                operation_id:
+                    type: string
+                provider:
+                    type: string
+                status:
+                    type: string
+            required:
+                - operation_id
+                - provider
+                - status
+            type: object
+        DocumentPublishInput:
+            properties:
+                idempotency_key:
+                    type: string
+                mode:
+                    enum:
+                        - replace
+                    type: string
+                parent_uri:
+                    type: string
+                provider:
+                    type: string
+                template:
+                    type: string
+                title:
+                    type: string
+            required:
+                - idempotency_key
+                - provider
+            type: object
+        DocumentPublishRequest:
+            properties:
+                action:
+                    enum:
+                        - publish_document
+                    type: string
+                base_draft_version:
+                    format: int64
+                    type: integer
+                base_revision:
+                    type: integer
+                input:
+                    $ref: '#/components/schemas/DocumentPublishInput'
+            required:
+                - action
+                - base_revision
+                - input
+            type: object
+        DocumentPublishResult:
+            properties:
+                artifact_id:
+                    type: string
+                artifact_saved:
+                    type: boolean
+                document: {}
+                draft_version:
+                    format: int64
+                    type: integer
+                operation_id:
+                    type: string
+                patch_result:
+                    additionalProperties:
+                        properties: {}
+                        type: object
+                    type: object
+                provider:
+                    type: string
+                provider_synced:
+                    type: boolean
+                representation:
+                    type: string
+                revision:
+                    type: integer
+                status:
+                    type: string
+                target_document: {}
+            required:
+                - artifact_id
+                - artifact_saved
+                - draft_version
+                - operation_id
+                - provider
+                - provider_synced
+                - representation
+                - revision
+                - status
+            type: object
         DocumentRewriteCommit:
             properties:
                 token:
@@ -6797,6 +6891,8 @@ components:
             type: object
         documentActionErrorOpenAPIData:
             properties:
+                artifact_saved:
+                    type: boolean
                 code:
                     enum:
                         - IDENTITY_REQUIRED
@@ -6818,7 +6914,25 @@ components:
                         - DOCUMENT_ACTION_SAVE_FAILED
                         - CROSS_REFERENCE_SELECTION_INVALID
                         - CROSS_REFERENCE_TARGET_NOT_FOUND
+                        - PUBLICATION_NOT_FOUND
+                        - PUBLICATION_IN_PROGRESS
+                        - PUBLICATION_STATE_CONFLICT
+                        - PUBLICATION_IDEMPOTENCY_CONFLICT
+                        - PUBLICATION_ALREADY_BOUND
+                        - PUBLICATION_OUTCOME_UNKNOWN
+                        - PROVIDER_SYNC_LOCAL_CONFLICT
+                        - PROVIDER_SYNC_LOCAL_PERSIST_FAILED
+                        - PROVIDER_CREDENTIALS_UNAVAILABLE
+                        - PROVIDER_BINDING_CONFLICT
                     type: string
+                operation_id:
+                    type: string
+                provider:
+                    type: string
+                provider_synced:
+                    type: boolean
+                retryable:
+                    type: boolean
             required:
                 - code
             type: object
@@ -6852,6 +6966,33 @@ components:
                 - code
                 - data
                 - message
+            type: object
+        documentArtifactPatchRequest:
+            properties:
+                base_draft_version:
+                    format: int64
+                    type: integer
+                base_revision:
+                    type: integer
+                caption:
+                    type: string
+                command_id:
+                    type: string
+                content_type:
+                    type: string
+                mode:
+                    enum:
+                        - draft
+                        - checkpoint
+                    type: string
+                numbering_update:
+                    $ref: '#/components/schemas/DocumentNumberingUpdate'
+                value: {}
+            required:
+                - base_revision
+                - command_id
+                - content_type
+                - value
             type: object
         documentProvidersErrorOpenAPIData:
             properties:
@@ -6892,6 +7033,32 @@ components:
                 - data
                 - message
             type: object
+        documentPublicationReadResponse:
+            properties:
+                code:
+                    type: integer
+                data:
+                    $ref: '#/components/schemas/DocumentPublicationStatus'
+                message:
+                    type: string
+            required:
+                - code
+                - data
+                - message
+            type: object
+        documentPublicationResultResponse:
+            properties:
+                code:
+                    type: integer
+                data:
+                    $ref: '#/components/schemas/DocumentPublishResult'
+                message:
+                    type: string
+            required:
+                - code
+                - data
+                - message
+            type: object
         documentRewriteExecuteOpenAPIResponse:
             properties:
                 code:
@@ -6900,6 +7067,7 @@ components:
                     oneOf:
                         - $ref: '#/components/schemas/DocumentRewriteExecuteResult'
                         - $ref: '#/components/schemas/DocumentNumberingExecuteResult'
+                        - $ref: '#/components/schemas/DocumentPublishResult'
                 message:
                     type: string
             required:
@@ -13266,6 +13434,96 @@ paths:
             summary: List current document provider IDs and declared capabilities
             tags:
                 - workflow
+    /api/core/document-publications/{operation_id}:
+        get:
+            parameters:
+                - in: path
+                  name: operation_id
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentPublicationReadResponse'
+                    description: Publication status
+                "404":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
+                    description: Publication not found
+            summary: Read an owned publication outcome
+            tags:
+                - workflow
+    /api/core/document-publications/{operation_id}:cancel:
+        post:
+            parameters:
+                - in: path
+                  name: operation_id
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentPublicationReadResponse'
+                    description: Canceled publication
+                "404":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
+                    description: Publication not found
+                "409":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
+                    description: Write already started
+            summary: Cancel a publication before its external write
+            tags:
+                - workflow
+    /api/core/document-publications/{operation_id}:retry-local:
+        post:
+            parameters:
+                - in: path
+                  name: operation_id
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentPublicationResultResponse'
+                    description: Saved publication
+                "404":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
+                    description: Publication not found
+                "409":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
+                    description: Local baseline changed
+                "500":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
+                    description: Local persistence failed
+            summary: Save a confirmed publication without repeating the provider write
+            tags:
+                - workflow
     /api/core/document/creators:
         get:
             responses:
@@ -18460,10 +18718,34 @@ paths:
                   required: true
                   schema:
                     type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/documentArtifactPatchRequest'
+                required: true
             responses:
                 "200":
-                    description: OK
-            summary: PATCH /workflow-artifacts/{artifact_id}
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/workflowArtifactReadResponse'
+                    description: Saved artifact
+                "400":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
+                    description: Draft baseline required
+                "409":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
+                    description: Artifact baseline changed
+            summary: Save an Artifact with revision and draft preconditions
+            tags:
+                - workflow
     /api/core/workflow-artifacts/{artifact_id}/document-actions:execute:
         post:
             parameters:
@@ -18482,6 +18764,7 @@ paths:
                                 - $ref: '#/components/schemas/DocumentRewriteExecuteRequest'
                                 - $ref: '#/components/schemas/DocumentNumberingExecuteRequest'
                                 - $ref: '#/components/schemas/DocumentCrossReferenceExecuteRequest'
+                                - $ref: '#/components/schemas/DocumentPublishRequest'
                 required: true
             responses:
                 "200":

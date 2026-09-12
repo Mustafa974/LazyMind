@@ -51,6 +51,9 @@ func (r *Repository) DescribeArtifact(ctx context.Context, owner string, artifac
 	// consumers do not disable them. Mutations still require the live guard.
 	if artifact.Document != nil && writable {
 		artifact.Document.Capabilities = append(artifact.Document.Capabilities, "convert_document", "numbering", "cross_reference")
+		if artifact.Document.Editable {
+			artifact.Document.Capabilities = append(artifact.Document.Capabilities, "publish_document")
+		}
 	}
 }
 

@@ -14,9 +14,12 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"lazymind/core/algo"
 	"lazymind/core/common"
 	"lazymind/core/common/orm"
 	"lazymind/core/workflow/artifactgraph"
+	"lazymind/core/workflow/document"
+	workflowstore "lazymind/core/workflow/store"
 )
 
 // Session status constants. Interrupted attempts remain resumable as waiting, while
@@ -1261,6 +1264,14 @@ func UpdateSelectedHumanArtifactValue(
 			return err
 		}
 
+		previous, err := LoadSlotRevisionValue(ctx, tx, selected)
+		if err != nil {
+			return err
+		}
+		value, err = document.PreserveProviderMetadata(previous, value, contentType)
+		if err != nil {
+			return err
+		}
 		updates := map[string]any{
 			"content_type":  contentType,
 			"draft_version": gorm.Expr("draft_version + 1"),
@@ -1331,6 +1342,13 @@ func WriteSlotRevisionWithHumanArtifact(
 		if err != nil {
 			return err
 		}
+		if expectedRevision == nil && changeSource != "provider_sync" {
+			value, err = document.PreserveProviderMetadata(nil, value, contentType)
+			if err != nil {
+				return err
+			}
+			humanArt.Value = value
+		}
 		if expectedRevision != nil {
 			var current orm.WorkflowSlotRevision
 			q := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -1345,6 +1363,17 @@ func WriteSlotRevisionWithHumanArtifact(
 					return ErrConflict
 				}
 				return err
+			}
+			if changeSource != "provider_sync" {
+				previous, err := LoadSlotRevisionValue(ctx, tx, current)
+				if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+					return err
+				}
+				value, err = document.PreserveProviderMetadata(previous, value, contentType)
+				if err != nil {
+					return err
+				}
+				humanArt.Value = value
 			}
 			if current.Revision != *expectedRevision {
 				return ErrConflict
@@ -1501,4 +1530,102 @@ func loadSlotRevisionTaskID(
 		return "", err
 	}
 	return step.TaskID, nil
+}
+
+// SaveHumanArtifactValue holds one Session transaction across the draft/COW
+// decision. It is the shared local-save path for both generic and legacy APIs.
+func SaveHumanArtifactValue(ctx context.Context, db *gorm.DB,
+	sessionID, slotID, artifactKey, stepID string, attempt int, cardinality string, listIndex *int,
+	contentType string, value json.RawMessage, caption *string, baseRevision *int, baseDraft *int64, draft bool,
+) (*orm.WorkflowSlotRevision, int64, bool, error) {
+	var revision *orm.WorkflowSlotRevision
+	var version int64
+	var inPlace bool
+	err := common.TransactionWithSQLiteBusyRetry(ctx, db, func(tx *gorm.DB) error {
+		revision = nil
+		version = 0
+		inPlace = false
+		if draft {
+			var err error
+			revision, version, inPlace, err = UpdateSelectedHumanArtifactValue(ctx, tx, sessionID, slotID, listIndex, contentType, value, caption, baseRevision, baseDraft)
+			if err != nil || inPlace {
+				return err
+			}
+		}
+		var err error
+		revision, err = WriteSlotRevisionWithHumanArtifact(ctx, tx, sessionID, slotID, artifactKey, stepID, attempt, cardinality, listIndex, contentType, value, caption, "human", baseRevision, baseDraft)
+		if err == nil {
+			version = 1
+		}
+		return err
+	})
+	if err != nil {
+		return nil, 0, false, err
+	}
+	return revision, version, inPlace, nil
+}
+
+func SaveDocumentArtifactValue(ctx context.Context, db *gorm.DB, owner, id string, baseRevision int, baseDraft *int64, contentType string, value json.RawMessage, caption *string, draft bool, numbering ...json.RawMessage) (*orm.WorkflowSlotRevision, error) {
+	if len(numbering) > 0 && len(numbering[0]) > 0 {
+		request := documentActionRequest{baseRevision: &baseRevision, baseDraftVersion: baseDraft}
+		target, err := prepareDocumentAction(ctx, owner, id, request, true)
+		if err != nil {
+			return nil, err
+		}
+		edited, problem := document.ReadContent(value, target.content.Schema, func() (bool, error) { return false, nil })
+		if problem != nil || edited == nil || edited.Schema != target.content.Schema {
+			return nil, documentFailure("DOCUMENT_ACTION_INVALID", 400)
+		}
+		editedArtifact, _ := json.Marshal(map[string]any{"data": edited.Value})
+		reply, status, err := algo.InvokeDocumentAction(ctx, algo.DocumentActionInvokeRequest{Reference: "builtin:document.save_document.v1", Phase: "execute", Artifact: editedArtifact, Arguments: map[string]any{"base_artifact": map[string]any{"data": target.content.Value}, "numbering_update": numbering[0]}})
+		if err != nil {
+			return nil, documentUpstreamFailure(status, err)
+		}
+		var output struct {
+			Source json.RawMessage `json:"source_document"`
+		}
+		if json.Unmarshal(reply.Result, &output) != nil || !validDocumentResult(ctx, &DocumentActionArtifact{ContentType: contentType, Value: output.Source}, target.content.Representation) {
+			return nil, documentFailure("DOCUMENT_ACTION_RESULT_INVALID", 502)
+		}
+		value, _ = json.Marshal(map[string]any{"schema": target.content.Schema, "data": output.Source})
+	}
+	var result *orm.WorkflowSlotRevision
+	err := common.TransactionWithSQLiteBusyRetry(ctx, db, func(tx *gorm.DB) error {
+		var current orm.WorkflowSlotRevision
+		if err := tx.First(&current, "id = ?", id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return documentFailure("ARTIFACT_NOT_FOUND", 404)
+			}
+			return err
+		}
+		session, err := lockArtifactMutationSession(tx, current.SessionID)
+		if err != nil {
+			return err
+		}
+		if session.CreateUserID != owner || strings.TrimSpace(owner) == "" || session.Dismissed {
+			return documentFailure("ARTIFACT_NOT_FOUND", 404)
+		}
+		if scope := workflowstore.ConversationScope(ctx); scope != "" && scope != session.ConversationID {
+			return documentFailure("ARTIFACT_NOT_FOUND", 404)
+		}
+		if !workflowstore.DocumentSessionEditable(session) {
+			return ErrConflict
+		}
+		if err := tx.First(&current, "id = ?", id).Error; err != nil {
+			return err
+		}
+		if !current.Selected || current.Validity != "effective" {
+			return ErrConflict
+		}
+		cardinality := "single"
+		if current.ListIndex != nil {
+			cardinality = "list"
+		}
+		result, _, _, err = SaveHumanArtifactValue(ctx, tx, current.SessionID, current.SlotID, current.Slot, current.StepID, current.Attempt, cardinality, current.ListIndex, contentType, value, caption, &baseRevision, baseDraft, draft)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }

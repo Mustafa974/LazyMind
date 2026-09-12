@@ -27,6 +27,8 @@ type ProjectionError struct {
 	Retryable bool   `json:"retryable"`
 }
 
+func (e *ProjectionError) Error() string { return e.Code }
+
 func Invalid() *ProjectionError { return &ProjectionError{Code: "DOCUMENT_INVALID"} }
 func Unavailable() *ProjectionError {
 	return &ProjectionError{Code: "DOCUMENT_INSPECTION_FAILED", Retryable: true}
@@ -231,4 +233,33 @@ func unpack(value any, schema string) (any, string, *ProjectionError) {
 		}
 		return value, schema, nil
 	}
+}
+
+// ReadContent resolves local carriers for transaction-time baseline checks.
+// Full semantic inspection remains at the Algorithm boundary; this function
+// never calls a service while a Session transaction is held.
+func ReadContent(raw json.RawMessage, contentType string, hint func() (bool, error)) (*Content, *ProjectionError) {
+	value, schema, candidate, failure := prepare(raw, contentType, hint)
+	if failure != nil || !candidate {
+		return nil, failure
+	}
+	if schema == "" {
+		var ir map[string]json.RawMessage
+		if json.Unmarshal(value, &ir) != nil || ir["document_id"] == nil || ir["blocks"] == nil {
+			return nil, nil
+		}
+		schema = IRSchema
+	}
+	representation := "markdown"
+	if schema == IRSchema {
+		var ir struct {
+			DocumentID string            `json:"document_id"`
+			Blocks     []json.RawMessage `json:"blocks"`
+		}
+		if json.Unmarshal(value, &ir) != nil || ir.DocumentID == "" || ir.Blocks == nil {
+			return nil, Invalid()
+		}
+		representation = "ir"
+	}
+	return &Content{Value: value, Schema: schema, Representation: representation}, nil
 }

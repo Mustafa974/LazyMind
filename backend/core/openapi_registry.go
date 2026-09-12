@@ -109,12 +109,42 @@ type documentProvidersErrorOpenAPIResponse struct {
 	Data    documentProvidersErrorOpenAPIData `json:"data"`
 }
 type documentActionErrorOpenAPIData struct {
-	Code string `json:"code" enum:"IDENTITY_REQUIRED,PERMISSION_DENIED,ARTIFACT_NOT_FOUND,REVISION_REQUIRED,REVISION_CONFLICT,DRAFT_VERSION_REQUIRED,DRAFT_VERSION_CONFLICT,SESSION_NOT_EDITABLE,DOCUMENT_ACTION_INVALID,DOCUMENT_ACTION_UNSUPPORTED,MODEL_CONFIG_REQUIRED,SELECTION_STALE,SELECTION_AMBIGUOUS,ARTIFACT_IN_USE,DOCUMENT_ACTION_FAILED,DOCUMENT_ACTION_RESULT_INVALID,DOCUMENT_ACTION_SAVE_FAILED,CROSS_REFERENCE_SELECTION_INVALID,CROSS_REFERENCE_TARGET_NOT_FOUND"`
+	OperationID    string `json:"operation_id,omitempty"`
+	Provider       string `json:"provider,omitempty"`
+	ProviderSynced *bool  `json:"provider_synced,omitempty"`
+	ArtifactSaved  *bool  `json:"artifact_saved,omitempty"`
+	Retryable      *bool  `json:"retryable,omitempty"`
+
+	Code string `json:"code" enum:"IDENTITY_REQUIRED,PERMISSION_DENIED,ARTIFACT_NOT_FOUND,REVISION_REQUIRED,REVISION_CONFLICT,DRAFT_VERSION_REQUIRED,DRAFT_VERSION_CONFLICT,SESSION_NOT_EDITABLE,DOCUMENT_ACTION_INVALID,DOCUMENT_ACTION_UNSUPPORTED,MODEL_CONFIG_REQUIRED,SELECTION_STALE,SELECTION_AMBIGUOUS,ARTIFACT_IN_USE,DOCUMENT_ACTION_FAILED,DOCUMENT_ACTION_RESULT_INVALID,DOCUMENT_ACTION_SAVE_FAILED,CROSS_REFERENCE_SELECTION_INVALID,CROSS_REFERENCE_TARGET_NOT_FOUND,PUBLICATION_NOT_FOUND,PUBLICATION_IN_PROGRESS,PUBLICATION_STATE_CONFLICT,PUBLICATION_IDEMPOTENCY_CONFLICT,PUBLICATION_ALREADY_BOUND,PUBLICATION_OUTCOME_UNKNOWN,PROVIDER_SYNC_LOCAL_CONFLICT,PROVIDER_SYNC_LOCAL_PERSIST_FAILED,PROVIDER_CREDENTIALS_UNAVAILABLE,PROVIDER_BINDING_CONFLICT"`
 }
 type documentActionErrorOpenAPIResponse struct {
 	Code    int                            `json:"code"`
 	Message string                         `json:"message"`
 	Data    documentActionErrorOpenAPIData `json:"data"`
+}
+
+type documentPublicationPath struct {
+	OperationID string `path:"operation_id"`
+}
+type documentPublicationReadResponse struct {
+	Code    int                                `json:"code"`
+	Message string                             `json:"message"`
+	Data    workflow.DocumentPublicationStatus `json:"data"`
+}
+type documentPublicationResultResponse struct {
+	Code    int                            `json:"code"`
+	Message string                         `json:"message"`
+	Data    workflow.DocumentPublishResult `json:"data"`
+}
+type documentArtifactPatchRequest struct {
+	NumberingUpdate  *workflow.DocumentNumberingUpdate `json:"numbering_update,omitempty"`
+	Mode             string                            `json:"mode,omitempty" enum:"draft,checkpoint"`
+	BaseRevision     int                               `json:"base_revision" required:"true"`
+	BaseDraftVersion *int64                            `json:"base_draft_version,omitempty"`
+	ContentType      string                            `json:"content_type"`
+	Value            json.RawMessage                   `json:"value" required:"true"`
+	Caption          *string                           `json:"caption,omitempty"`
+	CommandID        string                            `json:"command_id" required:"true"`
 }
 
 type schemaSource struct {
@@ -313,10 +343,10 @@ func (b *schemaBuilder) schemaFromSource(source schemaSource) map[string]any {
 
 func (b *schemaBuilder) schemaForType(t reflect.Type) map[string]any {
 	if t == reflect.TypeOf(documentActionExecuteOpenAPIRequest{}) {
-		return map[string]any{"oneOf": []any{b.schemaForType(reflect.TypeOf(workflow.DocumentRewriteExecuteRequest{})), b.schemaForType(reflect.TypeOf(workflow.DocumentNumberingExecuteRequest{})), b.schemaForType(reflect.TypeOf(workflow.DocumentCrossReferenceExecuteRequest{}))}, "discriminator": map[string]any{"propertyName": "action"}}
+		return map[string]any{"oneOf": []any{b.schemaForType(reflect.TypeOf(workflow.DocumentRewriteExecuteRequest{})), b.schemaForType(reflect.TypeOf(workflow.DocumentNumberingExecuteRequest{})), b.schemaForType(reflect.TypeOf(workflow.DocumentCrossReferenceExecuteRequest{})), b.schemaForType(reflect.TypeOf(workflow.DocumentPublishRequest{}))}, "discriminator": map[string]any{"propertyName": "action"}}
 	}
 	if t == reflect.TypeOf(documentActionExecuteOpenAPIData{}) {
-		return map[string]any{"oneOf": []any{b.schemaForType(reflect.TypeOf(workflow.DocumentRewriteExecuteResult{})), b.schemaForType(reflect.TypeOf(workflow.DocumentNumberingExecuteResult{}))}}
+		return map[string]any{"oneOf": []any{b.schemaForType(reflect.TypeOf(workflow.DocumentRewriteExecuteResult{})), b.schemaForType(reflect.TypeOf(workflow.DocumentNumberingExecuteResult{})), b.schemaForType(reflect.TypeOf(workflow.DocumentPublishResult{}))}}
 	}
 	if t == reflect.TypeOf(documentActionPreviewOpenAPIRequest{}) {
 		return map[string]any{"oneOf": []any{b.schemaForType(reflect.TypeOf(workflow.DocumentRewritePreviewRequest{})), b.schemaForType(reflect.TypeOf(workflow.DocumentConvertPreviewRequest{})), b.schemaForType(reflect.TypeOf(workflow.DocumentNumberingPreviewRequest{})), b.schemaForType(reflect.TypeOf(workflow.DocumentCrossReferencePreviewRequest{}))}, "discriminator": map[string]any{"propertyName": "action"}}
@@ -2651,6 +2681,10 @@ func registeredCoreOperations() []openAPIOperation {
 		{Method: "GET", Path: "/conversations/{conversation_id}/workflow-sessions:active", Summary: "Read Workflow artifacts with document descriptors", Tags: []string{"workflow"}, Responses: map[int]openAPIResponse{200: resp("Workflow artifact read result", workflowSessionReadResponse{})}},
 		{Method: "GET", Path: "/conversations/{conversation_id}/workflow-sessions:latest", Summary: "Read Workflow artifacts with document descriptors", Tags: []string{"workflow"}, Responses: map[int]openAPIResponse{200: resp("Workflow artifact read result", workflowSessionReadResponse{})}},
 		{Method: "GET", Path: "/workflow-sessions/{session_id}/artifacts", Summary: "Read Workflow artifacts with document descriptors", Tags: []string{"workflow"}, Responses: map[int]openAPIResponse{200: resp("Workflow artifact read result", workflowArtifactListReadResponse{})}},
+		{Method: "GET", Path: "/document-publications/{operation_id}", Summary: "Read an owned publication outcome", Tags: []string{"workflow"}, PathParams: documentPublicationPath{}, Responses: map[int]openAPIResponse{200: resp("Publication status", documentPublicationReadResponse{}), 404: resp("Publication not found", documentActionErrorOpenAPIResponse{})}},
+		{Method: "POST", Path: "/document-publications/{operation_id}:cancel", Summary: "Cancel a publication before its external write", Tags: []string{"workflow"}, PathParams: documentPublicationPath{}, Responses: map[int]openAPIResponse{200: resp("Canceled publication", documentPublicationReadResponse{}), 404: resp("Publication not found", documentActionErrorOpenAPIResponse{}), 409: resp("Write already started", documentActionErrorOpenAPIResponse{})}},
+		{Method: "POST", Path: "/document-publications/{operation_id}:retry-local", Summary: "Save a confirmed publication without repeating the provider write", Tags: []string{"workflow"}, PathParams: documentPublicationPath{}, Responses: map[int]openAPIResponse{200: resp("Saved publication", documentPublicationResultResponse{}), 404: resp("Publication not found", documentActionErrorOpenAPIResponse{}), 409: resp("Local baseline changed", documentActionErrorOpenAPIResponse{}), 500: resp("Local persistence failed", documentActionErrorOpenAPIResponse{})}},
+		{Method: "PATCH", Path: "/workflow-artifacts/{artifact_id}", Summary: "Save an Artifact with revision and draft preconditions", Tags: []string{"workflow"}, RequestBody: jsonBodyOf(documentArtifactPatchRequest{}, true), Responses: map[int]openAPIResponse{200: resp("Saved artifact", workflowArtifactReadResponse{}), 400: resp("Draft baseline required", documentActionErrorOpenAPIResponse{}), 409: resp("Artifact baseline changed", documentActionErrorOpenAPIResponse{})}},
 		{Method: "GET", Path: "/workflow-artifacts/{artifact_id}", Summary: "Read Workflow artifacts with document descriptors", Tags: []string{"workflow"}, Responses: map[int]openAPIResponse{200: resp("Workflow artifact read result", workflowArtifactReadResponse{})}},
 		{Method: "GET", Path: "/workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/versions", Summary: "Read Workflow artifacts with document descriptors", Tags: []string{"workflow"}, Responses: map[int]openAPIResponse{200: resp("Workflow artifact read result", workflowSlotVersionsReadResponse{})}},
 		{

@@ -656,9 +656,9 @@ func TestDocumentConvertCapabilities(t *testing.T) {
 								doc, _ := record["document"].(map[string]any)
 								want := []string{}
 								if state == "editable" {
-									want = []string{"convert_document", "cross_reference", "numbering", "save"}
+									want = []string{"convert_document", "cross_reference", "numbering", "publish_document", "save"}
 									if withModel {
-										want = []string{"convert_document", "cross_reference", "numbering", "rewrite_selection", "save"}
+										want = []string{"convert_document", "cross_reference", "numbering", "publish_document", "rewrite_selection", "save"}
 									}
 								} else if state == "live" {
 									want = []string{"convert_document", "cross_reference", "numbering"}

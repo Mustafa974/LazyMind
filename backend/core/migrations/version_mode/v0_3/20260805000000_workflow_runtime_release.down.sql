@@ -1,3 +1,6 @@
+DROP TABLE IF EXISTS document_publication_bindings;
+DROP TABLE IF EXISTS document_publication_operations;
+
 DROP TABLE IF EXISTS conversation_fork_requests;
 DROP TABLE IF EXISTS conversation_fork_origins;
 DROP INDEX IF EXISTS idx_vocabulary_review_session_word;

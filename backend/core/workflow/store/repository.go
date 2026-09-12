@@ -20,14 +20,17 @@ import (
 	"lazymind/core/common/orm"
 	"lazymind/core/taskcenter"
 	"lazymind/core/workflow/artifactgraph"
+	"lazymind/core/workflow/document"
 )
 
 var (
-	ErrNotFound            error = repositoryError("WORKFLOW_NOT_FOUND")
-	ErrPermissionDenied    error = repositoryError("PERMISSION_DENIED")
-	ErrIdempotencyConflict error = repositoryError("IDEMPOTENCY_CONFLICT")
-	ErrSessionConflict     error = repositoryError("WORKFLOW_SESSION_CONFLICT")
-	ErrArtifactInUse       error = artifactgraph.ErrArtifactInUse
+	ErrNotFound             error = repositoryError("WORKFLOW_NOT_FOUND")
+	ErrPermissionDenied     error = repositoryError("PERMISSION_DENIED")
+	ErrIdempotencyConflict  error = repositoryError("IDEMPOTENCY_CONFLICT")
+	ErrSessionConflict      error = repositoryError("WORKFLOW_SESSION_CONFLICT")
+	ErrArtifactInUse        error = artifactgraph.ErrArtifactInUse
+	ErrDraftVersionRequired error = repositoryError("DRAFT_VERSION_REQUIRED")
+	ErrDraftVersionConflict error = repositoryError("DRAFT_VERSION_CONFLICT")
 )
 
 func normalizeWorkflowMode(value string) string {
@@ -321,7 +324,7 @@ func artifactItemMaxRevision(tx *gorm.DB, current Artifact) (int, error) {
 }
 
 func (r *Repository) PatchArtifact(ctx context.Context, owner, artifactID string, baseRevision int,
-	contentType string, value json.RawMessage, caption *string, commandID string) (Artifact, error) {
+	contentType string, value json.RawMessage, caption *string, commandID string, draftVersion ...*int64) (Artifact, error) {
 	value = common.CanonicalizeTextArtifactValue(contentType, value)
 	current, err := r.ReadArtifact(ctx, owner, artifactID)
 	if err != nil {
@@ -329,6 +332,20 @@ func (r *Repository) PatchArtifact(ctx context.Context, owner, artifactID string
 	}
 	if !current.Selected || current.Deleted || current.Revision != baseRevision {
 		return Artifact{}, ErrIdempotencyConflict
+	}
+	expectedDraft := current.DraftVersion
+	if len(draftVersion) > 0 {
+		if draftVersion[0] == nil {
+			if current.DraftVersion > 0 {
+				return Artifact{}, ErrDraftVersionRequired
+			}
+		} else {
+			expectedDraft = *draftVersion[0]
+		}
+	}
+	value, err = document.PreserveProviderMetadata(current.Value, value, contentType)
+	if err != nil {
+		return Artifact{}, err
 	}
 	now := time.Now().UTC()
 	humanID, revisionID := uuid.NewString(), uuid.NewString()
@@ -339,6 +356,22 @@ func (r *Repository) PatchArtifact(ctx context.Context, owner, artifactID string
 		if err != nil {
 			return err
 		}
+		if session.CreateUserID != owner || session.Dismissed || (ConversationScope(ctx) != "" && ConversationScope(ctx) != session.ConversationID) {
+			return ErrPermissionDenied
+		}
+		var baseline orm.WorkflowSlotRevision
+		if err := tx.First(&baseline, "id = ?", artifactID).Error; err != nil {
+			return err
+		}
+		if baseline.HumanArtifactID != nil {
+			guard := tx.Model(&orm.WorkflowHumanArtifact{}).Where("id = ? AND draft_version = ?", *baseline.HumanArtifactID, expectedDraft).UpdateColumn("draft_version", gorm.Expr("draft_version"))
+			if guard.Error != nil {
+				return guard.Error
+			}
+			if guard.RowsAffected != 1 {
+				return ErrDraftVersionConflict
+			}
+		}
 		query := tx.Model(&orm.WorkflowSlotRevision{}).Where(
 			"session_id = ? AND slot_id = ? AND selected = ?", current.SessionID, current.SlotID, true)
 		if current.ListIndex == nil {
@@ -346,7 +379,7 @@ func (r *Repository) PatchArtifact(ctx context.Context, owner, artifactID string
 		} else {
 			query = query.Where("list_index = ?", *current.ListIndex)
 		}
-		result := query.Where("revision = ?", baseRevision).Update("selected", false)
+		result := query.Where("revision = ? AND validity = ?", baseRevision, "effective").Update("selected", false)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -1151,3 +1184,7 @@ func (r *Repository) Subscribe(sessionID string) (<-chan Event, func()) {
 		r.mu.Unlock()
 	}
 }
+
+// Database supplies the existing transaction connection to Core's shared
+// Artifact mutation service. It is never exposed through the HTTP contract.
+func (r *Repository) Database() *gorm.DB { return r.db }

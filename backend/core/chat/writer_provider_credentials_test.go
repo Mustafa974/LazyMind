@@ -35,7 +35,7 @@ type writerCredentialFixture struct {
 
 func newWriterCredentialFixture(t *testing.T, entry, provider string) *writerCredentialFixture {
 	t.Helper()
-	db := orm.MigrateTestDB(t, &orm.WorkflowSession{}, &orm.WorkflowSessionStep{}, &orm.WorkflowSlotRevision{}, &orm.WorkflowHumanArtifact{}, &orm.WorkflowEvent{}, &orm.WorkflowAttemptInputBinding{}, &orm.WorkflowRouteDecision{}, &orm.SubAgentArtifact{}, &orm.UserModelProvider{}, &orm.UserModelProviderGroup{}, &orm.UserSelectedProvider{})
+	db := orm.MigrateTestDB(t, &orm.DocumentPublicationOperation{}, &orm.DocumentPublicationBinding{}, &orm.WorkflowSession{}, &orm.WorkflowSessionStep{}, &orm.WorkflowSlotRevision{}, &orm.WorkflowHumanArtifact{}, &orm.WorkflowEvent{}, &orm.WorkflowAttemptInputBinding{}, &orm.WorkflowRouteDecision{}, &orm.SubAgentArtifact{}, &orm.UserModelProvider{}, &orm.UserModelProviderGroup{}, &orm.UserSelectedProvider{})
 	store.Init(db.DB, db.DB, nil)
 	t.Cleanup(func() { store.Init(nil, nil, nil) })
 	f := &writerCredentialFixture{db: db, entry: entry, provider: provider, slot: "draft_document"}
@@ -148,7 +148,7 @@ type writerCredentialSpy struct {
 func newWriterCredentialSpy(t *testing.T, f *writerCredentialFixture, count int, mode string) *writerCredentialSpy {
 	t.Helper()
 	spy := &writerCredentialSpy{count: count, mode: mode, started: make(chan struct{}, 1), cancelled: make(chan struct{}, 1), release: make(chan struct{})}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(adaptLegacyWriterFixture(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/api/authservice/v1/cloud/connections/internal/chat-enabled":
@@ -257,7 +257,7 @@ func newWriterCredentialSpy(t *testing.T, f *writerCredentialFixture, count int,
 			spy.mu.Lock()
 			spy.actions = append(spy.actions, action)
 			spy.mu.Unlock()
-			if r.Method != "POST" || r.Header.Get("X-LazyMind-Internal-Token") != "" || action["user_id"] != writerCredentialOwner {
+			if r.Method != "POST" || r.Header.Get("X-LazyMind-Internal-Token") != "" || action["user_id"] != nil {
 				t.Error("Algorithm authority or internal token leak")
 			}
 			if action["action"] == "convert_document" {
@@ -278,7 +278,7 @@ func newWriterCredentialSpy(t *testing.T, f *writerCredentialFixture, count int,
 			spy.mu.Unlock()
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"items": []any{}}})
 		}
-	}))
+	})))
 	t.Cleanup(server.Close)
 	t.Cleanup(func() { close(spy.release) })
 	t.Setenv("LAZYMIND_AUTH_SERVICE_URL", server.URL)
@@ -306,7 +306,11 @@ func TestWriterScopedCredentialsSuccess(t *testing.T) {
 			for _, count := range []int{1, 2} {
 				t.Run(entry+"/"+provider+"/"+string(rune('0'+count)), func(t *testing.T) {
 					f := newWriterCredentialFixture(t, entry, provider)
-					spy := newWriterCredentialSpy(t, f, count, "")
+					credentialCount := count
+					if provider == "obsidian" {
+						credentialCount = 0
+					}
+					spy := newWriterCredentialSpy(t, f, credentialCount, "")
 					body := f.body()
 					body["tool_config"] = map[string]any{provider: "client-injected-credential"}
 					w := f.call(t, t.Context(), writerCredentialOwner, body)
@@ -342,7 +346,7 @@ func TestWriterScopedCredentialsSuccess(t *testing.T) {
 						}
 					}
 					if provider == "obsidian" {
-						if len(lists) != 0 || len(tokens) != 0 {
+						if !reflect.DeepEqual(lists, []string{provider}) || len(tokens) != 0 {
 							t.Error("local provider fetched cloud credentials")
 						}
 					} else {
@@ -445,14 +449,27 @@ func TestWriterScopedCredentialsMissingAndFailures(t *testing.T) {
 				w := f.call(t, t.Context(), writerCredentialOwner, f.body())
 				status := 502
 				if mode == "no connections" {
-					status = 401
+					if w.Code != 200 {
+						t.Fatalf("credential-optional provider was rejected: %d %s", w.Code, w.Body.String())
+					}
+					lists, tokens, actions := spy.state()
+					expectedActions := 1
 					if entry == "writeback" {
-						status = 400
+						expectedActions = 2
 					}
-					if !strings.Contains(w.Body.String(), "notion_configuration_required") {
-						t.Error("missing-account contract lost")
+					if !reflect.DeepEqual(lists, []string{"notion"}) || len(tokens) != 0 || len(actions) != expectedActions || f.privateReads.Load() != 0 {
+						t.Fatalf("empty credentials did not stay scoped: %v %v %d", lists, tokens, len(actions))
 					}
+					for _, action := range actions {
+						config, _ := action["tool_config"].(map[string]any)
+						if len(config) != 0 {
+							t.Fatal("invented credentials")
+						}
+					}
+					requireWriterCredentialPrivate(t, w)
+					return
 				}
+
 				if w.Code != status {
 					t.Errorf("credential failure status=%d want=%d", w.Code, status)
 				}

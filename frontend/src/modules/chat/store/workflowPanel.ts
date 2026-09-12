@@ -1,3 +1,4 @@
+import type { Descriptor } from "@/api/generated/core-client";
 import { create } from "zustand";
 import { WorkflowInfoApi, WorkflowSessionApi, TempUploadServiceApi } from "@/modules/chat/utils/request";
 import i18n from "@/i18n";
@@ -229,6 +230,9 @@ export const draftStore = {
 };
 
 export interface SlotRevision {
+  artifact_id?: string;
+  document?: Descriptor;
+  document_error?: { code: string; retryable: boolean };
   slot_id: string;
   revision: number;
   draft_version?: number;

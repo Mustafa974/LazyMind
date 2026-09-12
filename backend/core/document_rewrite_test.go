@@ -557,7 +557,7 @@ func TestDocumentRewriteRejectsInputInjection(t *testing.T) {
 				code := "DOCUMENT_ACTION_INVALID"
 				switch field {
 				case "unknown action":
-					body["action"] = "publish_document"
+					body["action"] = "unregistered_document_action"
 					status = 422
 					code = "DOCUMENT_ACTION_UNSUPPORTED"
 				case "candidate", "patch", "document":
@@ -711,7 +711,7 @@ func TestDocumentRewriteCapabilitiesAndOpenAPI(t *testing.T) {
 	found := false
 	for _, capability := range caps {
 		found = found || capability == "rewrite_selection"
-		if capability != "rewrite_selection" && capability != "save" && capability != "convert_document" && capability != "numbering" && capability != "cross_reference" {
+		if capability != "rewrite_selection" && capability != "save" && capability != "convert_document" && capability != "numbering" && capability != "cross_reference" && capability != "publish_document" {
 			t.Errorf("unsupported capability=%v", capability)
 		}
 	}
@@ -729,7 +729,7 @@ func TestDocumentRewriteCapabilitiesAndOpenAPI(t *testing.T) {
 			t.Error("rewrite advertised without model")
 		}
 	}
-	if !reflect.DeepEqual(caps, []any{"save", "convert_document", "numbering", "cross_reference"}) || doc["editable"] != true {
+	if !reflect.DeepEqual(caps, []any{"save", "convert_document", "numbering", "cross_reference", "publish_document"}) || doc["editable"] != true {
 		t.Errorf("missing model removed ordinary save: %#v", doc)
 	}
 
