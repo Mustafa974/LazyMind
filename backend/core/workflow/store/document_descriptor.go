@@ -47,10 +47,10 @@ func (r *Repository) DescribeArtifact(ctx context.Context, owner string, artifac
 			artifact.Document.Capabilities = append(artifact.Document.Capabilities, "rewrite_selection")
 		}
 	}
-	// Conversion and numbering views are read-only, so live consumers do not
-	// disable them. Saving numbering still requires the mutation live guard.
+	// Conversion, numbering and cross-reference lookup are read-only, so live
+	// consumers do not disable them. Mutations still require the live guard.
 	if artifact.Document != nil && writable {
-		artifact.Document.Capabilities = append(artifact.Document.Capabilities, "convert_document", "numbering")
+		artifact.Document.Capabilities = append(artifact.Document.Capabilities, "convert_document", "numbering", "cross_reference")
 	}
 }
 

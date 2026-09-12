@@ -656,12 +656,12 @@ func TestDocumentConvertCapabilities(t *testing.T) {
 								doc, _ := record["document"].(map[string]any)
 								want := []string{}
 								if state == "editable" {
-									want = []string{"convert_document", "numbering", "save"}
+									want = []string{"convert_document", "cross_reference", "numbering", "save"}
 									if withModel {
-										want = []string{"convert_document", "numbering", "rewrite_selection", "save"}
+										want = []string{"convert_document", "cross_reference", "numbering", "rewrite_selection", "save"}
 									}
 								} else if state == "live" {
-									want = []string{"convert_document", "numbering"}
+									want = []string{"convert_document", "cross_reference", "numbering"}
 								}
 								caps := schemaStringList(doc["capabilities"])
 								sort.Strings(caps)

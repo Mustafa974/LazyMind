@@ -705,12 +705,12 @@ func TestDocumentNumberingCapabilities(t *testing.T) {
 								sort.Strings(caps)
 								want := []string{}
 								if state == "editable" {
-									want = []string{"convert_document", "numbering", "save"}
+									want = []string{"convert_document", "cross_reference", "numbering", "save"}
 									if withModel {
-										want = []string{"convert_document", "numbering", "rewrite_selection", "save"}
+										want = []string{"convert_document", "cross_reference", "numbering", "rewrite_selection", "save"}
 									}
 								} else if state == "live" {
-									want = []string{"convert_document", "numbering"}
+									want = []string{"convert_document", "cross_reference", "numbering"}
 								}
 								if !reflect.DeepEqual(caps, want) || doc["editable"] != (state == "editable") {
 									t.Errorf("numbering capability=%#v want=%#v", doc, want)

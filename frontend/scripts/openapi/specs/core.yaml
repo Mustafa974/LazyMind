@@ -2474,6 +2474,317 @@ components:
                         $ref: '#/components/schemas/UserInfo'
                     type: array
             type: object
+        DocumentCrossReferenceExecuteRequest:
+            properties:
+                action:
+                    enum:
+                        - cross_reference
+                    type: string
+                base_draft_version:
+                    format: int64
+                    type: integer
+                base_revision:
+                    type: integer
+                input:
+                    $ref: '#/components/schemas/DocumentRewriteExecuteInput'
+            required:
+                - action
+                - base_revision
+                - input
+            type: object
+        DocumentCrossReferencePreviewInput:
+            additionalProperties: false
+            discriminator:
+                propertyName: operation
+            oneOf:
+                - additionalProperties: false
+                  properties:
+                    operation:
+                        enum:
+                            - list_targets
+                        type: string
+                  required:
+                    - operation
+                  type: object
+                - additionalProperties: false
+                  properties:
+                    operation:
+                        enum:
+                            - add
+                        type: string
+                    selection:
+                        description: Required for add, remove and retarget; absent for list_targets.
+                        discriminator:
+                            propertyName: type
+                        oneOf:
+                            - additionalProperties: false
+                              properties:
+                                selected_text:
+                                    minLength: 1
+                                    type: string
+                                type:
+                                    enum:
+                                        - markdown
+                                    type: string
+                              required:
+                                - type
+                                - selected_text
+                              type: object
+                            - additionalProperties: false
+                              properties:
+                                node_id:
+                                    minLength: 1
+                                    type: string
+                                selected_text:
+                                    minLength: 1
+                                    type: string
+                                type:
+                                    enum:
+                                        - ir
+                                    type: string
+                              required:
+                                - type
+                                - selected_text
+                                - node_id
+                              type: object
+                    target_id:
+                        minLength: 1
+                        type: string
+                  required:
+                    - operation
+                    - selection
+                    - target_id
+                  type: object
+                - additionalProperties: false
+                  properties:
+                    operation:
+                        enum:
+                            - remove
+                        type: string
+                    selection:
+                        description: Required for add, remove and retarget; absent for list_targets.
+                        discriminator:
+                            propertyName: type
+                        oneOf:
+                            - additionalProperties: false
+                              properties:
+                                selected_text:
+                                    minLength: 1
+                                    type: string
+                                type:
+                                    enum:
+                                        - markdown
+                                    type: string
+                              required:
+                                - type
+                                - selected_text
+                              type: object
+                            - additionalProperties: false
+                              properties:
+                                node_id:
+                                    minLength: 1
+                                    type: string
+                                selected_text:
+                                    minLength: 1
+                                    type: string
+                                type:
+                                    enum:
+                                        - ir
+                                    type: string
+                              required:
+                                - type
+                                - selected_text
+                                - node_id
+                              type: object
+                  required:
+                    - operation
+                    - selection
+                  type: object
+                - additionalProperties: false
+                  properties:
+                    operation:
+                        enum:
+                            - retarget
+                        type: string
+                    selection:
+                        description: Required for add, remove and retarget; absent for list_targets.
+                        discriminator:
+                            propertyName: type
+                        oneOf:
+                            - additionalProperties: false
+                              properties:
+                                selected_text:
+                                    minLength: 1
+                                    type: string
+                                type:
+                                    enum:
+                                        - markdown
+                                    type: string
+                              required:
+                                - type
+                                - selected_text
+                              type: object
+                            - additionalProperties: false
+                              properties:
+                                node_id:
+                                    minLength: 1
+                                    type: string
+                                selected_text:
+                                    minLength: 1
+                                    type: string
+                                type:
+                                    enum:
+                                        - ir
+                                    type: string
+                              required:
+                                - type
+                                - selected_text
+                                - node_id
+                              type: object
+                    target_id:
+                        minLength: 1
+                        type: string
+                  required:
+                    - operation
+                    - selection
+                    - target_id
+                  type: object
+            properties:
+                operation:
+                    enum:
+                        - list_targets
+                        - add
+                        - remove
+                        - retarget
+                    type: string
+                selection:
+                    description: Required for add, remove and retarget; absent for list_targets.
+                    discriminator:
+                        propertyName: type
+                    oneOf:
+                        - additionalProperties: false
+                          properties:
+                            selected_text:
+                                minLength: 1
+                                type: string
+                            type:
+                                enum:
+                                    - markdown
+                                type: string
+                          required:
+                            - type
+                            - selected_text
+                          type: object
+                        - additionalProperties: false
+                          properties:
+                            node_id:
+                                minLength: 1
+                                type: string
+                            selected_text:
+                                minLength: 1
+                                type: string
+                            type:
+                                enum:
+                                    - ir
+                                type: string
+                          required:
+                            - type
+                            - selected_text
+                            - node_id
+                          type: object
+                target_id:
+                    description: Required for add and retarget; absent for list_targets and remove.
+                    type: string
+            required:
+                - operation
+            type: object
+        DocumentCrossReferencePreviewRequest:
+            properties:
+                action:
+                    enum:
+                        - cross_reference
+                    type: string
+                base_draft_version:
+                    format: int64
+                    type: integer
+                base_revision:
+                    type: integer
+                input:
+                    $ref: '#/components/schemas/DocumentCrossReferencePreviewInput'
+            required:
+                - action
+                - base_revision
+                - input
+            type: object
+        DocumentCrossReferencePreviewResult:
+            properties:
+                artifact:
+                    $ref: '#/components/schemas/DocumentActionArtifact'
+                commit:
+                    $ref: '#/components/schemas/DocumentRewriteCommit'
+                operation:
+                    enum:
+                        - add
+                        - remove
+                        - retarget
+                    type: string
+                patch:
+                    $ref: '#/components/schemas/DocumentRewritePatch'
+                representation:
+                    enum:
+                        - markdown
+                        - ir
+                    type: string
+            required:
+                - artifact
+                - commit
+                - operation
+                - patch
+                - representation
+            type: object
+        DocumentCrossReferenceTarget:
+            properties:
+                target_id:
+                    type: string
+                title:
+                    type: string
+                type:
+                    enum:
+                        - heading
+                        - image
+                    type: string
+            required:
+                - target_id
+                - title
+                - type
+            type: object
+        DocumentCrossReferenceTargetsResult:
+            properties:
+                invalid_references:
+                    items:
+                        $ref: '#/components/schemas/DocumentInvalidCrossReference'
+                    type: array
+                representation:
+                    enum:
+                        - markdown
+                        - ir
+                    type: string
+                targets:
+                    items:
+                        $ref: '#/components/schemas/DocumentCrossReferenceTarget'
+                    type: array
+            required:
+                - invalid_references
+                - representation
+                - targets
+            type: object
+        DocumentInvalidCrossReference:
+            properties:
+                target_id:
+                    type: string
+            required:
+                - target_id
+            type: object
         DocumentNumberingEntry:
             properties:
                 label:
@@ -3923,6 +4234,39 @@ components:
                 source:
                     type: string
             type: object
+        PolishParagraphResult:
+            properties:
+                content:
+                    type: string
+                old_content:
+                    type: string
+                target_end:
+                    format: int64
+                    type: integer
+                target_start:
+                    format: int64
+                    type: integer
+            required:
+                - content
+                - old_content
+                - target_start
+                - target_end
+            type: object
+        PolishSelectionRange:
+            properties:
+                content:
+                    type: string
+                end:
+                    format: int64
+                    type: integer
+                start:
+                    format: int64
+                    type: integer
+            required:
+                - start
+                - end
+                - content
+            type: object
         PreferenceOrganizerPass:
             properties:
                 after:
@@ -4208,6 +4552,12 @@ components:
                     type: boolean
                 content:
                     type: string
+                full_content:
+                    type: string
+                selection_ranges:
+                    items:
+                        $ref: '#/components/schemas/PolishSelectionRange'
+                    type: array
                 user_instruct:
                     type: string
             required:
@@ -4218,6 +4568,10 @@ components:
             properties:
                 content:
                     type: string
+                results:
+                    items:
+                        $ref: '#/components/schemas/PolishParagraphResult'
+                    type: array
             type: object
         PromptRequest:
             properties:
@@ -6441,6 +6795,8 @@ components:
                         - DOCUMENT_ACTION_FAILED
                         - DOCUMENT_ACTION_RESULT_INVALID
                         - DOCUMENT_ACTION_SAVE_FAILED
+                        - CROSS_REFERENCE_SELECTION_INVALID
+                        - CROSS_REFERENCE_TARGET_NOT_FOUND
                     type: string
             required:
                 - code
@@ -6467,6 +6823,8 @@ components:
                         - $ref: '#/components/schemas/DocumentRewritePreviewResult'
                         - $ref: '#/components/schemas/DocumentConvertResult'
                         - $ref: '#/components/schemas/DocumentNumberingResult'
+                        - $ref: '#/components/schemas/DocumentCrossReferenceTargetsResult'
+                        - $ref: '#/components/schemas/DocumentCrossReferencePreviewResult'
                 message:
                     type: string
             required:
@@ -8782,6 +9140,8 @@ components:
                     type: integer
                 write_back_dirty:
                     type: boolean
+                write_back_local_path:
+                    type: string
                 write_back_ready:
                     type: boolean
                 write_back_state:
@@ -18029,6 +18389,7 @@ paths:
                             oneOf:
                                 - $ref: '#/components/schemas/DocumentRewriteExecuteRequest'
                                 - $ref: '#/components/schemas/DocumentNumberingExecuteRequest'
+                                - $ref: '#/components/schemas/DocumentCrossReferenceExecuteRequest'
                 required: true
             responses:
                 "200":
@@ -18079,7 +18440,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
                     description: Document action service failed
-            summary: Apply a document selection rewrite or numbering configuration
+            summary: Apply a document rewrite, numbering or cross-reference update
             tags:
                 - workflow
     /api/core/workflow-artifacts/{artifact_id}/document-actions:preview:
@@ -18100,6 +18461,7 @@ paths:
                                 - $ref: '#/components/schemas/DocumentRewritePreviewRequest'
                                 - $ref: '#/components/schemas/DocumentConvertPreviewRequest'
                                 - $ref: '#/components/schemas/DocumentNumberingPreviewRequest'
+                                - $ref: '#/components/schemas/DocumentCrossReferencePreviewRequest'
                 required: true
             responses:
                 "200":
@@ -18150,7 +18512,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
                     description: Document action service failed
-            summary: Preview a document rewrite, portable conversion or numbering view
+            summary: Preview a document rewrite, conversion, numbering or cross-reference action
             tags:
                 - workflow
     /api/core/workflow-authoring/v1/drafts:

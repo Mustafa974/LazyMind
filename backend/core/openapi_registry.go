@@ -95,7 +95,7 @@ type documentRewriteExecuteOpenAPIResponse struct {
 	Data    documentActionExecuteOpenAPIData `json:"data"`
 }
 type documentActionErrorOpenAPIData struct {
-	Code string `json:"code" enum:"IDENTITY_REQUIRED,PERMISSION_DENIED,ARTIFACT_NOT_FOUND,REVISION_REQUIRED,REVISION_CONFLICT,DRAFT_VERSION_REQUIRED,DRAFT_VERSION_CONFLICT,SESSION_NOT_EDITABLE,DOCUMENT_ACTION_INVALID,DOCUMENT_ACTION_UNSUPPORTED,MODEL_CONFIG_REQUIRED,SELECTION_STALE,SELECTION_AMBIGUOUS,ARTIFACT_IN_USE,DOCUMENT_ACTION_FAILED,DOCUMENT_ACTION_RESULT_INVALID,DOCUMENT_ACTION_SAVE_FAILED"`
+	Code string `json:"code" enum:"IDENTITY_REQUIRED,PERMISSION_DENIED,ARTIFACT_NOT_FOUND,REVISION_REQUIRED,REVISION_CONFLICT,DRAFT_VERSION_REQUIRED,DRAFT_VERSION_CONFLICT,SESSION_NOT_EDITABLE,DOCUMENT_ACTION_INVALID,DOCUMENT_ACTION_UNSUPPORTED,MODEL_CONFIG_REQUIRED,SELECTION_STALE,SELECTION_AMBIGUOUS,ARTIFACT_IN_USE,DOCUMENT_ACTION_FAILED,DOCUMENT_ACTION_RESULT_INVALID,DOCUMENT_ACTION_SAVE_FAILED,CROSS_REFERENCE_SELECTION_INVALID,CROSS_REFERENCE_TARGET_NOT_FOUND"`
 }
 type documentActionErrorOpenAPIResponse struct {
 	Code    int                            `json:"code"`
@@ -299,16 +299,16 @@ func (b *schemaBuilder) schemaFromSource(source schemaSource) map[string]any {
 
 func (b *schemaBuilder) schemaForType(t reflect.Type) map[string]any {
 	if t == reflect.TypeOf(documentActionExecuteOpenAPIRequest{}) {
-		return map[string]any{"oneOf": []any{b.schemaForType(reflect.TypeOf(workflow.DocumentRewriteExecuteRequest{})), b.schemaForType(reflect.TypeOf(workflow.DocumentNumberingExecuteRequest{}))}, "discriminator": map[string]any{"propertyName": "action"}}
+		return map[string]any{"oneOf": []any{b.schemaForType(reflect.TypeOf(workflow.DocumentRewriteExecuteRequest{})), b.schemaForType(reflect.TypeOf(workflow.DocumentNumberingExecuteRequest{})), b.schemaForType(reflect.TypeOf(workflow.DocumentCrossReferenceExecuteRequest{}))}, "discriminator": map[string]any{"propertyName": "action"}}
 	}
 	if t == reflect.TypeOf(documentActionExecuteOpenAPIData{}) {
 		return map[string]any{"oneOf": []any{b.schemaForType(reflect.TypeOf(workflow.DocumentRewriteExecuteResult{})), b.schemaForType(reflect.TypeOf(workflow.DocumentNumberingExecuteResult{}))}}
 	}
 	if t == reflect.TypeOf(documentActionPreviewOpenAPIRequest{}) {
-		return map[string]any{"oneOf": []any{b.schemaForType(reflect.TypeOf(workflow.DocumentRewritePreviewRequest{})), b.schemaForType(reflect.TypeOf(workflow.DocumentConvertPreviewRequest{})), b.schemaForType(reflect.TypeOf(workflow.DocumentNumberingPreviewRequest{}))}, "discriminator": map[string]any{"propertyName": "action"}}
+		return map[string]any{"oneOf": []any{b.schemaForType(reflect.TypeOf(workflow.DocumentRewritePreviewRequest{})), b.schemaForType(reflect.TypeOf(workflow.DocumentConvertPreviewRequest{})), b.schemaForType(reflect.TypeOf(workflow.DocumentNumberingPreviewRequest{})), b.schemaForType(reflect.TypeOf(workflow.DocumentCrossReferencePreviewRequest{}))}, "discriminator": map[string]any{"propertyName": "action"}}
 	}
 	if t == reflect.TypeOf(documentActionPreviewOpenAPIData{}) {
-		return map[string]any{"oneOf": []any{b.schemaForType(reflect.TypeOf(workflow.DocumentRewritePreviewResult{})), b.schemaForType(reflect.TypeOf(workflow.DocumentConvertResult{})), b.schemaForType(reflect.TypeOf(workflow.DocumentNumberingResult{}))}}
+		return map[string]any{"oneOf": []any{b.schemaForType(reflect.TypeOf(workflow.DocumentRewritePreviewResult{})), b.schemaForType(reflect.TypeOf(workflow.DocumentConvertResult{})), b.schemaForType(reflect.TypeOf(workflow.DocumentNumberingResult{})), b.schemaForType(reflect.TypeOf(workflow.DocumentCrossReferenceTargetsResult{})), b.schemaForType(reflect.TypeOf(workflow.DocumentCrossReferencePreviewResult{}))}}
 	}
 	if t == nil {
 		return nil
@@ -406,6 +406,25 @@ func (b *schemaBuilder) inlineSchemaForType(t reflect.Type) map[string]any {
 		}
 		sort.Strings(required)
 		result := map[string]any{"type": "object", "properties": properties}
+		if t == reflect.TypeOf(workflow.DocumentCrossReferencePreviewInput{}) {
+			branches := []any{}
+			for _, operation := range []string{"list_targets", "add", "remove", "retarget"} {
+				fields := map[string]any{"operation": map[string]any{"type": "string", "enum": []string{operation}}}
+				required := []string{"operation"}
+				if operation != "list_targets" {
+					fields["selection"] = properties["selection"]
+					required = append(required, "selection")
+				}
+				if operation == "add" || operation == "retarget" {
+					fields["target_id"] = map[string]any{"type": "string", "minLength": 1}
+					required = append(required, "target_id")
+				}
+				branches = append(branches, map[string]any{"type": "object", "additionalProperties": false, "properties": fields, "required": required})
+			}
+			result["oneOf"] = branches
+			result["discriminator"] = map[string]any{"propertyName": "operation"}
+			result["additionalProperties"] = false
+		}
 		// Keep the rewrite response disjoint from the numbering response, which
 		// also carries revision identity but adds a document view.
 		if t == reflect.TypeOf(workflow.DocumentRewriteExecuteResult{}) {
@@ -423,6 +442,19 @@ func (b *schemaBuilder) inlineSchemaForType(t reflect.Type) map[string]any {
 func inlineSpecialSchema(t reflect.Type) map[string]any {
 	if t == reflect.TypeOf(workflow.DocumentConvertSnapshot{}) {
 		return map[string]any{"oneOf": []any{map[string]any{"type": "string"}, map[string]any{"type": "object", "additionalProperties": true}}, "description": "Inline Markdown text or Writer IR object; never a file locator."}
+	}
+	if t == reflect.TypeOf(workflow.DocumentCrossReferenceSelection{}) {
+		branches := []any{}
+		for _, representation := range []string{"markdown", "ir"} {
+			fields := map[string]any{"type": map[string]any{"type": "string", "enum": []string{representation}}, "selected_text": map[string]any{"type": "string", "minLength": 1}}
+			required := []string{"type", "selected_text"}
+			if representation == "ir" {
+				fields["node_id"] = map[string]any{"type": "string", "minLength": 1}
+				required = append(required, "node_id")
+			}
+			branches = append(branches, map[string]any{"type": "object", "additionalProperties": false, "required": required, "properties": fields})
+		}
+		return map[string]any{"oneOf": branches, "discriminator": map[string]any{"propertyName": "type"}}
 	}
 	if t == reflect.TypeOf(workflow.DocumentRewriteSelection{}) {
 		branches := []any{}
@@ -2589,9 +2621,9 @@ func registeredCoreOperations() []openAPIOperation {
 		}},
 	}
 	return []openAPIOperation{
-		{Method: "POST", Path: "/workflow-artifacts/{artifact_id}/document-actions:preview", Summary: "Preview a document rewrite, portable conversion or numbering view", Tags: []string{"workflow"}, RequestBody: jsonBodyOf(documentActionPreviewOpenAPIRequest{}, true), Responses: map[int]openAPIResponse{
+		{Method: "POST", Path: "/workflow-artifacts/{artifact_id}/document-actions:preview", Summary: "Preview a document rewrite, conversion, numbering or cross-reference action", Tags: []string{"workflow"}, RequestBody: jsonBodyOf(documentActionPreviewOpenAPIRequest{}, true), Responses: map[int]openAPIResponse{
 			200: resp("Document preview result", documentActionPreviewOpenAPIResponse{}), 400: resp("Invalid input or missing baseline/model", documentActionErrorOpenAPIResponse{}), 403: resp("Permission denied", documentActionErrorOpenAPIResponse{}), 404: resp("Artifact not found", documentActionErrorOpenAPIResponse{}), 409: resp("Stale baseline, preview or unavailable mutation", documentActionErrorOpenAPIResponse{}), 422: resp("Unsupported document action", documentActionErrorOpenAPIResponse{}), 500: resp("Document action could not be saved", documentActionErrorOpenAPIResponse{}), 502: resp("Document action service failed", documentActionErrorOpenAPIResponse{})}},
-		{Method: "POST", Path: "/workflow-artifacts/{artifact_id}/document-actions:execute", Summary: "Apply a document selection rewrite or numbering configuration", Tags: []string{"workflow"}, RequestBody: jsonBodyOf(documentActionExecuteOpenAPIRequest{}, true), Responses: map[int]openAPIResponse{
+		{Method: "POST", Path: "/workflow-artifacts/{artifact_id}/document-actions:execute", Summary: "Apply a document rewrite, numbering or cross-reference update", Tags: []string{"workflow"}, RequestBody: jsonBodyOf(documentActionExecuteOpenAPIRequest{}, true), Responses: map[int]openAPIResponse{
 			200: resp("Document save result", documentRewriteExecuteOpenAPIResponse{}), 400: resp("Invalid input or missing baseline/model", documentActionErrorOpenAPIResponse{}), 403: resp("Permission denied", documentActionErrorOpenAPIResponse{}), 404: resp("Artifact not found", documentActionErrorOpenAPIResponse{}), 409: resp("Stale baseline, preview or unavailable mutation", documentActionErrorOpenAPIResponse{}), 422: resp("Unsupported document action", documentActionErrorOpenAPIResponse{}), 500: resp("Document action could not be saved", documentActionErrorOpenAPIResponse{}), 502: resp("Document action service failed", documentActionErrorOpenAPIResponse{})}},
 		{Method: "GET", Path: "/workflow-sessions/{session_id}/slots", Summary: "Read Workflow artifacts with document descriptors", Tags: []string{"workflow"}, Responses: map[int]openAPIResponse{200: resp("Workflow artifact read result", workflowSlotsReadResponse{})}},
 		{Method: "GET", Path: "/workflow-sessions/{session_id}", Summary: "Read Workflow artifacts with document descriptors", Tags: []string{"workflow"}, Responses: map[int]openAPIResponse{200: resp("Workflow artifact read result", workflowSessionReadResponse{})}},

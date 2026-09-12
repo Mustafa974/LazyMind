@@ -187,7 +187,7 @@ func requireDescriptor(t *testing.T, record map[string]any, representation strin
 		want = []any{"save"}
 	}
 	if copyable {
-		want = append(want, "convert_document", "numbering")
+		want = append(want, "convert_document", "numbering", "cross_reference")
 	}
 	if !reflect.DeepEqual(doc["capabilities"], want) {
 		t.Errorf("capabilities=%#v want=%#v", doc["capabilities"], want)

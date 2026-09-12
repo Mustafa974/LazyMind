@@ -417,12 +417,12 @@ export interface ApiCoreKbPermissionBatchPost200Response {
 /**
  * @type ApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest
  */
-export type ApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest = DocumentNumberingExecuteRequest | DocumentRewriteExecuteRequest;
+export type ApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest = DocumentCrossReferenceExecuteRequest | DocumentNumberingExecuteRequest | DocumentRewriteExecuteRequest;
 
 /**
  * @type ApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest
  */
-export type ApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest = DocumentConvertPreviewRequest | DocumentNumberingPreviewRequest | DocumentRewritePreviewRequest;
+export type ApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest = DocumentConvertPreviewRequest | DocumentCrossReferencePreviewRequest | DocumentNumberingPreviewRequest | DocumentRewritePreviewRequest;
 
 export interface AppendEvalSetImportRequest {
     'import_token': string;
@@ -1753,7 +1753,9 @@ export const DocumentActionErrorOpenAPIDataCodeEnum = {
     ArtifactInUse: 'ARTIFACT_IN_USE',
     DocumentActionFailed: 'DOCUMENT_ACTION_FAILED',
     DocumentActionResultInvalid: 'DOCUMENT_ACTION_RESULT_INVALID',
-    DocumentActionSaveFailed: 'DOCUMENT_ACTION_SAVE_FAILED'
+    DocumentActionSaveFailed: 'DOCUMENT_ACTION_SAVE_FAILED',
+    CrossReferenceSelectionInvalid: 'CROSS_REFERENCE_SELECTION_INVALID',
+    CrossReferenceTargetNotFound: 'CROSS_REFERENCE_TARGET_NOT_FOUND'
 } as const;
 
 export type DocumentActionErrorOpenAPIDataCodeEnum = typeof DocumentActionErrorOpenAPIDataCodeEnum[keyof typeof DocumentActionErrorOpenAPIDataCodeEnum];
@@ -1771,7 +1773,7 @@ export interface DocumentActionPreviewOpenAPIResponse {
 /**
  * @type DocumentActionPreviewOpenAPIResponseData
  */
-export type DocumentActionPreviewOpenAPIResponseData = DocumentConvertResult | DocumentNumberingResult | DocumentRewritePreviewResult;
+export type DocumentActionPreviewOpenAPIResponseData = DocumentConvertResult | DocumentCrossReferencePreviewResult | DocumentCrossReferenceTargetsResult | DocumentNumberingResult | DocumentRewritePreviewResult;
 
 export interface DocumentConvertPreviewInput {
     'document'?: DocumentConvertPreviewInputDocument;
@@ -1812,6 +1814,174 @@ export interface DocumentConvertResult {
 }
 export interface DocumentCreatorsResponse {
     'creators'?: Array<UserInfo>;
+}
+export interface DocumentCrossReferenceExecuteRequest {
+    'action': DocumentCrossReferenceExecuteRequestActionEnum;
+    'base_draft_version'?: number;
+    'base_revision': number;
+    'input': DocumentRewriteExecuteInput;
+}
+
+export const DocumentCrossReferenceExecuteRequestActionEnum = {
+    CrossReference: 'cross_reference'
+} as const;
+
+export type DocumentCrossReferenceExecuteRequestActionEnum = typeof DocumentCrossReferenceExecuteRequestActionEnum[keyof typeof DocumentCrossReferenceExecuteRequestActionEnum];
+
+/**
+ * @type DocumentCrossReferencePreviewInput
+ */
+export type DocumentCrossReferencePreviewInput = DocumentCrossReferencePreviewInputOneOf | DocumentCrossReferencePreviewInputOneOf1 | DocumentCrossReferencePreviewInputOneOf2 | DocumentCrossReferencePreviewInputOneOf3;
+
+export interface DocumentCrossReferencePreviewInputOneOf {
+    'operation': DocumentCrossReferencePreviewInputOneOfOperationEnum;
+}
+
+export const DocumentCrossReferencePreviewInputOneOfOperationEnum = {
+    ListTargets: 'list_targets'
+} as const;
+
+export type DocumentCrossReferencePreviewInputOneOfOperationEnum = typeof DocumentCrossReferencePreviewInputOneOfOperationEnum[keyof typeof DocumentCrossReferencePreviewInputOneOfOperationEnum];
+
+export interface DocumentCrossReferencePreviewInputOneOf1 {
+    'operation': DocumentCrossReferencePreviewInputOneOf1OperationEnum;
+    'selection': DocumentCrossReferencePreviewInputOneOf1Selection;
+    'target_id': string;
+}
+
+export const DocumentCrossReferencePreviewInputOneOf1OperationEnum = {
+    Add: 'add'
+} as const;
+
+export type DocumentCrossReferencePreviewInputOneOf1OperationEnum = typeof DocumentCrossReferencePreviewInputOneOf1OperationEnum[keyof typeof DocumentCrossReferencePreviewInputOneOf1OperationEnum];
+
+/**
+ * @type DocumentCrossReferencePreviewInputOneOf1Selection
+ * Required for add, remove and retarget; absent for list_targets.
+ */
+export type DocumentCrossReferencePreviewInputOneOf1Selection = DocumentCrossReferencePreviewInputOneOf1SelectionOneOf | DocumentCrossReferencePreviewInputOneOf1SelectionOneOf1;
+
+export interface DocumentCrossReferencePreviewInputOneOf1SelectionOneOf {
+    'selected_text': string;
+    'type': DocumentCrossReferencePreviewInputOneOf1SelectionOneOfTypeEnum;
+}
+
+export const DocumentCrossReferencePreviewInputOneOf1SelectionOneOfTypeEnum = {
+    Markdown: 'markdown'
+} as const;
+
+export type DocumentCrossReferencePreviewInputOneOf1SelectionOneOfTypeEnum = typeof DocumentCrossReferencePreviewInputOneOf1SelectionOneOfTypeEnum[keyof typeof DocumentCrossReferencePreviewInputOneOf1SelectionOneOfTypeEnum];
+
+export interface DocumentCrossReferencePreviewInputOneOf1SelectionOneOf1 {
+    'node_id': string;
+    'selected_text': string;
+    'type': DocumentCrossReferencePreviewInputOneOf1SelectionOneOf1TypeEnum;
+}
+
+export const DocumentCrossReferencePreviewInputOneOf1SelectionOneOf1TypeEnum = {
+    Ir: 'ir'
+} as const;
+
+export type DocumentCrossReferencePreviewInputOneOf1SelectionOneOf1TypeEnum = typeof DocumentCrossReferencePreviewInputOneOf1SelectionOneOf1TypeEnum[keyof typeof DocumentCrossReferencePreviewInputOneOf1SelectionOneOf1TypeEnum];
+
+export interface DocumentCrossReferencePreviewInputOneOf2 {
+    'operation': DocumentCrossReferencePreviewInputOneOf2OperationEnum;
+    'selection': DocumentCrossReferencePreviewInputOneOf2Selection;
+}
+
+export const DocumentCrossReferencePreviewInputOneOf2OperationEnum = {
+    Remove: 'remove'
+} as const;
+
+export type DocumentCrossReferencePreviewInputOneOf2OperationEnum = typeof DocumentCrossReferencePreviewInputOneOf2OperationEnum[keyof typeof DocumentCrossReferencePreviewInputOneOf2OperationEnum];
+
+/**
+ * @type DocumentCrossReferencePreviewInputOneOf2Selection
+ * Required for add, remove and retarget; absent for list_targets.
+ */
+export type DocumentCrossReferencePreviewInputOneOf2Selection = DocumentCrossReferencePreviewInputOneOf1SelectionOneOf | DocumentCrossReferencePreviewInputOneOf1SelectionOneOf1;
+
+export interface DocumentCrossReferencePreviewInputOneOf3 {
+    'operation': DocumentCrossReferencePreviewInputOneOf3OperationEnum;
+    'selection': DocumentCrossReferencePreviewInputOneOf3Selection;
+    'target_id': string;
+}
+
+export const DocumentCrossReferencePreviewInputOneOf3OperationEnum = {
+    Retarget: 'retarget'
+} as const;
+
+export type DocumentCrossReferencePreviewInputOneOf3OperationEnum = typeof DocumentCrossReferencePreviewInputOneOf3OperationEnum[keyof typeof DocumentCrossReferencePreviewInputOneOf3OperationEnum];
+
+/**
+ * @type DocumentCrossReferencePreviewInputOneOf3Selection
+ * Required for add, remove and retarget; absent for list_targets.
+ */
+export type DocumentCrossReferencePreviewInputOneOf3Selection = DocumentCrossReferencePreviewInputOneOf1SelectionOneOf | DocumentCrossReferencePreviewInputOneOf1SelectionOneOf1;
+
+export interface DocumentCrossReferencePreviewRequest {
+    'action': DocumentCrossReferencePreviewRequestActionEnum;
+    'base_draft_version'?: number;
+    'base_revision': number;
+    'input': DocumentCrossReferencePreviewInput;
+}
+
+export const DocumentCrossReferencePreviewRequestActionEnum = {
+    CrossReference: 'cross_reference'
+} as const;
+
+export type DocumentCrossReferencePreviewRequestActionEnum = typeof DocumentCrossReferencePreviewRequestActionEnum[keyof typeof DocumentCrossReferencePreviewRequestActionEnum];
+
+export interface DocumentCrossReferencePreviewResult {
+    'artifact': DocumentActionArtifact;
+    'commit': DocumentRewriteCommit;
+    'operation': DocumentCrossReferencePreviewResultOperationEnum;
+    'patch': DocumentRewritePatch;
+    'representation': DocumentCrossReferencePreviewResultRepresentationEnum;
+}
+
+export const DocumentCrossReferencePreviewResultOperationEnum = {
+    Add: 'add',
+    Remove: 'remove',
+    Retarget: 'retarget'
+} as const;
+
+export type DocumentCrossReferencePreviewResultOperationEnum = typeof DocumentCrossReferencePreviewResultOperationEnum[keyof typeof DocumentCrossReferencePreviewResultOperationEnum];
+export const DocumentCrossReferencePreviewResultRepresentationEnum = {
+    Markdown: 'markdown',
+    Ir: 'ir'
+} as const;
+
+export type DocumentCrossReferencePreviewResultRepresentationEnum = typeof DocumentCrossReferencePreviewResultRepresentationEnum[keyof typeof DocumentCrossReferencePreviewResultRepresentationEnum];
+
+export interface DocumentCrossReferenceTarget {
+    'target_id': string;
+    'title': string;
+    'type': DocumentCrossReferenceTargetTypeEnum;
+}
+
+export const DocumentCrossReferenceTargetTypeEnum = {
+    Heading: 'heading',
+    Image: 'image'
+} as const;
+
+export type DocumentCrossReferenceTargetTypeEnum = typeof DocumentCrossReferenceTargetTypeEnum[keyof typeof DocumentCrossReferenceTargetTypeEnum];
+
+export interface DocumentCrossReferenceTargetsResult {
+    'invalid_references': Array<DocumentInvalidCrossReference>;
+    'representation': DocumentCrossReferenceTargetsResultRepresentationEnum;
+    'targets': Array<DocumentCrossReferenceTarget>;
+}
+
+export const DocumentCrossReferenceTargetsResultRepresentationEnum = {
+    Markdown: 'markdown',
+    Ir: 'ir'
+} as const;
+
+export type DocumentCrossReferenceTargetsResultRepresentationEnum = typeof DocumentCrossReferenceTargetsResultRepresentationEnum[keyof typeof DocumentCrossReferenceTargetsResultRepresentationEnum];
+
+export interface DocumentInvalidCrossReference {
+    'target_id': string;
 }
 export interface DocumentNumberingEntry {
     'label': string;
@@ -1978,29 +2148,18 @@ export interface DocumentRewritePreviewInput {
 /**
  * @type DocumentRewritePreviewInputSelection
  */
-export type DocumentRewritePreviewInputSelection = DocumentRewritePreviewInputSelectionOneOf | DocumentRewritePreviewInputSelectionOneOf1;
+export type DocumentRewritePreviewInputSelection = DocumentCrossReferencePreviewInputOneOf1SelectionOneOf | DocumentRewritePreviewInputSelectionOneOf;
 
 export interface DocumentRewritePreviewInputSelectionOneOf {
-    'selected_text': string;
+    'node_id': string;
     'type': DocumentRewritePreviewInputSelectionOneOfTypeEnum;
 }
 
 export const DocumentRewritePreviewInputSelectionOneOfTypeEnum = {
-    Markdown: 'markdown'
-} as const;
-
-export type DocumentRewritePreviewInputSelectionOneOfTypeEnum = typeof DocumentRewritePreviewInputSelectionOneOfTypeEnum[keyof typeof DocumentRewritePreviewInputSelectionOneOfTypeEnum];
-
-export interface DocumentRewritePreviewInputSelectionOneOf1 {
-    'node_id': string;
-    'type': DocumentRewritePreviewInputSelectionOneOf1TypeEnum;
-}
-
-export const DocumentRewritePreviewInputSelectionOneOf1TypeEnum = {
     Ir: 'ir'
 } as const;
 
-export type DocumentRewritePreviewInputSelectionOneOf1TypeEnum = typeof DocumentRewritePreviewInputSelectionOneOf1TypeEnum[keyof typeof DocumentRewritePreviewInputSelectionOneOf1TypeEnum];
+export type DocumentRewritePreviewInputSelectionOneOfTypeEnum = typeof DocumentRewritePreviewInputSelectionOneOfTypeEnum[keyof typeof DocumentRewritePreviewInputSelectionOneOfTypeEnum];
 
 export interface DocumentRewritePreviewRequest {
     'action': DocumentRewritePreviewRequestActionEnum;
@@ -2799,6 +2958,17 @@ export interface PersonalizationSettingOpenAPIRequest {
 export interface PersonalizationSettingOpenAPIResponse {
     'enabled': boolean;
 }
+export interface PolishParagraphResult {
+    'content': string;
+    'old_content': string;
+    'target_end': number;
+    'target_start': number;
+}
+export interface PolishSelectionRange {
+    'content': string;
+    'end': number;
+    'start': number;
+}
 export interface PreferenceOrganizerPass {
     'after'?: PreferenceOrganizerState | null;
     'before': PreferenceOrganizerState;
@@ -3002,10 +3172,13 @@ export interface PromptPolishOpenAPIResponse {
 export interface PromptPolishRequest {
     'allow_empty'?: boolean;
     'content': string;
+    'full_content'?: string;
+    'selection_ranges'?: Array<PolishSelectionRange>;
     'user_instruct': string;
 }
 export interface PromptPolishResponse {
     'content'?: string;
+    'results'?: Array<PolishParagraphResult>;
 }
 export interface PromptRequest {
     'category'?: string;
@@ -3881,6 +4054,7 @@ export interface SlotDTO {
     'step_id'?: string;
     'version_number'?: number;
     'write_back_dirty'?: boolean;
+    'write_back_local_path'?: string;
     'write_back_ready'?: boolean;
     'write_back_state'?: string;
     'write_back_url'?: string;
@@ -43151,7 +43325,7 @@ export const WorkflowApiAxiosParamCreator = function (configuration?: Configurat
         },
         /**
          *
-         * @summary Apply a document selection rewrite or numbering configuration
+         * @summary Apply a document rewrite, numbering or cross-reference update
          * @param {string} artifactId
          * @param {ApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest} apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest
          * @param {*} [options] Override http request option.
@@ -43190,7 +43364,7 @@ export const WorkflowApiAxiosParamCreator = function (configuration?: Configurat
         },
         /**
          *
-         * @summary Preview a document rewrite, portable conversion or numbering view
+         * @summary Preview a document rewrite, conversion, numbering or cross-reference action
          * @param {string} artifactId
          * @param {ApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest} apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest
          * @param {*} [options] Override http request option.
@@ -43708,7 +43882,7 @@ export const WorkflowApiFp = function(configuration?: Configuration) {
         },
         /**
          *
-         * @summary Apply a document selection rewrite or numbering configuration
+         * @summary Apply a document rewrite, numbering or cross-reference update
          * @param {string} artifactId
          * @param {ApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest} apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest
          * @param {*} [options] Override http request option.
@@ -43722,7 +43896,7 @@ export const WorkflowApiFp = function(configuration?: Configuration) {
         },
         /**
          *
-         * @summary Preview a document rewrite, portable conversion or numbering view
+         * @summary Preview a document rewrite, conversion, numbering or cross-reference action
          * @param {string} artifactId
          * @param {ApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest} apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest
          * @param {*} [options] Override http request option.
@@ -43924,7 +44098,7 @@ export const WorkflowApiFactory = function (configuration?: Configuration, baseP
         },
         /**
          *
-         * @summary Apply a document selection rewrite or numbering configuration
+         * @summary Apply a document rewrite, numbering or cross-reference update
          * @param {WorkflowApiApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest} requestParameters Request parameters.
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
@@ -43934,7 +44108,7 @@ export const WorkflowApiFactory = function (configuration?: Configuration, baseP
         },
         /**
          *
-         * @summary Preview a document rewrite, portable conversion or numbering view
+         * @summary Preview a document rewrite, conversion, numbering or cross-reference action
          * @param {WorkflowApiApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest} requestParameters Request parameters.
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
@@ -44224,7 +44398,7 @@ export class WorkflowApi extends BaseAPI {
 
     /**
      *
-     * @summary Apply a document selection rewrite or numbering configuration
+     * @summary Apply a document rewrite, numbering or cross-reference update
      * @param {WorkflowApiApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest} requestParameters Request parameters.
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
@@ -44235,7 +44409,7 @@ export class WorkflowApi extends BaseAPI {
 
     /**
      *
-     * @summary Preview a document rewrite, portable conversion or numbering view
+     * @summary Preview a document rewrite, conversion, numbering or cross-reference action
      * @param {WorkflowApiApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest} requestParameters Request parameters.
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}

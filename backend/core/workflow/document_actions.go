@@ -214,6 +214,8 @@ func runDocumentAction(w http.ResponseWriter, r *http.Request, phase string) {
 	switch dispatch.Action {
 	case "rewrite_selection":
 		runDocumentRewrite(w, r, phase, owner, raw)
+	case "cross_reference":
+		runDocumentCrossReference(w, r, phase, owner, raw)
 	case "numbering":
 		runDocumentNumbering(w, r, phase, owner, raw)
 	case "convert_document":

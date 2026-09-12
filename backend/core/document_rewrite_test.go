@@ -711,7 +711,7 @@ func TestDocumentRewriteCapabilitiesAndOpenAPI(t *testing.T) {
 	found := false
 	for _, capability := range caps {
 		found = found || capability == "rewrite_selection"
-		if capability != "rewrite_selection" && capability != "save" && capability != "convert_document" && capability != "numbering" {
+		if capability != "rewrite_selection" && capability != "save" && capability != "convert_document" && capability != "numbering" && capability != "cross_reference" {
 			t.Errorf("unsupported capability=%v", capability)
 		}
 	}
@@ -729,7 +729,7 @@ func TestDocumentRewriteCapabilitiesAndOpenAPI(t *testing.T) {
 			t.Error("rewrite advertised without model")
 		}
 	}
-	if !reflect.DeepEqual(caps, []any{"save", "convert_document", "numbering"}) || doc["editable"] != true {
+	if !reflect.DeepEqual(caps, []any{"save", "convert_document", "numbering", "cross_reference"}) || doc["editable"] != true {
 		t.Errorf("missing model removed ordinary save: %#v", doc)
 	}
 
@@ -1363,7 +1363,7 @@ func TestDocumentRewriteCapabilityRequiresMutableState(t *testing.T) {
 						}
 						want := []any{}
 						if state == "live" {
-							want = []any{"convert_document", "numbering"}
+							want = []any{"convert_document", "numbering", "cross_reference"}
 						}
 						if doc["editable"] != false || !reflect.DeepEqual(doc["capabilities"], want) {
 							t.Errorf("model enabled blocked capability: %#v", doc)
