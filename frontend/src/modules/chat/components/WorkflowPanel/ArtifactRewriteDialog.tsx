@@ -232,10 +232,8 @@ export function ArtifactRewriteDialog({
           ...(baseDraftVersion !== undefined ? { base_draft_version: baseDraftVersion } : {}),
           input: {
             instruction: trimmedInstruction,
-            selection: selection.type === 'ir'
-              ? { type: 'ir', node_id: selection.node_id }
-              : selection.type === 'ppt_html'
-                ? {
+            ...(selection.type === 'ppt_html'
+              ? { selection: {
                   type: 'ppt_html',
                   page: selection.page,
                   el: selection.el,
@@ -247,8 +245,10 @@ export function ArtifactRewriteDialog({
                   ...(selection.computed_style
                     ? { computed_style: selection.computed_style }
                     : {}),
-                }
-                : { type: 'markdown', selected_text: selection.selected_text },
+                } }
+              : selection.type === 'ir'
+                ? { type: 'ir', selection_ranges: [{ node_id: selection.node_id, selected_text: selection.selectedText }] }
+                : { type: 'markdown', selection_ranges: [{ selected_text: selection.selected_text }] }),
           },
         },
         { silentError: true } as never,
@@ -457,6 +457,18 @@ export function ArtifactRewriteInlineDiff({
       if (applyPreview) {
         const revision = await applyPreview();
         onApplied(revision);
+        return;
+      }
+      if (preview.commit?.token) {
+        const response = await WorkflowSessionApi().executeArtifactAction(sessionId, slotId, listIndex, {
+          action: 'rewrite_selection', base_revision: preview.base_revision,
+          ...(preview.base_draft_version !== undefined ? { base_draft_version: preview.base_draft_version } : {}),
+          input: { commit_token: preview.commit.token },
+        });
+        if (response.data?.code !== 0 || response.data.data?.status !== 'applied') {
+          throw new Error('invalid commit response');
+        }
+        onApplied(response.data.data.revision, response.data.data.draft_version);
         return;
       }
       const response = await WorkflowSessionApi().patchSlotItem(

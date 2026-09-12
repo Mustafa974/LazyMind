@@ -604,6 +604,7 @@ export function MarkdownArtifactEditor({
   const autoSaveTimerRef = useRef<number | undefined>(undefined);
   const viewRestoreFrameRef = useRef<number | undefined>(undefined);
   const draftMarkdownRef = useRef(draftMarkdown);
+  const copySnapshotRef = useRef(markdown);
   const dirtyRef = useRef(false);
   const savingRef = useRef(false);
   const conflictRef = useRef(false);
@@ -628,14 +629,24 @@ export function MarkdownArtifactEditor({
     ),
     [anchorSourceMarkdown, draftMarkdown],
   );
+  copySnapshotRef.current = dirty
+    ? writerMarkdownForSave(materializedDraftMarkdown)
+    : anchorSourceMarkdown;
   const markdownOutline = useMemo(
     () => collectWriterMarkdownOutline(materializedDraftMarkdown),
     [materializedDraftMarkdown],
   );
   const hasOutline = Boolean(markdownOutline.title);
   const referenceTargets = useMemo(
-    () => collectWriterMarkdownReferenceTargets(materializedDraftMarkdown),
-    [materializedDraftMarkdown],
+    () => collectWriterMarkdownReferenceTargets(materializedDraftMarkdown).map((target) => {
+      const numberingLabel = target.type === 'heading'
+        ? numbering?.entries[target.anchorId.slice('block-'.length)]?.label
+        : undefined;
+      return numberingLabel
+        ? { ...target, label: `${numberingLabel} ${target.label}` }
+        : target;
+    }),
+    [materializedDraftMarkdown, numbering],
   );
   const outlineBaseLevel = Math.min(
     ...markdownOutline.items.map((item) => item.level),
@@ -1240,7 +1251,7 @@ export function MarkdownArtifactEditor({
 
   useEffect(() => {
     if (!editingKey || !registerSnapshot) return undefined;
-    return registerSnapshot(editingKey, () => draftMarkdownRef.current);
+    return registerSnapshot(editingKey, () => copySnapshotRef.current);
   }, [editingKey, registerSnapshot]);
 
   useEffect(() => {

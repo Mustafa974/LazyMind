@@ -605,6 +605,42 @@ function renderBlock(
     ? renderDragHandle(block.node_id, dragLabel)
     : '';
 
+  if (block.type === 'table') {
+    const caption = `<div data-writer-block-content="true" class="writer-ir__table-caption">${renderEditableBlockText(block)}</div>`;
+    const rows = (block.children ?? [])
+      .filter((row) => row.type === 'table_row')
+      .map((row) => {
+        const cells = (row.children ?? [])
+          .filter((cell) => cell.type === 'table_cell')
+          .map((cell) => {
+            const tag = cell.numbering?.header ? 'th' : 'td';
+            const align = String(cell.numbering?.align ?? '');
+            const rowSpan = Number(cell.numbering?.row_span ?? 1);
+            const columnSpan = Number(cell.numbering?.column_span ?? 1);
+            return [
+              `<${tag} data-writer-block="true"`,
+              ` data-writer-block-content="true"`,
+              ` data-node-id="${escapeHtmlAttribute(cell.node_id)}"`,
+              ` data-node-type="table_cell"`,
+              align ? ` data-table-align="${escapeHtmlAttribute(align)}"` : '',
+              rowSpan > 1 ? ` rowspan="${rowSpan}"` : '',
+              columnSpan > 1 ? ` colspan="${columnSpan}"` : '',
+              cell.editable === false ? ' contenteditable="false"' : '',
+              ` class="writer-ir__table-cell">`,
+              renderEditableBlockText(cell),
+              `</${tag}>`,
+            ].join('');
+          }).join('');
+        return [
+          `<tr data-writer-block="true"`,
+          ` data-node-id="${escapeHtmlAttribute(row.node_id)}"`,
+          ` data-node-type="table_row"`,
+          ` class="writer-ir__table-row">${cells}</tr>`,
+        ].join('');
+      }).join('');
+    return `<div ${attributes}>${dragHandle}${caption}<div class="writer-ir__table-scroll"><table class="writer-ir__table"><tbody>${rows}</tbody></table></div></div>`;
+  }
+
   if (block.type === 'heading') {
     const level = headingLevel(block);
     const entry = numbering?.entries[block.node_id];
@@ -827,9 +863,11 @@ function parseEditorDocument(editor: HTMLElement, source: WriterDocument): Write
 
     const existing = findWriterBlock(titledDocument.blocks, nodeId);
     const contentElement = blockContentElement(element);
-    const content = type === 'divider'
+    const content = ['divider', 'table_row'].includes(type)
       ? ''
-      : textFromBlockElement(element, contentElement);
+      : type === 'table'
+        ? textFromElement(contentElement)
+        : textFromBlockElement(element, contentElement);
     const contentDocument = existing
       ? updateWriterBlockContent(titledDocument, nodeId, content)
       : undefined;
@@ -847,7 +885,15 @@ function parseEditorDocument(editor: HTMLElement, source: WriterDocument): Write
     if (existing?.editable === false) return existing;
 
     const nestedContainers = childElements(element, '[data-writer-children], ul, ol');
-    let children = nestedContainers.flatMap((container) => parseSequence(container));
+    let children = type === 'table'
+      ? Array.from(element.querySelectorAll<HTMLElement>(
+        ':scope > .writer-ir__table-scroll > table > tbody > tr[data-writer-block]',
+      )).map((row) => parseBlockElement(row, 'table_row'))
+      : type === 'table_row'
+        ? childElements(element, 'th[data-writer-block], td[data-writer-block]').map(
+          (cell) => parseBlockElement(cell, 'table_cell'),
+        )
+        : nestedContainers.flatMap((container) => parseSequence(container));
     // List items render nested blocks as direct children without a
     // data-writer-children wrapper.
     if (type === 'list_item') {
@@ -1806,8 +1852,16 @@ export function WriterIRDocumentEditor({
   );
   const referenceTargets = useMemo(
     () => collectWriterReferenceTargets(document.blocks)
-      .filter((target) => target.nodeId !== activeBlock?.node_id),
-    [activeBlock?.node_id, document.blocks],
+      .filter((target) => target.nodeId !== activeBlock?.node_id)
+      .map((target) => {
+        const numberingLabel = target.type === 'heading'
+          ? numbering?.entries[target.nodeId]?.label
+          : undefined;
+        return numberingLabel
+          ? { ...target, label: `${numberingLabel} ${target.label}` }
+          : target;
+      }),
+    [activeBlock?.node_id, document.blocks, numbering],
   );
 
   const updateFormatToolbarPosition = useCallback(() => {

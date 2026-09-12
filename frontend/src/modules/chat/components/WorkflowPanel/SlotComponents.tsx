@@ -62,8 +62,8 @@ import { SlotHtmlSlide } from './ppt/SlotHtmlSlide';
 import { SlotJsonSlide } from './ppt/SlotJsonSlide';
 import { isSlideSpecArtifact } from './ppt/slideSchema';
 import type { TaskArtifactStream } from '@/modules/chat/store/taskCenter';
-import { Modal, Radio, type RadioChangeEvent } from 'antd';
-import { GithubOutlined } from '@ant-design/icons';
+import { Image as AntImage, Modal, Radio, type RadioChangeEvent } from 'antd';
+import { FolderOpenOutlined, GithubOutlined } from '@ant-design/icons';
 import { cloudProviderOptions } from '@/modules/modelProvider/constants/cloudProviderOptions';
 import { isVideoArtifactValue } from './artifactMedia';
 
@@ -1495,7 +1495,12 @@ export function SlotImage({
   const [captionEditing, setCaptionEditing] = useState(false);
   const [captionDraft, setCaptionDraft] = useState('');
   const [uploading, setUploading] = useState(false);
+  const [previewVisible, setPreviewVisible] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setPreviewVisible(false);
+  }, [url]);
 
   // Reset editing state when a different slot item is mapped to this component instance
   // (e.g. after delete+reorder, the same React node may receive a new slot via props).
@@ -1586,6 +1591,27 @@ export function SlotImage({
 
   const hasActions = Boolean(sessionId && slotId && slot.list_index !== undefined) && !readOnly;
   const showMutationActions = hasActions && !hideMutationActions;
+  const imagePreview = (
+    <AntImage
+      src={url}
+      alt={alt}
+      className={cardMode ? 'workflow-slot__image-card-img' : 'workflow-slot__image'}
+      wrapperClassName='workflow-slot__image-preview'
+      loading='lazy'
+      preview={{ visible: previewVisible, onVisibleChange: setPreviewVisible }}
+      role='button'
+      tabIndex={0}
+      aria-label={alt ? `${tr('chat.previewImage')}：${alt}` : tr('chat.previewImage')}
+      onClick={(event: React.MouseEvent<HTMLElement>) => event.stopPropagation()}
+      onKeyDown={(event: React.KeyboardEvent<HTMLElement>) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          event.stopPropagation();
+          setPreviewVisible(true);
+        }
+      }}
+    />
+  );
   const downloadName = String(raw?.name ?? raw?.filename ?? 'workflow-image.png');
   const downloadUrl = url ? `${url}${url.includes('?') ? '&' : '?'}download=1` : '';
   const downloadControl = downloadEnabled && downloadUrl ? (
@@ -1676,7 +1702,7 @@ export function SlotImage({
     return (
       <div className='workflow-slot workflow-slot--image-card-wrap'>
         <div className='workflow-slot workflow-slot--image-card'>
-          <img src={url} alt={alt} className='workflow-slot__image-card-img' loading='lazy' />
+          {imagePreview}
           {alt && <div className='workflow-slot__image-card-caption'>{alt}</div>}
           {overlays}
           {downloadControl}
@@ -1724,7 +1750,7 @@ export function SlotImage({
   }
   return (
     <div className='workflow-slot workflow-slot--image'>
-      <img src={url} alt={alt} className='workflow-slot__image' loading='lazy' />
+      {imagePreview}
       {overlays}
       {downloadControl}
       {hasActions && (
@@ -2570,6 +2596,10 @@ function writerLmdFilename(name: string, title = ''): string {
   return writerDownloadFilename(title, 'lmd', name);
 }
 
+function writerLatexFilename(name: string, title = ''): string {
+  return writerDownloadFilename(title, 'tex', name);
+}
+
 function shouldRenderInlineStructuredContent(
   slot: SlotRevision,
   expectedType?: 'image' | 'file' | 'text',
@@ -2618,6 +2648,13 @@ function isWriterWriteBackSlot(
   return slotId === 'flat_draft_document' || slotId === 'draft_document';
 }
 
+function showWriterLocalPath(localPath: string) {
+  Modal.info({
+    title: tr('chat.writerIR.openCloudDocument'),
+    content: <div style={{ overflowWrap: 'anywhere' }}>{localPath}</div>,
+  });
+}
+
 function WriterWriteBackSummary({
   slot,
   revision,
@@ -2657,6 +2694,17 @@ function WriterWriteBackSummary({
           {tr('chat.writerIR.openCloudDocument')}
         </a>
       )}
+      {!slot.write_back_url && slot.write_back_local_path && (
+        <a
+          href='#'
+          onClick={(event) => {
+            event.preventDefault();
+            showWriterLocalPath(slot.write_back_local_path!);
+          }}
+        >
+          {tr('chat.writerIR.openCloudDocument')}
+        </a>
+      )}
     </div>
   );
 }
@@ -2682,11 +2730,28 @@ function isWriterWriteBackDisabled(
 
 export type { WriterWriteBackProvider } from '@/modules/chat/utils/request';
 
-const writerWriteBackProviders = ['feishu', 'notion', 'github', 'wechat'] as const;
-const futureWriterProviders = ['yuque', 'obsidian'] as const;
+const writerWriteBackProviders = ['feishu', 'notion', 'github', 'wechat', 'obsidian'] as const;
+const obsidianLogoUrl = 'https://obsidian.md/images/obsidian-logo-gradient.svg';
+
+function ObsidianWriterProviderIcon() {
+  const [failed, setFailed] = useState(false);
+
+  return failed
+    ? <FolderOpenOutlined aria-hidden='true' />
+    : (
+      <img
+        src={obsidianLogoUrl}
+        alt=''
+        aria-hidden='true'
+        onError={() => setFailed(true)}
+      />
+    );
+}
 
 function writerWriteBackProvider(provider?: string): WriterWriteBackProvider {
-  return provider === 'notion' || provider === 'github' || provider === 'wechat' ? provider : 'feishu';
+  return provider === 'notion' || provider === 'github' || provider === 'wechat' || provider === 'obsidian'
+    ? provider
+    : 'feishu';
 }
 
 export function WriterProviderChoice({
@@ -2725,6 +2790,8 @@ export function WriterProviderChoice({
               <span className='workflow-writer-provider-picker__option'>
                 {item === 'github'
                   ? <GithubOutlined aria-hidden='true' />
+                  : item === 'obsidian'
+                    ? <ObsidianWriterProviderIcon />
                   : config?.logoUrl
                     ? <img src={config.logoUrl} alt='' aria-hidden='true' />
                     : config?.icon}
@@ -2734,17 +2801,6 @@ export function WriterProviderChoice({
             </Radio>
           );
         })}
-        {futureWriterProviders.map((item) => (
-          <Radio key={item} value={item} disabled>
-            <span className='workflow-writer-provider-picker__option'>
-              <span className='workflow-writer-provider-picker__fallback-icon' aria-hidden='true'>
-                ◇
-              </span>
-              <span>{tr(`chat.writerIR.providers.${item}`)}</span>
-              <small>{tr('chat.writerIR.comingSoon')}</small>
-            </span>
-          </Radio>
-        ))}
       </Radio.Group>
     </div>
   );
@@ -2762,6 +2818,7 @@ function useRegisterWriterWriteBack({
   draftVersion,
   getLatestRevision,
   writeBackUrl: serverWriteBackUrl,
+  writeBackLocalPath: serverWriteBackLocalPath,
   provider,
   disabled,
   onSuccess,
@@ -2778,6 +2835,7 @@ function useRegisterWriterWriteBack({
   draftVersion?: number;
   getLatestRevision?: () => number;
   writeBackUrl?: string;
+  writeBackLocalPath?: string;
   provider?: string;
   disabled?: boolean;
   onSuccess?: (
@@ -2793,6 +2851,13 @@ function useRegisterWriterWriteBack({
     'idle' | 'loading' | 'success' | 'error' | 'conflict' | 'provider-configuration-required'
   >('idle');
   const writeBackUrl = serverWriteBackUrl;
+  const [writeBackLocalPath, setWriteBackLocalPath] = useState(
+    serverWriteBackLocalPath ?? '',
+  );
+
+  useEffect(() => {
+    setWriteBackLocalPath(serverWriteBackLocalPath ?? '');
+  }, [serverWriteBackLocalPath]);
 
   const [selectedProvider, setSelectedProvider] = useState<WriterWriteBackProvider>(
     writerWriteBackProvider(provider),
@@ -2838,6 +2903,8 @@ function useRegisterWriterWriteBack({
       ) {
         throw new Error(tr('chat.writerIR.writeBackFailed'));
       }
+      const localPath = result.write_result?.local_path;
+      setWriteBackLocalPath(typeof localPath === 'string' ? localPath.trim() : '');
       setStatus('success');
       onSuccess?.(result.revision, result.document, result.draft_version);
     } catch (error) {
@@ -2859,6 +2926,16 @@ function useRegisterWriterWriteBack({
   }, [draftVersion, getLatestRevision, initialDelivery, onConflict, onSuccess, revision, sessionId, slotId]);
   const writeBackRef = useRef(writeBack);
   writeBackRef.current = writeBack;
+
+  useEffect(() => {
+    if (!enabled || !tabActive || !actionKey || writeBackUrl || !writeBackLocalPath) return undefined;
+    return registerFooterAction(`${actionKey}:local-path`, {
+      label: tr('chat.writerIR.openCloudDocument'),
+      order: 20,
+      tone: 'secondary',
+      onClick: () => showWriterLocalPath(writeBackLocalPath),
+    });
+  }, [actionKey, enabled, registerFooterAction, tabActive, writeBackLocalPath, writeBackUrl]);
 
   useEffect(() => {
     if (!enabled || !tabActive || !actionKey || !sessionId) return undefined;
@@ -3337,6 +3414,7 @@ function SlotWriterDocument({
     draftVersion: localDraftVersion,
     getLatestRevision,
     writeBackUrl: slot.write_back_url,
+    writeBackLocalPath: slot.write_back_local_path,
     provider: slot.provider,
     disabled: writeBackDisabled,
     synced: slot.write_back_state === 'synced_clean',
@@ -3357,6 +3435,7 @@ function SlotWriterDocument({
   const baseFilename = slot.caption || slotId;
   const downloadMarkdownFilename = writerMarkdownFilename(baseFilename, downloadTitle);
   const lmdFilename = writerLmdFilename(baseFilename, downloadTitle);
+  const latexFilename = writerLatexFilename(baseFilename, downloadTitle);
 
   useDocumentCopy({
     enabled: Boolean(rendered) && !loading,
@@ -3530,6 +3609,14 @@ function SlotWriterDocument({
             conversionSource: downloadContent,
             conversionSourceFormat: 'markdown',
           }}
+          latex={rendered.representation === 'markdown' ? {
+            filename: latexFilename,
+            mimeType: 'application/x-tex;charset=utf-8',
+            cacheKey: writerDownloadCacheKey('writer-document:latex-canonical', markdown),
+            conversionSource: markdown,
+            conversionSourceFormat: 'markdown',
+            materializedNumbering: false,
+          } : undefined}
         />
       )}
     </div>
@@ -3872,6 +3959,7 @@ function SlotJsonFile({
     draftVersion: localDraftVersion,
     getLatestRevision,
     writeBackUrl: slot.write_back_url,
+    writeBackLocalPath: slot.write_back_local_path,
     provider: slot.provider,
     disabled: writeBackDisabled,
     synced: slot.write_back_state === 'synced_clean',
@@ -4240,6 +4328,7 @@ function SlotInlineStructured({
     revision: displayRevision,
     draftVersion: localDraftVersion,
     writeBackUrl: slot.write_back_url,
+    writeBackLocalPath: slot.write_back_local_path,
     provider: slot.provider,
     disabled: writeBackDisabled,
     synced: slot.write_back_state === 'synced_clean',
@@ -4599,12 +4688,20 @@ function SlotMarkdownFile({
     () => writerLmdFilename(name, downloadArticleTitle),
     [downloadArticleTitle, name],
   );
+  const latexFilename = useMemo(
+    () => writerLatexFilename(name, downloadArticleTitle),
+    [downloadArticleTitle, name],
+  );
   const markdownCacheKey = useMemo(
     () => writerDownloadCacheKey('markdown-file:markdown', downloadMarkdownContent),
     [downloadMarkdownContent],
   );
   const lmdCacheKey = useMemo(
     () => writerDownloadCacheKey('markdown-file:lmd', downloadMarkdownContent),
+    [downloadMarkdownContent],
+  );
+  const latexCacheKey = useMemo(
+    () => writerDownloadCacheKey('markdown-file:latex', downloadMarkdownContent),
     [downloadMarkdownContent],
   );
   const canUseOriginalLmd = Boolean(originalUrl && downloadMarkdownContent === content);
@@ -4743,6 +4840,7 @@ function SlotMarkdownFile({
     revision: displayRevision,
     draftVersion: localDraftVersion,
     writeBackUrl: slot.write_back_url,
+    writeBackLocalPath: slot.write_back_local_path,
     provider: slot.provider,
     disabled: writeBackDisabled,
     synced: slot.write_back_state === 'synced_clean',
@@ -4805,6 +4903,13 @@ function SlotMarkdownFile({
               filename: lmdFilename,
               mimeType: 'application/json;charset=utf-8',
               cacheKey: lmdCacheKey,
+              conversionSource: downloadMarkdownContent,
+              conversionSourceFormat: 'markdown',
+            }}
+            latex={{
+              filename: latexFilename,
+              mimeType: 'application/x-tex;charset=utf-8',
+              cacheKey: latexCacheKey,
               conversionSource: downloadMarkdownContent,
               conversionSourceFormat: 'markdown',
             }}
@@ -4921,6 +5026,13 @@ function SlotMarkdownFile({
             filename: lmdFilename,
             mimeType: 'application/json;charset=utf-8',
             cacheKey: lmdCacheKey,
+            conversionSource: downloadMarkdownContent,
+            conversionSourceFormat: 'markdown',
+          }}
+          latex={{
+            filename: latexFilename,
+            mimeType: 'application/x-tex;charset=utf-8',
+            cacheKey: latexCacheKey,
             conversionSource: downloadMarkdownContent,
             conversionSourceFormat: 'markdown',
           }}

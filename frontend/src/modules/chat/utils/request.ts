@@ -27,6 +27,7 @@ import {
   DefaultApiFactory as CoreDefaultApiFactory,
   PromptsApiFactory as CorePromptsApiFactory,
   type ConversationHistoryListResponse,
+  type ConversationPinResponse,
   type ConversationTrailListResponse,
   type DefaultApiApiCoreConversationsNameHistoryGetRequest,
   type DefaultApiApiCoreConversationsNameTrailGetRequest,
@@ -69,6 +70,8 @@ const corePromptsClient = CorePromptsApiFactory(
   BASE_URL,
   axiosInstance,
 );
+
+export type ConversationOrderResult = ConversationPinResponse;
 
 export interface PromptLibraryListParams {
   pageSize?: number; // 每页数量
@@ -244,7 +247,7 @@ export interface WriteBackWriterDocumentResult {
   write_result?: Record<string, unknown>;
 }
 
-export type WriterWriteBackProvider = 'feishu' | 'notion' | 'github' | 'wechat';
+export type WriterWriteBackProvider = 'feishu' | 'notion' | 'github' | 'wechat' | 'obsidian';
 
 export interface WriteBackWriterDocumentRequest {
   base_revision: number;
@@ -304,7 +307,7 @@ export interface SaveWriterDocumentResult extends RenderWriterDocumentResult {
 }
 
 export type RewriteSelection =
-  | { type: 'ir'; node_id: string }
+  | { type: 'ir'; node_id: string; selected_text?: string }
   | { type: 'markdown'; selected_text: string }
   | {
     type: 'ppt_html';
@@ -331,8 +334,11 @@ export interface RewriteSelectionPreviewRequest {
   base_draft_version?: number;
   input: {
     instruction: string;
-    selection: RewriteSelection;
-  };
+  } & (
+    | { type: 'ir'; selection_ranges: Array<{ node_id: string; selected_text?: string }> }
+    | { type: 'markdown'; selection_ranges: Array<{ selected_text: string; start?: number; end?: number }> }
+    | { selection: Extract<RewriteSelection, { type: 'ppt_html' }> }
+  );
 }
 
 export interface RewriteSelectionPreview {
@@ -368,6 +374,11 @@ export interface RewriteSelectionPreview {
   layout_notes?: string[];
 }
 
+/** Wire response for Writer; the existing single-paragraph UI consumes one result. */
+export type DocumentRewriteSelectionPreview = Omit<RewriteSelectionPreview, 'target' | 'preview' | 'patch'> & {
+  results: Array<Pick<RewriteSelectionPreview, 'target' | 'preview' | 'patch'>>;
+};
+
 export type WriterCopyFormat = 'markdown' | 'latex' | 'text';
 
 export interface ConvertDocumentResult {
@@ -389,7 +400,7 @@ export interface ExecuteArtifactActionResult {
   base_revision: number;
   revision: number;
   draft_version: number;
-  representation: 'ppt_html';
+  representation: 'ppt_html' | 'ir' | 'markdown';
   artifact: RewriteSelectionPreview['artifact'];
 }
 
@@ -505,22 +516,31 @@ export function WorkflowSessionApi() {
         { silentError: true } as RawAxiosRequestConfig,
       );
     },
-    previewRewriteSelection(
+    async previewRewriteSelection(
       sessionId: string,
       slotId: string,
       listIndex: number,
       payload: RewriteSelectionPreviewRequest,
       options?: RawAxiosRequestConfig,
     ) {
-      return axiosInstance.post<{
+      const response = await axiosInstance.post<{
         code: number;
         message: string;
-        data: RewriteSelectionPreview;
+        data: RewriteSelectionPreview | DocumentRewriteSelectionPreview;
       }>(
         `${coreApiBaseUrl}/workflow-sessions/${encodeURIComponent(sessionId)}/slots/${encodeURIComponent(slotId)}/items/idx/${listIndex}:action-preview`,
         payload,
         options,
       );
+      const result = response.data.data;
+      if ('type' in payload.input) {
+        if (!('results' in result) || !Array.isArray(result.results) || result.results.length !== 1) {
+          throw new Error('Expected one paragraph rewrite result');
+        }
+        const { results, ...preview } = result;
+        return { ...response, data: { ...response.data, data: { ...preview, ...results[0] } } };
+      }
+      return { ...response, data: { ...response.data, data: result as RewriteSelectionPreview } };
     },
     executeArtifactAction(
       sessionId: string,
@@ -804,14 +824,20 @@ export function ChatServiceApi() {
       pinned: boolean,
       options?: RawAxiosRequestConfig,
     ) {
-      return axiosInstance.post<{
-        conversation_id: string;
-        is_pinned: boolean;
-        pinned_at?: string | null;
-      }>(
+      return axiosInstance.post<ConversationOrderResult>(
         `${coreApiBaseUrl}/conversations/${encodeURIComponent(conversationId)}:${pinned ? "pin" : "unpin"}`,
         undefined,
         options,
+      );
+    },
+    conversationServiceReorder(
+      conversationId: string,
+      targetConversationId: string,
+      position: "before" | "after",
+    ) {
+      return axiosInstance.post<ConversationOrderResult>(
+        `${coreApiBaseUrl}/conversations/${encodeURIComponent(conversationId)}:reorder`,
+        { target_conversation_id: targetConversationId, position },
       );
     },
     conversationServiceDeleteConversation(
@@ -1001,14 +1027,12 @@ export function PromptServiceApi() {
         user_instruct: string;
         allow_empty: true;
         full_content?: string;
-        selection_start?: number;
-        selection_end?: number;
+        selection_ranges?: Array<{ start: number; end: number; content: string }>;
       },
       options?: RawAxiosRequestConfig,
     ) {
-      return axiosInstance.post<PromptPolishOpenAPIResponse & {
-        target_start?: number;
-        target_end?: number;
+      return axiosInstance.post<{
+        results: Array<{ content: string; old_content: string; target_start: number; target_end: number }>;
       }>(
         `${coreApiBaseUrl}/prompts:polish`,
         payload,
@@ -1402,4 +1426,22 @@ export function ConversationSettingsApi() {
       );
     },
   };
+}
+
+export interface ConversationOpeningState {
+  batch: {status: string; scan_complete: boolean; scanned: number};
+  pending: number;
+  revision: number;
+  completed: number;
+  failed: number;
+  skipped: number;
+  unprocessed: number;
+}
+
+export async function conversationOpeningState(action?: "start" | "pause" | "resume" | "retry", signal?: AbortSignal) {
+  const url = `${coreApiBaseUrl}/conversations/metadata-backfill`;
+  const response = action
+    ? await axiosInstance.post<ConversationOpeningState>(url, {action}, {signal})
+    : await axiosInstance.get<ConversationOpeningState>(url, {signal});
+  return response.data;
 }
