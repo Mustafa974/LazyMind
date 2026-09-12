@@ -47,10 +47,10 @@ func (r *Repository) DescribeArtifact(ctx context.Context, owner string, artifac
 			artifact.Document.Capabilities = append(artifact.Document.Capabilities, "rewrite_selection")
 		}
 	}
-	// Portable conversion has the same resource/actor eligibility but does
-	// not mutate the revision, so live consumers do not disable copying.
+	// Conversion and numbering views are read-only, so live consumers do not
+	// disable them. Saving numbering still requires the mutation live guard.
 	if artifact.Document != nil && writable {
-		artifact.Document.Capabilities = append(artifact.Document.Capabilities, "convert_document")
+		artifact.Document.Capabilities = append(artifact.Document.Capabilities, "convert_document", "numbering")
 	}
 }
 

@@ -656,12 +656,12 @@ func TestDocumentConvertCapabilities(t *testing.T) {
 								doc, _ := record["document"].(map[string]any)
 								want := []string{}
 								if state == "editable" {
-									want = []string{"convert_document", "save"}
+									want = []string{"convert_document", "numbering", "save"}
 									if withModel {
-										want = []string{"convert_document", "rewrite_selection", "save"}
+										want = []string{"convert_document", "numbering", "rewrite_selection", "save"}
 									}
 								} else if state == "live" {
-									want = []string{"convert_document"}
+									want = []string{"convert_document", "numbering"}
 								}
 								caps := schemaStringList(doc["capabilities"])
 								sort.Strings(caps)
@@ -837,7 +837,10 @@ func documentActionResultSchemaForTest(t *testing.T, root any, schemas map[strin
 			obj, _ = schemas[strings.TrimPrefix(ref, "#/components/schemas/")].(map[string]any)
 		}
 		props, _ := obj["properties"].(map[string]any)
-		if action == "rewrite_selection" && props["commit"] != nil && props["preview"] != nil {
+		if action == "numbering" && props["numbering"] != nil && props["representation"] != nil {
+			return obj
+		}
+		if action == "rewrite_selection" && ((props["commit"] != nil && props["preview"] != nil) || (props["artifact_id"] != nil && props["numbering"] == nil)) {
 			return obj
 		}
 		if action == "convert_document" && props["provider"] != nil && props["format"] != nil && props["content"] != nil {

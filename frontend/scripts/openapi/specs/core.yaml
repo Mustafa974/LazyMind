@@ -2343,6 +2343,157 @@ components:
                         $ref: '#/components/schemas/UserInfo'
                     type: array
             type: object
+        DocumentNumberingEntry:
+            properties:
+                label:
+                    type: string
+                mode:
+                    enum:
+                        - ordered
+                        - unordered
+                    type: string
+                restart:
+                    type: boolean
+            required:
+                - label
+            type: object
+        DocumentNumberingExecuteInput:
+            properties:
+                numbering_update:
+                    $ref: '#/components/schemas/DocumentNumberingUpdate'
+            required:
+                - numbering_update
+            type: object
+        DocumentNumberingExecuteRequest:
+            properties:
+                action:
+                    enum:
+                        - numbering
+                    type: string
+                base_draft_version:
+                    format: int64
+                    type: integer
+                base_revision:
+                    type: integer
+                input:
+                    $ref: '#/components/schemas/DocumentNumberingExecuteInput'
+            required:
+                - action
+                - base_revision
+                - input
+            type: object
+        DocumentNumberingExecuteResult:
+            properties:
+                artifact_id:
+                    type: string
+                document: {}
+                draft_version:
+                    format: int64
+                    type: integer
+                export_document:
+                    type: string
+                numbering:
+                    $ref: '#/components/schemas/DocumentNumberingView'
+                representation:
+                    enum:
+                        - markdown
+                        - ir
+                    type: string
+                revision:
+                    type: integer
+                title:
+                    type: string
+            required:
+                - artifact_id
+                - document
+                - draft_version
+                - numbering
+                - representation
+                - revision
+                - title
+            type: object
+        DocumentNumberingPreviewInput:
+            properties: {}
+            type: object
+        DocumentNumberingPreviewRequest:
+            properties:
+                action:
+                    enum:
+                        - numbering
+                    type: string
+                base_draft_version:
+                    format: int64
+                    type: integer
+                base_revision:
+                    type: integer
+                input:
+                    $ref: '#/components/schemas/DocumentNumberingPreviewInput'
+            required:
+                - action
+                - base_revision
+                - input
+            type: object
+        DocumentNumberingResult:
+            properties:
+                document: {}
+                export_document:
+                    type: string
+                numbering:
+                    $ref: '#/components/schemas/DocumentNumberingView'
+                representation:
+                    enum:
+                        - markdown
+                        - ir
+                    type: string
+                title:
+                    type: string
+            required:
+                - document
+                - numbering
+                - representation
+                - title
+            type: object
+        DocumentNumberingUpdate:
+            properties:
+                mode:
+                    enum:
+                        - ordered
+                        - unordered
+                    type: string
+                ordered_style:
+                    enum:
+                        - hierarchical
+                        - chinese
+                        - parenthesized
+                    type: string
+                restart:
+                    type: boolean
+                target_id:
+                    type: string
+                type:
+                    enum:
+                        - ordered_style
+                        - heading
+                    type: string
+            required:
+                - type
+            type: object
+        DocumentNumberingView:
+            properties:
+                entries:
+                    additionalProperties:
+                        $ref: '#/components/schemas/DocumentNumberingEntry'
+                    type: object
+                ordered_style:
+                    enum:
+                        - hierarchical
+                        - chinese
+                        - parenthesized
+                    type: string
+            required:
+                - entries
+                - ordered_style
+            type: object
         DocumentRewriteCommit:
             properties:
                 token:
@@ -2376,6 +2527,7 @@ components:
                 - input
             type: object
         DocumentRewriteExecuteResult:
+            additionalProperties: false
             properties:
                 artifact_id:
                     type: string
@@ -6183,6 +6335,7 @@ components:
                     oneOf:
                         - $ref: '#/components/schemas/DocumentRewritePreviewResult'
                         - $ref: '#/components/schemas/DocumentConvertResult'
+                        - $ref: '#/components/schemas/DocumentNumberingResult'
                 message:
                     type: string
             required:
@@ -6195,7 +6348,9 @@ components:
                 code:
                     type: integer
                 data:
-                    $ref: '#/components/schemas/DocumentRewriteExecuteResult'
+                    oneOf:
+                        - $ref: '#/components/schemas/DocumentRewriteExecuteResult'
+                        - $ref: '#/components/schemas/DocumentNumberingExecuteResult'
                 message:
                     type: string
             required:
@@ -17628,7 +17783,11 @@ paths:
                 content:
                     application/json:
                         schema:
-                            $ref: '#/components/schemas/DocumentRewriteExecuteRequest'
+                            discriminator:
+                                propertyName: action
+                            oneOf:
+                                - $ref: '#/components/schemas/DocumentRewriteExecuteRequest'
+                                - $ref: '#/components/schemas/DocumentNumberingExecuteRequest'
                 required: true
             responses:
                 "200":
@@ -17636,7 +17795,7 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/documentRewriteExecuteOpenAPIResponse'
-                    description: Document rewrite result
+                    description: Document save result
                 "400":
                     content:
                         application/json:
@@ -17679,7 +17838,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
                     description: Document action service failed
-            summary: Apply a confirmed document selection rewrite
+            summary: Apply a document selection rewrite or numbering configuration
             tags:
                 - workflow
     /api/core/workflow-artifacts/{artifact_id}/document-actions:preview:
@@ -17699,6 +17858,7 @@ paths:
                             oneOf:
                                 - $ref: '#/components/schemas/DocumentRewritePreviewRequest'
                                 - $ref: '#/components/schemas/DocumentConvertPreviewRequest'
+                                - $ref: '#/components/schemas/DocumentNumberingPreviewRequest'
                 required: true
             responses:
                 "200":
@@ -17749,7 +17909,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
                     description: Document action service failed
-            summary: Preview a document rewrite or portable conversion
+            summary: Preview a document rewrite, portable conversion or numbering view
             tags:
                 - workflow
     /api/core/workflow-authoring/v1/drafts:

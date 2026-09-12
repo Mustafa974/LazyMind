@@ -394,9 +394,14 @@ export interface ApiCoreKbPermissionBatchPost200Response {
     'message'?: string;
 }
 /**
+ * @type ApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest
+ */
+export type ApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest = DocumentNumberingExecuteRequest | DocumentRewriteExecuteRequest;
+
+/**
  * @type ApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest
  */
-export type ApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest = DocumentConvertPreviewRequest | DocumentRewritePreviewRequest;
+export type ApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest = DocumentConvertPreviewRequest | DocumentNumberingPreviewRequest | DocumentRewritePreviewRequest;
 
 export interface AppendEvalSetImportRequest {
     'import_token': string;
@@ -1676,7 +1681,7 @@ export interface DocumentActionPreviewOpenAPIResponse {
 /**
  * @type DocumentActionPreviewOpenAPIResponseData
  */
-export type DocumentActionPreviewOpenAPIResponseData = DocumentConvertResult | DocumentRewritePreviewResult;
+export type DocumentActionPreviewOpenAPIResponseData = DocumentConvertResult | DocumentNumberingResult | DocumentRewritePreviewResult;
 
 export interface DocumentConvertPreviewInput {
     'document'?: DocumentConvertPreviewInputDocument;
@@ -1718,6 +1723,122 @@ export interface DocumentConvertResult {
 export interface DocumentCreatorsResponse {
     'creators'?: Array<UserInfo>;
 }
+export interface DocumentNumberingEntry {
+    'label': string;
+    'mode'?: DocumentNumberingEntryModeEnum;
+    'restart'?: boolean;
+}
+
+export const DocumentNumberingEntryModeEnum = {
+    Ordered: 'ordered',
+    Unordered: 'unordered'
+} as const;
+
+export type DocumentNumberingEntryModeEnum = typeof DocumentNumberingEntryModeEnum[keyof typeof DocumentNumberingEntryModeEnum];
+
+export interface DocumentNumberingExecuteInput {
+    'numbering_update': DocumentNumberingUpdate;
+}
+export interface DocumentNumberingExecuteRequest {
+    'action': DocumentNumberingExecuteRequestActionEnum;
+    'base_draft_version'?: number;
+    'base_revision': number;
+    'input': DocumentNumberingExecuteInput;
+}
+
+export const DocumentNumberingExecuteRequestActionEnum = {
+    Numbering: 'numbering'
+} as const;
+
+export type DocumentNumberingExecuteRequestActionEnum = typeof DocumentNumberingExecuteRequestActionEnum[keyof typeof DocumentNumberingExecuteRequestActionEnum];
+
+export interface DocumentNumberingExecuteResult {
+    'artifact_id': string;
+    'document': any;
+    'draft_version': number;
+    'export_document'?: string;
+    'numbering': DocumentNumberingView;
+    'representation': DocumentNumberingExecuteResultRepresentationEnum;
+    'revision': number;
+    'title': string;
+}
+
+export const DocumentNumberingExecuteResultRepresentationEnum = {
+    Markdown: 'markdown',
+    Ir: 'ir'
+} as const;
+
+export type DocumentNumberingExecuteResultRepresentationEnum = typeof DocumentNumberingExecuteResultRepresentationEnum[keyof typeof DocumentNumberingExecuteResultRepresentationEnum];
+
+export interface DocumentNumberingPreviewRequest {
+    'action': DocumentNumberingPreviewRequestActionEnum;
+    'base_draft_version'?: number;
+    'base_revision': number;
+    'input': object;
+}
+
+export const DocumentNumberingPreviewRequestActionEnum = {
+    Numbering: 'numbering'
+} as const;
+
+export type DocumentNumberingPreviewRequestActionEnum = typeof DocumentNumberingPreviewRequestActionEnum[keyof typeof DocumentNumberingPreviewRequestActionEnum];
+
+export interface DocumentNumberingResult {
+    'document': any;
+    'export_document'?: string;
+    'numbering': DocumentNumberingView;
+    'representation': DocumentNumberingResultRepresentationEnum;
+    'title': string;
+}
+
+export const DocumentNumberingResultRepresentationEnum = {
+    Markdown: 'markdown',
+    Ir: 'ir'
+} as const;
+
+export type DocumentNumberingResultRepresentationEnum = typeof DocumentNumberingResultRepresentationEnum[keyof typeof DocumentNumberingResultRepresentationEnum];
+
+export interface DocumentNumberingUpdate {
+    'mode'?: DocumentNumberingUpdateModeEnum;
+    'ordered_style'?: DocumentNumberingUpdateOrderedStyleEnum;
+    'restart'?: boolean;
+    'target_id'?: string;
+    'type': DocumentNumberingUpdateTypeEnum;
+}
+
+export const DocumentNumberingUpdateModeEnum = {
+    Ordered: 'ordered',
+    Unordered: 'unordered'
+} as const;
+
+export type DocumentNumberingUpdateModeEnum = typeof DocumentNumberingUpdateModeEnum[keyof typeof DocumentNumberingUpdateModeEnum];
+export const DocumentNumberingUpdateOrderedStyleEnum = {
+    Hierarchical: 'hierarchical',
+    Chinese: 'chinese',
+    Parenthesized: 'parenthesized'
+} as const;
+
+export type DocumentNumberingUpdateOrderedStyleEnum = typeof DocumentNumberingUpdateOrderedStyleEnum[keyof typeof DocumentNumberingUpdateOrderedStyleEnum];
+export const DocumentNumberingUpdateTypeEnum = {
+    OrderedStyle: 'ordered_style',
+    Heading: 'heading'
+} as const;
+
+export type DocumentNumberingUpdateTypeEnum = typeof DocumentNumberingUpdateTypeEnum[keyof typeof DocumentNumberingUpdateTypeEnum];
+
+export interface DocumentNumberingView {
+    'entries': { [key: string]: DocumentNumberingEntry; };
+    'ordered_style': DocumentNumberingViewOrderedStyleEnum;
+}
+
+export const DocumentNumberingViewOrderedStyleEnum = {
+    Hierarchical: 'hierarchical',
+    Chinese: 'chinese',
+    Parenthesized: 'parenthesized'
+} as const;
+
+export type DocumentNumberingViewOrderedStyleEnum = typeof DocumentNumberingViewOrderedStyleEnum[keyof typeof DocumentNumberingViewOrderedStyleEnum];
+
 export interface DocumentRewriteCommit {
     'token': string;
 }
@@ -1726,9 +1847,14 @@ export interface DocumentRewriteExecuteInput {
 }
 export interface DocumentRewriteExecuteOpenAPIResponse {
     'code': number;
-    'data': DocumentRewriteExecuteResult;
+    'data': DocumentRewriteExecuteOpenAPIResponseData;
     'message': string;
 }
+/**
+ * @type DocumentRewriteExecuteOpenAPIResponseData
+ */
+export type DocumentRewriteExecuteOpenAPIResponseData = DocumentNumberingExecuteResult | DocumentRewriteExecuteResult;
+
 export interface DocumentRewriteExecuteRequest {
     'action': DocumentRewriteExecuteRequestActionEnum;
     'base_draft_version'?: number;
@@ -42556,17 +42682,17 @@ export const WorkflowApiAxiosParamCreator = function (configuration?: Configurat
         },
         /**
          *
-         * @summary Apply a confirmed document selection rewrite
+         * @summary Apply a document selection rewrite or numbering configuration
          * @param {string} artifactId
-         * @param {DocumentRewriteExecuteRequest} documentRewriteExecuteRequest
+         * @param {ApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest} apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
-        apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePost: async (artifactId: string, documentRewriteExecuteRequest: DocumentRewriteExecuteRequest, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+        apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePost: async (artifactId: string, apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest: ApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
             // verify required parameter 'artifactId' is not null or undefined
             assertParamExists('apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePost', 'artifactId', artifactId)
-            // verify required parameter 'documentRewriteExecuteRequest' is not null or undefined
-            assertParamExists('apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePost', 'documentRewriteExecuteRequest', documentRewriteExecuteRequest)
+            // verify required parameter 'apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest' is not null or undefined
+            assertParamExists('apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePost', 'apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest', apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest)
             const localVarPath = `/api/core/workflow-artifacts/{artifact_id}/document-actions:execute`
                 .replace(`{${"artifact_id"}}`, encodeURIComponent(String(artifactId)));
             // use dummy base URL string because the URL constructor only accepts absolute URLs.
@@ -42586,7 +42712,7 @@ export const WorkflowApiAxiosParamCreator = function (configuration?: Configurat
             setSearchParams(localVarUrlObj, localVarQueryParameter);
             let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
             localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
-            localVarRequestOptions.data = serializeDataIfNeeded(documentRewriteExecuteRequest, localVarRequestOptions, configuration)
+            localVarRequestOptions.data = serializeDataIfNeeded(apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest, localVarRequestOptions, configuration)
 
             return {
                 url: toPathString(localVarUrlObj),
@@ -42595,7 +42721,7 @@ export const WorkflowApiAxiosParamCreator = function (configuration?: Configurat
         },
         /**
          *
-         * @summary Preview a document rewrite or portable conversion
+         * @summary Preview a document rewrite, portable conversion or numbering view
          * @param {string} artifactId
          * @param {ApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest} apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest
          * @param {*} [options] Override http request option.
@@ -43113,21 +43239,21 @@ export const WorkflowApiFp = function(configuration?: Configuration) {
         },
         /**
          *
-         * @summary Apply a confirmed document selection rewrite
+         * @summary Apply a document selection rewrite or numbering configuration
          * @param {string} artifactId
-         * @param {DocumentRewriteExecuteRequest} documentRewriteExecuteRequest
+         * @param {ApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest} apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
-        async apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePost(artifactId: string, documentRewriteExecuteRequest: DocumentRewriteExecuteRequest, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<DocumentRewriteExecuteOpenAPIResponse>> {
-            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePost(artifactId, documentRewriteExecuteRequest, options);
+        async apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePost(artifactId: string, apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest: ApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<DocumentRewriteExecuteOpenAPIResponse>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePost(artifactId, apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest, options);
             const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
             const localVarOperationServerBasePath = operationServerMap['WorkflowApi.apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePost']?.[localVarOperationServerIndex]?.url;
             return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
         },
         /**
          *
-         * @summary Preview a document rewrite or portable conversion
+         * @summary Preview a document rewrite, portable conversion or numbering view
          * @param {string} artifactId
          * @param {ApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest} apiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest
          * @param {*} [options] Override http request option.
@@ -43329,17 +43455,17 @@ export const WorkflowApiFactory = function (configuration?: Configuration, baseP
         },
         /**
          *
-         * @summary Apply a confirmed document selection rewrite
+         * @summary Apply a document selection rewrite or numbering configuration
          * @param {WorkflowApiApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest} requestParameters Request parameters.
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
         apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePost(requestParameters: WorkflowApiApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest, options?: RawAxiosRequestConfig): AxiosPromise<DocumentRewriteExecuteOpenAPIResponse> {
-            return localVarFp.apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePost(requestParameters.artifactId, requestParameters.documentRewriteExecuteRequest, options).then((request) => request(axios, basePath));
+            return localVarFp.apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePost(requestParameters.artifactId, requestParameters.apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest, options).then((request) => request(axios, basePath));
         },
         /**
          *
-         * @summary Preview a document rewrite or portable conversion
+         * @summary Preview a document rewrite, portable conversion or numbering view
          * @param {WorkflowApiApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest} requestParameters Request parameters.
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
@@ -43480,7 +43606,7 @@ export interface WorkflowApiApiCoreConversationsConversationIdWorkflowSessionsLa
 export interface WorkflowApiApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest {
     readonly artifactId: string
 
-    readonly documentRewriteExecuteRequest: DocumentRewriteExecuteRequest
+    readonly apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest: ApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest
 }
 
 /**
@@ -43629,18 +43755,18 @@ export class WorkflowApi extends BaseAPI {
 
     /**
      *
-     * @summary Apply a confirmed document selection rewrite
+     * @summary Apply a document selection rewrite or numbering configuration
      * @param {WorkflowApiApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest} requestParameters Request parameters.
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
      */
     public apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePost(requestParameters: WorkflowApiApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest, options?: RawAxiosRequestConfig) {
-        return WorkflowApiFp(this.configuration).apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePost(requestParameters.artifactId, requestParameters.documentRewriteExecuteRequest, options).then((request) => request(this.axios, this.basePath));
+        return WorkflowApiFp(this.configuration).apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePost(requestParameters.artifactId, requestParameters.apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest, options).then((request) => request(this.axios, this.basePath));
     }
 
     /**
      *
-     * @summary Preview a document rewrite or portable conversion
+     * @summary Preview a document rewrite, portable conversion or numbering view
      * @param {WorkflowApiApiCoreWorkflowArtifactsArtifactIdDocumentActionsPreviewPostRequest} requestParameters Request parameters.
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}

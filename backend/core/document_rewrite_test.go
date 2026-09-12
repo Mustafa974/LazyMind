@@ -711,7 +711,7 @@ func TestDocumentRewriteCapabilitiesAndOpenAPI(t *testing.T) {
 	found := false
 	for _, capability := range caps {
 		found = found || capability == "rewrite_selection"
-		if capability != "rewrite_selection" && capability != "save" && capability != "convert_document" {
+		if capability != "rewrite_selection" && capability != "save" && capability != "convert_document" && capability != "numbering" {
 			t.Errorf("unsupported capability=%v", capability)
 		}
 	}
@@ -729,7 +729,7 @@ func TestDocumentRewriteCapabilitiesAndOpenAPI(t *testing.T) {
 			t.Error("rewrite advertised without model")
 		}
 	}
-	if !reflect.DeepEqual(caps, []any{"save", "convert_document"}) || doc["editable"] != true {
+	if !reflect.DeepEqual(caps, []any{"save", "convert_document", "numbering"}) || doc["editable"] != true {
 		t.Errorf("missing model removed ordinary save: %#v", doc)
 	}
 
@@ -1093,10 +1093,7 @@ func TestDocumentRewriteOpenAPITypes(t *testing.T) {
 			response := responses["200"].(map[string]any)
 			responseSchema := resolve(response["content"].(map[string]any)["application/json"].(map[string]any)["schema"])
 			responseProps, _ := responseSchema["properties"].(map[string]any)
-			data := resolve(responseProps["data"])
-			if phase == "preview" {
-				data = documentActionResultSchemaForTest(t, responseProps["data"], schemas, "rewrite_selection")
-			}
+			data := documentActionResultSchemaForTest(t, responseProps["data"], schemas, "rewrite_selection")
 			dataProps, _ := data["properties"].(map[string]any)
 			if phase == "execute" {
 				for field, want := range map[string]string{"artifact_id": "string", "revision": "integer", "draft_version": "integer"} {
@@ -1366,7 +1363,7 @@ func TestDocumentRewriteCapabilityRequiresMutableState(t *testing.T) {
 						}
 						want := []any{}
 						if state == "live" {
-							want = []any{"convert_document"}
+							want = []any{"convert_document", "numbering"}
 						}
 						if doc["editable"] != false || !reflect.DeepEqual(doc["capabilities"], want) {
 							t.Errorf("model enabled blocked capability: %#v", doc)

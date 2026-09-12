@@ -79,18 +79,20 @@ type workflowSlotVersionsReadResponse struct {
 }
 
 // These schema markers describe the action-specific branches of the shared
-// Preview route. Runtime decoding remains strict for each concrete request.
+// document action routes. Runtime decoding remains strict for each concrete request.
 type documentActionPreviewOpenAPIRequest struct{}
 type documentActionPreviewOpenAPIData struct{}
+type documentActionExecuteOpenAPIRequest struct{}
+type documentActionExecuteOpenAPIData struct{}
 type documentActionPreviewOpenAPIResponse struct {
 	Code    int                              `json:"code"`
 	Message string                           `json:"message"`
 	Data    documentActionPreviewOpenAPIData `json:"data"`
 }
 type documentRewriteExecuteOpenAPIResponse struct {
-	Code    int                                   `json:"code"`
-	Message string                                `json:"message"`
-	Data    workflow.DocumentRewriteExecuteResult `json:"data"`
+	Code    int                              `json:"code"`
+	Message string                           `json:"message"`
+	Data    documentActionExecuteOpenAPIData `json:"data"`
 }
 type documentActionErrorOpenAPIData struct {
 	Code string `json:"code" enum:"IDENTITY_REQUIRED,PERMISSION_DENIED,ARTIFACT_NOT_FOUND,REVISION_REQUIRED,REVISION_CONFLICT,DRAFT_VERSION_REQUIRED,DRAFT_VERSION_CONFLICT,SESSION_NOT_EDITABLE,DOCUMENT_ACTION_INVALID,DOCUMENT_ACTION_UNSUPPORTED,MODEL_CONFIG_REQUIRED,SELECTION_STALE,SELECTION_AMBIGUOUS,ARTIFACT_IN_USE,DOCUMENT_ACTION_FAILED,DOCUMENT_ACTION_RESULT_INVALID,DOCUMENT_ACTION_SAVE_FAILED"`
@@ -296,11 +298,17 @@ func (b *schemaBuilder) schemaFromSource(source schemaSource) map[string]any {
 }
 
 func (b *schemaBuilder) schemaForType(t reflect.Type) map[string]any {
+	if t == reflect.TypeOf(documentActionExecuteOpenAPIRequest{}) {
+		return map[string]any{"oneOf": []any{b.schemaForType(reflect.TypeOf(workflow.DocumentRewriteExecuteRequest{})), b.schemaForType(reflect.TypeOf(workflow.DocumentNumberingExecuteRequest{}))}, "discriminator": map[string]any{"propertyName": "action"}}
+	}
+	if t == reflect.TypeOf(documentActionExecuteOpenAPIData{}) {
+		return map[string]any{"oneOf": []any{b.schemaForType(reflect.TypeOf(workflow.DocumentRewriteExecuteResult{})), b.schemaForType(reflect.TypeOf(workflow.DocumentNumberingExecuteResult{}))}}
+	}
 	if t == reflect.TypeOf(documentActionPreviewOpenAPIRequest{}) {
-		return map[string]any{"oneOf": []any{b.schemaForType(reflect.TypeOf(workflow.DocumentRewritePreviewRequest{})), b.schemaForType(reflect.TypeOf(workflow.DocumentConvertPreviewRequest{}))}, "discriminator": map[string]any{"propertyName": "action"}}
+		return map[string]any{"oneOf": []any{b.schemaForType(reflect.TypeOf(workflow.DocumentRewritePreviewRequest{})), b.schemaForType(reflect.TypeOf(workflow.DocumentConvertPreviewRequest{})), b.schemaForType(reflect.TypeOf(workflow.DocumentNumberingPreviewRequest{}))}, "discriminator": map[string]any{"propertyName": "action"}}
 	}
 	if t == reflect.TypeOf(documentActionPreviewOpenAPIData{}) {
-		return map[string]any{"oneOf": []any{b.schemaForType(reflect.TypeOf(workflow.DocumentRewritePreviewResult{})), b.schemaForType(reflect.TypeOf(workflow.DocumentConvertResult{}))}}
+		return map[string]any{"oneOf": []any{b.schemaForType(reflect.TypeOf(workflow.DocumentRewritePreviewResult{})), b.schemaForType(reflect.TypeOf(workflow.DocumentConvertResult{})), b.schemaForType(reflect.TypeOf(workflow.DocumentNumberingResult{}))}}
 	}
 	if t == nil {
 		return nil
@@ -398,6 +406,11 @@ func (b *schemaBuilder) inlineSchemaForType(t reflect.Type) map[string]any {
 		}
 		sort.Strings(required)
 		result := map[string]any{"type": "object", "properties": properties}
+		// Keep the rewrite response disjoint from the numbering response, which
+		// also carries revision identity but adds a document view.
+		if t == reflect.TypeOf(workflow.DocumentRewriteExecuteResult{}) {
+			result["additionalProperties"] = false
+		}
 		if len(required) > 0 {
 			result["required"] = required
 		}
@@ -2576,10 +2589,10 @@ func registeredCoreOperations() []openAPIOperation {
 		}},
 	}
 	return []openAPIOperation{
-		{Method: "POST", Path: "/workflow-artifacts/{artifact_id}/document-actions:preview", Summary: "Preview a document rewrite or portable conversion", Tags: []string{"workflow"}, RequestBody: jsonBodyOf(documentActionPreviewOpenAPIRequest{}, true), Responses: map[int]openAPIResponse{
+		{Method: "POST", Path: "/workflow-artifacts/{artifact_id}/document-actions:preview", Summary: "Preview a document rewrite, portable conversion or numbering view", Tags: []string{"workflow"}, RequestBody: jsonBodyOf(documentActionPreviewOpenAPIRequest{}, true), Responses: map[int]openAPIResponse{
 			200: resp("Document preview result", documentActionPreviewOpenAPIResponse{}), 400: resp("Invalid input or missing baseline/model", documentActionErrorOpenAPIResponse{}), 403: resp("Permission denied", documentActionErrorOpenAPIResponse{}), 404: resp("Artifact not found", documentActionErrorOpenAPIResponse{}), 409: resp("Stale baseline, preview or unavailable mutation", documentActionErrorOpenAPIResponse{}), 422: resp("Unsupported document action", documentActionErrorOpenAPIResponse{}), 500: resp("Document action could not be saved", documentActionErrorOpenAPIResponse{}), 502: resp("Document action service failed", documentActionErrorOpenAPIResponse{})}},
-		{Method: "POST", Path: "/workflow-artifacts/{artifact_id}/document-actions:execute", Summary: "Apply a confirmed document selection rewrite", Tags: []string{"workflow"}, RequestBody: jsonBodyOf(workflow.DocumentRewriteExecuteRequest{}, true), Responses: map[int]openAPIResponse{
-			200: resp("Document rewrite result", documentRewriteExecuteOpenAPIResponse{}), 400: resp("Invalid input or missing baseline/model", documentActionErrorOpenAPIResponse{}), 403: resp("Permission denied", documentActionErrorOpenAPIResponse{}), 404: resp("Artifact not found", documentActionErrorOpenAPIResponse{}), 409: resp("Stale baseline, preview or unavailable mutation", documentActionErrorOpenAPIResponse{}), 422: resp("Unsupported document action", documentActionErrorOpenAPIResponse{}), 500: resp("Document action could not be saved", documentActionErrorOpenAPIResponse{}), 502: resp("Document action service failed", documentActionErrorOpenAPIResponse{})}},
+		{Method: "POST", Path: "/workflow-artifacts/{artifact_id}/document-actions:execute", Summary: "Apply a document selection rewrite or numbering configuration", Tags: []string{"workflow"}, RequestBody: jsonBodyOf(documentActionExecuteOpenAPIRequest{}, true), Responses: map[int]openAPIResponse{
+			200: resp("Document save result", documentRewriteExecuteOpenAPIResponse{}), 400: resp("Invalid input or missing baseline/model", documentActionErrorOpenAPIResponse{}), 403: resp("Permission denied", documentActionErrorOpenAPIResponse{}), 404: resp("Artifact not found", documentActionErrorOpenAPIResponse{}), 409: resp("Stale baseline, preview or unavailable mutation", documentActionErrorOpenAPIResponse{}), 422: resp("Unsupported document action", documentActionErrorOpenAPIResponse{}), 500: resp("Document action could not be saved", documentActionErrorOpenAPIResponse{}), 502: resp("Document action service failed", documentActionErrorOpenAPIResponse{})}},
 		{Method: "GET", Path: "/workflow-sessions/{session_id}/slots", Summary: "Read Workflow artifacts with document descriptors", Tags: []string{"workflow"}, Responses: map[int]openAPIResponse{200: resp("Workflow artifact read result", workflowSlotsReadResponse{})}},
 		{Method: "GET", Path: "/workflow-sessions/{session_id}", Summary: "Read Workflow artifacts with document descriptors", Tags: []string{"workflow"}, Responses: map[int]openAPIResponse{200: resp("Workflow artifact read result", workflowSessionReadResponse{})}},
 		{Method: "GET", Path: "/conversations/{conversation_id}/workflow-sessions:active", Summary: "Read Workflow artifacts with document descriptors", Tags: []string{"workflow"}, Responses: map[int]openAPIResponse{200: resp("Workflow artifact read result", workflowSessionReadResponse{})}},
