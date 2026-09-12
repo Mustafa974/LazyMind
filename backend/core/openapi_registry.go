@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"lazymind/core/agent"
+	"lazymind/core/algo"
 	"lazymind/core/chat"
 	"lazymind/core/datasource"
 	"lazymind/core/doc"
@@ -93,6 +94,19 @@ type documentRewriteExecuteOpenAPIResponse struct {
 	Code    int                              `json:"code"`
 	Message string                           `json:"message"`
 	Data    documentActionExecuteOpenAPIData `json:"data"`
+}
+type documentProvidersOpenAPIResponse struct {
+	Code    int                          `json:"code"`
+	Message string                       `json:"message"`
+	Data    algo.DocumentProviderCatalog `json:"data"`
+}
+type documentProvidersErrorOpenAPIData struct {
+	Code string `json:"code" enum:"IDENTITY_REQUIRED,PERMISSION_DENIED,DOCUMENT_PROVIDERS_INVALID,DOCUMENT_PROVIDERS_UNAVAILABLE,DOCUMENT_PROVIDERS_RESULT_INVALID"`
+}
+type documentProvidersErrorOpenAPIResponse struct {
+	Code    int                               `json:"code"`
+	Message string                            `json:"message"`
+	Data    documentProvidersErrorOpenAPIData `json:"data"`
 }
 type documentActionErrorOpenAPIData struct {
 	Code string `json:"code" enum:"IDENTITY_REQUIRED,PERMISSION_DENIED,ARTIFACT_NOT_FOUND,REVISION_REQUIRED,REVISION_CONFLICT,DRAFT_VERSION_REQUIRED,DRAFT_VERSION_CONFLICT,SESSION_NOT_EDITABLE,DOCUMENT_ACTION_INVALID,DOCUMENT_ACTION_UNSUPPORTED,MODEL_CONFIG_REQUIRED,SELECTION_STALE,SELECTION_AMBIGUOUS,ARTIFACT_IN_USE,DOCUMENT_ACTION_FAILED,DOCUMENT_ACTION_RESULT_INVALID,DOCUMENT_ACTION_SAVE_FAILED,CROSS_REFERENCE_SELECTION_INVALID,CROSS_REFERENCE_TARGET_NOT_FOUND"`
@@ -2621,6 +2635,13 @@ func registeredCoreOperations() []openAPIOperation {
 		}},
 	}
 	return []openAPIOperation{
+		{Method: "GET", Path: "/document-providers", Summary: "List current document provider IDs and declared capabilities", Tags: []string{"workflow"}, Responses: map[int]openAPIResponse{
+			200: resp("Provider registry declarations; does not imply credentials, sync policy or publication authorization", documentProvidersOpenAPIResponse{}),
+			400: resp("Missing identity or unsupported request input", documentProvidersErrorOpenAPIResponse{}),
+			403: resp("Permission denied", documentProvidersErrorOpenAPIResponse{}),
+			409: {Description: "External lease operation not permitted"},
+			502: resp("Provider registry unavailable or malformed", documentProvidersErrorOpenAPIResponse{}),
+		}},
 		{Method: "POST", Path: "/workflow-artifacts/{artifact_id}/document-actions:preview", Summary: "Preview a document rewrite, conversion, numbering or cross-reference action", Tags: []string{"workflow"}, RequestBody: jsonBodyOf(documentActionPreviewOpenAPIRequest{}, true), Responses: map[int]openAPIResponse{
 			200: resp("Document preview result", documentActionPreviewOpenAPIResponse{}), 400: resp("Invalid input or missing baseline/model", documentActionErrorOpenAPIResponse{}), 403: resp("Permission denied", documentActionErrorOpenAPIResponse{}), 404: resp("Artifact not found", documentActionErrorOpenAPIResponse{}), 409: resp("Stale baseline, preview or unavailable mutation", documentActionErrorOpenAPIResponse{}), 422: resp("Unsupported document action", documentActionErrorOpenAPIResponse{}), 500: resp("Document action could not be saved", documentActionErrorOpenAPIResponse{}), 502: resp("Document action service failed", documentActionErrorOpenAPIResponse{})}},
 		{Method: "POST", Path: "/workflow-artifacts/{artifact_id}/document-actions:execute", Summary: "Apply a document rewrite, numbering or cross-reference update", Tags: []string{"workflow"}, RequestBody: jsonBodyOf(documentActionExecuteOpenAPIRequest{}, true), Responses: map[int]openAPIResponse{

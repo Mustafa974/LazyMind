@@ -2099,6 +2099,37 @@ export const DocumentNumberingViewOrderedStyleEnum = {
 
 export type DocumentNumberingViewOrderedStyleEnum = typeof DocumentNumberingViewOrderedStyleEnum[keyof typeof DocumentNumberingViewOrderedStyleEnum];
 
+export interface DocumentProvider {
+    'capabilities': Array<string>;
+    'id': string;
+}
+export interface DocumentProviderCatalog {
+    'providers': Array<DocumentProvider>;
+}
+export interface DocumentProvidersErrorOpenAPIData {
+    'code': DocumentProvidersErrorOpenAPIDataCodeEnum;
+}
+
+export const DocumentProvidersErrorOpenAPIDataCodeEnum = {
+    IdentityRequired: 'IDENTITY_REQUIRED',
+    PermissionDenied: 'PERMISSION_DENIED',
+    DocumentProvidersInvalid: 'DOCUMENT_PROVIDERS_INVALID',
+    DocumentProvidersUnavailable: 'DOCUMENT_PROVIDERS_UNAVAILABLE',
+    DocumentProvidersResultInvalid: 'DOCUMENT_PROVIDERS_RESULT_INVALID'
+} as const;
+
+export type DocumentProvidersErrorOpenAPIDataCodeEnum = typeof DocumentProvidersErrorOpenAPIDataCodeEnum[keyof typeof DocumentProvidersErrorOpenAPIDataCodeEnum];
+
+export interface DocumentProvidersErrorOpenAPIResponse {
+    'code': number;
+    'data': DocumentProvidersErrorOpenAPIData;
+    'message': string;
+}
+export interface DocumentProvidersOpenAPIResponse {
+    'code': number;
+    'data': DocumentProviderCatalog;
+    'message': string;
+}
 export interface DocumentRewriteCommit {
     'token': string;
 }
@@ -43325,6 +43356,36 @@ export const WorkflowApiAxiosParamCreator = function (configuration?: Configurat
         },
         /**
          *
+         * @summary List current document provider IDs and declared capabilities
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreDocumentProvidersGet: async (options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+            const localVarPath = `/api/core/document-providers`;
+            // use dummy base URL string because the URL constructor only accepts absolute URLs.
+            const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+            let baseOptions;
+            if (configuration) {
+                baseOptions = configuration.baseOptions;
+            }
+
+            const localVarRequestOptions = { method: 'GET', ...baseOptions, ...options};
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+
+            localVarHeaderParameter['Accept'] = 'application/json';
+
+            setSearchParams(localVarUrlObj, localVarQueryParameter);
+            let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
+            localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
+
+            return {
+                url: toPathString(localVarUrlObj),
+                options: localVarRequestOptions,
+            };
+        },
+        /**
+         *
          * @summary Apply a document rewrite, numbering or cross-reference update
          * @param {string} artifactId
          * @param {ApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest} apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest
@@ -43882,6 +43943,18 @@ export const WorkflowApiFp = function(configuration?: Configuration) {
         },
         /**
          *
+         * @summary List current document provider IDs and declared capabilities
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        async apiCoreDocumentProvidersGet(options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<DocumentProvidersOpenAPIResponse>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreDocumentProvidersGet(options);
+            const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+            const localVarOperationServerBasePath = operationServerMap['WorkflowApi.apiCoreDocumentProvidersGet']?.[localVarOperationServerIndex]?.url;
+            return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
+        },
+        /**
+         *
          * @summary Apply a document rewrite, numbering or cross-reference update
          * @param {string} artifactId
          * @param {ApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest} apiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest
@@ -44095,6 +44168,15 @@ export const WorkflowApiFactory = function (configuration?: Configuration, baseP
          */
         apiCoreConversationsConversationIdWorkflowSessionsLatestGet(requestParameters: WorkflowApiApiCoreConversationsConversationIdWorkflowSessionsLatestGetRequest, options?: RawAxiosRequestConfig): AxiosPromise<WorkflowSessionReadResponse> {
             return localVarFp.apiCoreConversationsConversationIdWorkflowSessionsLatestGet(requestParameters.conversationId, options).then((request) => request(axios, basePath));
+        },
+        /**
+         *
+         * @summary List current document provider IDs and declared capabilities
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreDocumentProvidersGet(options?: RawAxiosRequestConfig): AxiosPromise<DocumentProvidersOpenAPIResponse> {
+            return localVarFp.apiCoreDocumentProvidersGet(options).then((request) => request(axios, basePath));
         },
         /**
          *
@@ -44394,6 +44476,16 @@ export class WorkflowApi extends BaseAPI {
      */
     public apiCoreConversationsConversationIdWorkflowSessionsLatestGet(requestParameters: WorkflowApiApiCoreConversationsConversationIdWorkflowSessionsLatestGetRequest, options?: RawAxiosRequestConfig) {
         return WorkflowApiFp(this.configuration).apiCoreConversationsConversationIdWorkflowSessionsLatestGet(requestParameters.conversationId, options).then((request) => request(this.axios, this.basePath));
+    }
+
+    /**
+     *
+     * @summary List current document provider IDs and declared capabilities
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    public apiCoreDocumentProvidersGet(options?: RawAxiosRequestConfig) {
+        return WorkflowApiFp(this.configuration).apiCoreDocumentProvidersGet(options).then((request) => request(this.axios, this.basePath));
     }
 
     /**

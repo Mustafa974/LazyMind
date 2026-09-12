@@ -69,3 +69,31 @@ if ('operation' in result) { const token: string = result.commit.token; }
   const diagnostics = ts.getPreEmitDiagnostics(program).filter(d => !d.file || path.resolve(d.file.fileName) === probe);
   assert.deepEqual(diagnostics.map(d => `${d.code}: ${ts.flattenDiagnosticMessageText(d.messageText, '\n')}`), []);
 });
+
+test('provider discovery stays dynamic and does not imply credential policy', () => {
+  const frontend = fileURLToPath(new URL('../../', import.meta.url));
+  const probe = path.join(frontend, 'src/api/generated/core-client/provider-contract-probe.ts');
+  const source = `
+import type { DocumentProviderCatalog as Catalog, DocumentProvider } from './api';
+const custom: Catalog = { providers: [{ id: 'custom.writer-v2', capabilities: ['future_capability'] }, { id: 'lark', capabilities: [] }] };
+const empty: Catalog = { providers: [] };
+// @ts-expect-error The providers array is required.
+const absent: Catalog = {};
+// @ts-expect-error Every entry requires its provider ID.
+const noID: Catalog = { providers: [{ capabilities: [] }] };
+// @ts-expect-error Capabilities must be an array even when empty.
+const nullCaps: Catalog = { providers: [{ id: 'custom', capabilities: null }] };
+declare const provider: DocumentProvider;
+// @ts-expect-error Discovery does not expose or infer credential requirements.
+provider.credential_required;
+// @ts-expect-error Discovery does not imply the account is configured.
+provider.account_connected;
+`;
+  const options = { noEmit: true, strict: true, skipLibCheck: true, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler };
+  const host = ts.createCompilerHost(options);
+  const readFile = host.readFile;
+  host.readFile = file => path.resolve(file) === probe ? source : readFile(file);
+  const program = ts.createProgram([probe], options, host);
+  const diagnostics = ts.getPreEmitDiagnostics(program).filter(d => !d.file || path.resolve(d.file.fileName) === probe);
+  assert.deepEqual(diagnostics.map(d => `${d.code}: ${ts.flattenDiagnosticMessageText(d.messageText, '\n')}`), []);
+});

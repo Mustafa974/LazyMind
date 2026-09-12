@@ -2936,6 +2936,27 @@ components:
                 - entries
                 - ordered_style
             type: object
+        DocumentProvider:
+            properties:
+                capabilities:
+                    items:
+                        type: string
+                    type: array
+                id:
+                    type: string
+            required:
+                - capabilities
+                - id
+            type: object
+        DocumentProviderCatalog:
+            properties:
+                providers:
+                    items:
+                        $ref: '#/components/schemas/DocumentProvider'
+                    type: array
+            required:
+                - providers
+            type: object
         DocumentRewriteCommit:
             properties:
                 token:
@@ -6825,6 +6846,45 @@ components:
                         - $ref: '#/components/schemas/DocumentNumberingResult'
                         - $ref: '#/components/schemas/DocumentCrossReferenceTargetsResult'
                         - $ref: '#/components/schemas/DocumentCrossReferencePreviewResult'
+                message:
+                    type: string
+            required:
+                - code
+                - data
+                - message
+            type: object
+        documentProvidersErrorOpenAPIData:
+            properties:
+                code:
+                    enum:
+                        - IDENTITY_REQUIRED
+                        - PERMISSION_DENIED
+                        - DOCUMENT_PROVIDERS_INVALID
+                        - DOCUMENT_PROVIDERS_UNAVAILABLE
+                        - DOCUMENT_PROVIDERS_RESULT_INVALID
+                    type: string
+            required:
+                - code
+            type: object
+        documentProvidersErrorOpenAPIResponse:
+            properties:
+                code:
+                    type: integer
+                data:
+                    $ref: '#/components/schemas/documentProvidersErrorOpenAPIData'
+                message:
+                    type: string
+            required:
+                - code
+                - data
+                - message
+            type: object
+        documentProvidersOpenAPIResponse:
+            properties:
+                code:
+                    type: integer
+                data:
+                    $ref: '#/components/schemas/DocumentProviderCatalog'
                 message:
                     type: string
             required:
@@ -13174,6 +13234,38 @@ paths:
             summary: Unset default dataset
             tags:
                 - datasets
+    /api/core/document-providers:
+        get:
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentProvidersOpenAPIResponse'
+                    description: Provider registry declarations; does not imply credentials, sync policy or publication authorization
+                "400":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentProvidersErrorOpenAPIResponse'
+                    description: Missing identity or unsupported request input
+                "403":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentProvidersErrorOpenAPIResponse'
+                    description: Permission denied
+                "409":
+                    description: External lease operation not permitted
+                "502":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentProvidersErrorOpenAPIResponse'
+                    description: Provider registry unavailable or malformed
+            summary: List current document provider IDs and declared capabilities
+            tags:
+                - workflow
     /api/core/document/creators:
         get:
             responses:
