@@ -73,7 +73,7 @@ for (const target of [
     try {
       const bin = path.join(root, "bin");
       mkdirSync(bin, { recursive: true });
-      for (const name of ["process-compose", "local-proxy", "core", "scan-control-plane", "file-watcher", "caddy"]) {
+      for (const name of ["process-compose", "local-proxy", "core", "scan-control-plane", "file-watcher", "caddy", "pandoc"]) {
         writeFileSync(path.join(bin, `${name}${target.suffix}`), name);
       }
       writeOfflineSkillFixtures(root);
@@ -92,7 +92,9 @@ for (const target of [
         offlineFeaturedSkills: true,
       });
       assert.equal(manifest.binaries.core, `bin/core${target.suffix}`);
+      assert.equal(manifest.binaries.pandoc, `bin/pandoc${target.suffix}`);
       assert.ok(manifest.checksums[`bin/core${target.suffix}`]);
+      assert.ok(manifest.checksums[`bin/pandoc${target.suffix}`]);
       assert.ok(manifest.checksums["builtin-skills/catalog.json"]);
       assert.ok(manifest.checksums["featured-skills/catalog.json"]);
       assert.equal(manifest.paths.historyInjectionArchive, "history-injection.zip");
@@ -132,11 +134,14 @@ test("macOS and Windows builds materialize offline assets before writing the run
   for (const source of [darwin, windows]) {
     const bundle = source.indexOf("builtin-skill-bundle");
     const historyPackage = source.indexOf("stage-history-injection-package.mjs");
+    const pandocPackage = source.indexOf("stage-pandoc.mjs");
     const manifest = source.indexOf("write-runtime-manifest.mjs");
     assert.ok(bundle >= 0, "build script must invoke the shared builtin Skill bundler");
     assert.ok(historyPackage >= 0, "build script must stage the ModelScope history package");
+    assert.ok(pandocPackage >= 0, "build script must stage the pinned Pandoc package");
     assert.ok(manifest > bundle, "builtin Skills must be materialized before the runtime manifest is written");
     assert.ok(manifest > historyPackage, "history samples must be downloaded before the runtime manifest is written");
+    assert.ok(manifest > pandocPackage, "Pandoc must be staged before the runtime manifest is written");
     assert.match(source, /builtin-sources\.yaml/);
     assert.match(source, /builtin-skills\.lock\.json/);
     assert.match(source, /featured-sources/);

@@ -113,7 +113,6 @@ make_internal_symlinks_relative() {
     esac
   done
 }
-
 prune_python_runtime() {
   local root="$1"
   find "${root}" -type d -name "__pycache__" -prune -exec rm -rf {} +
@@ -317,6 +316,10 @@ fi
 
 echo "==> Downloading verified history injection package"
 node "${ROOT}/desktop/scripts/stage-history-injection-package.mjs" "${RUNTIME_ROOT}"
+
+echo "==> Downloading and staging verified Pandoc runtime"
+node "${ROOT}/desktop/scripts/stage-pandoc.mjs" \
+  "${RUNTIME_ROOT}" --target darwin-arm64
 
 TRUSTED_LOCAL_MODE=false
 if [[ "${LAZYMIND_TRUSTED_LOCAL_MODE:-}" == "true" ]]; then
