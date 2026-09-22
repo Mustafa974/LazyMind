@@ -175,6 +175,11 @@ test("macOS and Windows builds materialize offline assets before writing the run
   assert.doesNotMatch(darwin, /--exclude "\/Makefile"/);
   assert.doesNotMatch(windows, /robocopy\.exe[^\r\n]*'Makefile'/);
   assert.match(darwin, /desktop runtime repo marker is required/);
+  assert.match(darwin, /make_python_venv_relocatable/);
+  assert.match(darwin, /assert_no_absolute_symlinks "\$\{RUNTIME_ROOT\}"/);
+  assert.match(darwin, /python install --no-bin 3\.11\.15/);
+  assert.match(darwin, /cpython-3\.11\.15-macos-aarch64-none\/bin\/python3\.11/);
+  assert.doesNotMatch(darwin, /python find --managed-python/);
   assert.match(windows, /Desktop runtime repo marker Makefile is missing/);
   assert.match(windows, /skills\\\.runtime/);
   assert.match(darwin, /"\$\{ROOT\}\/" "\$\{RUNTIME_ROOT\}\/app\/"/);
