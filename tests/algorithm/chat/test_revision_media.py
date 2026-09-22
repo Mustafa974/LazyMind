@@ -34,3 +34,20 @@ def test_revision_without_media_preserves_existing_images_and_rejects_new_paths(
         finalize_markdown_revision(source + '\n\n![new](invented.png)', source=source)
     with pytest.raises(ValueError, match='unavailable'):
         finalize_markdown_revision('![new](media-placeholder://missing)')
+
+
+def test_revision_media_accepts_percent_encoded_whitespace_path(tmp_path):
+    image = tmp_path / 'Application Support' / 'image.png'
+    image.parent.mkdir()
+    image.write_bytes(b'image')
+    library = {
+        'assets': {'asset-1': {'local_path': str(image)}},
+        'visual_need_asset_ids': {'IMAGE-1': ['asset-1']},
+    }
+
+    result = finalize_markdown_revision(
+        '![Generated](media-placeholder://IMAGE-1)',
+        library,
+    )
+
+    assert result == f'![Generated](<{image.as_posix()}>)'

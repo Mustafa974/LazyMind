@@ -429,6 +429,52 @@ def test_markdown_assembly_keeps_media_source_reference():
     ) == markdown
 
 
+def test_markdown_media_fill_preserves_registered_path_with_whitespace():
+    from lazymind.document_tools import writing as document_writing
+
+    local_path = '/Users/test/Library/Application Support/LazyMind/image.png'
+    media_assets = {
+        'assets': {
+            'asset-generated': {
+                'local_path': local_path,
+            },
+        },
+        'visual_need_asset_ids': {
+            'IMAGE-1': ['asset-generated'],
+        },
+    }
+
+    filled = document_writing.fill_markdown_media_placeholders(
+        '![Generated](media-placeholder://IMAGE-1)\n',
+        media_assets,
+    )
+
+    expected = f'![Generated](<{local_path}>)\n'
+    assert filled == expected
+    assert document_writing.drop_unregistered_markdown_images(
+        filled, media_assets,
+    ) == expected
+
+
+def test_drop_unregistered_images_accepts_percent_encoded_path():
+    from lazymind.document_tools import writing as document_writing
+
+    raw = '/Users/test/Library/Application Support/LazyMind/image.png'
+    encoded = '/Users/test/Library/Application%20Support/LazyMind/image.png'
+    markdown = f'![Generated]({encoded})\n'
+    media_assets = {
+        'assets': {
+            'asset-generated': {
+                'local_path': raw,
+            },
+        },
+    }
+
+    assert document_writing.drop_unregistered_markdown_images(
+        markdown, media_assets,
+    ) == markdown
+
+
 def test_markdown_media_fill_drops_failed_need_marker_only():
     from lazymind.document_tools import writing as document_writing
 
