@@ -2645,7 +2645,6 @@ const zhCN = {
       writingSubtasks: "子任务",
       subtaskTypes: {
         retrieve: "检索",
-        extract: "提取",
         reason: "推理",
       },
       unorderedList: "无序列表",
