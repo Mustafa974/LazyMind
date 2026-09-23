@@ -164,6 +164,12 @@ LazyMind 可以发现 Codex、Cursor、WorkBuddy、TRAE Work、DeepSeek Harness 
 
 Desktop Mode 使用原生进程、SQLite 和 Milvus Lite，并遵循平台规范管理数据目录；团队部署可以进一步接入 Kong、JWT/RBAC、Core ACL、外部 Milvus/OpenSearch 与私有化 OCR。两种模式保持一致的工作方式。
 
+### 10. 安全合规与企业权限控制
+
+多租户数据隔离、RBAC 细粒度权限管控与操作审计日志为企业级部署提供完整的安全保障。LazyMind 通过严格的数据隔离机制确保不同租户间的数据互不可见，基于角色的权限控制精确管理用户对功能、数据和操作的访问权限，完整的操作审计日志记录所有关键行为并支持追溯查询。
+
+![企业级多租户隔离与安全权限架构示意图](assets/40/40fa5cb6c91da89f9a3848697a5bae7ca289522d46e31ff07e4de38928bbb68d.jpg)
+
 ---
 
 ## 快速开始
