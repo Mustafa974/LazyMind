@@ -66,6 +66,13 @@ const {
   resolveExistingDirectories,
   saveAccessState,
 } = require("./local-folder-access");
+const {
+  buildObsidianRuntimeEnv,
+  clearObsidianConfig,
+  isExistingDirectory,
+  loadObsidianConfig,
+  saveObsidianConfig,
+} = require("./obsidian-config");
 
 const { BrowserConnection } = require("./browser-connection");
 const { createBrowserAdapter, loadBrowserController, profilePartition } = require("./managed-browser");
@@ -125,6 +132,8 @@ const explicitRuntimeRoot = process.env.LAZYMIND_DESKTOP_RUNTIME_ROOT || "";
 const desktopLogsDir = app.getPath("logs");
 const desktopCredentialIdentityPath = path.join(app.getPath("userData"), "credential-device.json");
 const localFolderAccessStatePath = path.join(app.getPath("userData"), "local-folder-access.json");
+const obsidianConfigPath = path.join(app.getPath("userData"), "obsidian-config.json");
+const obsidianDisabledRoot = path.join(app.getPath("userData"), ".obsidian-unconfigured");
 const cursorWorkspaceStorageRoot = path.join(
   app.getPath("appData"),
   "Cursor",
@@ -273,6 +282,7 @@ function sidecarArgs(command, extra = []) {
 
 function sidecarEnv() {
   const localFolderAccess = loadAccessState(localFolderAccessStatePath);
+  const obsidianConfig = loadObsidianConfig(obsidianConfigPath);
   const env = {
     ...process.env,
     LAZYMIND_RUNTIME_PROFILE: "desktop",
@@ -296,6 +306,10 @@ function sidecarEnv() {
     PYTHONDONTWRITEBYTECODE: "1",
     LAZYMIND_FILE_WATCHER_EXTRA_ALLOWED_ROOTS_JSON: JSON.stringify(localFolderAccess.allowedRoots),
   };
+  Object.assign(
+    env,
+    buildObsidianRuntimeEnv(obsidianConfig.root, obsidianDisabledRoot),
+  );
   env.LAZYMIND_MODEL_PROVIDER_SECRET_KEY ||= deriveDesktopCredentialKey(desktopCredentialIdentity, "model-provider");
   env.LAZYMIND_MCP_SECRET_KEY ||= deriveDesktopCredentialKey(desktopCredentialIdentity, "mcp");
   env.LAZYMIND_AUTH_CLOUD_SECRET_KEY ||= deriveDesktopCredentialKey(desktopCredentialIdentity, "cloud-oauth");
@@ -1064,6 +1078,16 @@ function localFolderAccessSnapshot() {
     ...state,
     available: true,
     items: recommendationsForExactFolders(state.allowedRoots),
+  };
+}
+
+function obsidianConfigSnapshot() {
+  const config = loadObsidianConfig(obsidianConfigPath);
+  return {
+    configured: Boolean(config.root),
+    available: Boolean(config.root && isExistingDirectory(config.root)),
+    root: config.root || "",
+    updatedAt: config.updatedAt || "",
   };
 }
 
@@ -2653,6 +2677,25 @@ ipcMain.handle("lazymind:authorizeLocalWorkspace", async (event, selectionToken)
     throw new Error("Desktop workspace authorization failed");
   }
   return responseBody.data;
+});
+ipcMain.handle("lazymind:obsidianConfigStatus", () => obsidianConfigSnapshot());
+ipcMain.handle("lazymind:selectObsidianRoot", async () => {
+  const result = await dialog.showOpenDialog(activeWindow(), {
+    title: "选择 Obsidian 扫描根目录",
+    properties: ["openDirectory"],
+  });
+  if (result.canceled || result.filePaths.length === 0) {
+    return { ...obsidianConfigSnapshot(), canceled: true };
+  }
+
+  const [root] = resolveExistingDirectories([result.filePaths[0]]);
+  saveObsidianConfig(obsidianConfigPath, root);
+  return { ...obsidianConfigSnapshot(), canceled: false };
+});
+ipcMain.handle("lazymind:clearObsidianRoot", async () => {
+  clearObsidianConfig(obsidianConfigPath);
+  await restartRuntimeAfterFolderAccessChange();
+  return obsidianConfigSnapshot();
 });
 ipcMain.handle("lazymind:selectExecutable", async (_event, target = "") => {
   const agentExecutable = agentBindingTargets.has(target);
