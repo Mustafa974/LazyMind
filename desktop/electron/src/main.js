@@ -1168,10 +1168,33 @@ function resolveRequestedLocalFolder(folderPath, status, accessState) {
 }
 
 async function restartRuntimeAfterFolderAccessChange() {
-  await runSidecar("down");
+  const monitor = runtimeProcess;
+  let monitorClosed = Promise.resolve();
+  if (monitor) {
+    monitorClosed = new Promise((resolve, reject) => {
+      let timeout;
+      const onClose = () => {
+        clearTimeout(timeout);
+        resolve();
+      };
+      timeout = setTimeout(() => {
+        monitor.removeListener("close", onClose);
+        reject(new Error("Timed out waiting for the previous desktop runtime monitor to exit"));
+      }, runtimeOwnershipHandoffTimeoutMs);
+      monitor.once("close", onClose);
+    });
+  }
+
+  await runSidecar("down", [], { env: sidecarShutdownEnv() });
   detachRuntimeMonitor();
+  await monitorClosed;
   startRuntime();
-  return waitForRuntimeReady();
+  const status = await waitForRuntimeReady();
+  const window = activeWindow();
+  if (window && !window.isDestroyed()) {
+    window.webContents.reload();
+  }
+  return status;
 }
 
 function logStartupContext() {
