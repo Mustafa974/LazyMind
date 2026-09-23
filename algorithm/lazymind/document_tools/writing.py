@@ -8,7 +8,7 @@ import re
 import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from queue import Empty, Queue
 from threading import Event, RLock
 from typing import Any, ClassVar
@@ -1168,7 +1168,13 @@ def _media_reference_variants(value: Any) -> set[str]:
         return set()
     if raw.lower().startswith(('http://', 'https://')):
         return {raw}
-    return {raw, unquote(raw)}
+    decoded = unquote(raw)
+    variants = {raw, decoded}
+    for candidate in (raw, decoded):
+        variants.add(Path(candidate).as_posix())
+        if re.match(r'^(?:[A-Za-z]:[\\/]|\\\\)', candidate):
+            variants.add(PureWindowsPath(candidate).as_posix())
+    return {item for item in variants if item}
 
 
 def drop_unregistered_markdown_images(

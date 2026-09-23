@@ -51,3 +51,26 @@ def test_revision_media_accepts_percent_encoded_whitespace_path(tmp_path):
     )
 
     assert result == f'![Generated](<{image.as_posix()}>)'
+
+
+def test_revision_media_accepts_windows_normalized_percent_encoded_path():
+    from lazymind.document_tools import writing as document_writing
+
+    local_path = r'C:\Users\test\Application Support\image.png'
+    markdown = '![Generated](C:/Users/test/Application%20Support/image.png)'
+    media_assets = {
+        'assets': {
+            'asset-1': {
+                'local_path': local_path,
+            },
+        },
+        'visual_need_asset_ids': {
+            'IMAGE-1': ['asset-1'],
+        },
+    }
+
+    assert finalize_markdown_revision(markdown, media_assets) == markdown
+    assert document_writing.drop_unregistered_markdown_images(
+        markdown,
+        media_assets,
+    ) == markdown
