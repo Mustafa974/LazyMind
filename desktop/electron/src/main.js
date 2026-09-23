@@ -1821,6 +1821,7 @@ function attachExternalNavigationHandler(window) {
     window.webContents,
     (url) => shell.openExternal(url),
     (error) => appendStartupLog("error", `failed to open external URL: ${serializeError(error)}`),
+    { webPreferences: { preload: path.join(__dirname, "preload.js") } },
   );
 }
 
