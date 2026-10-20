@@ -46,7 +46,7 @@ def _topic_excerpt(text: str, token_budget: int) -> str:
 
     if abstract:
         lead = bounded(opening[:abstract.start()], min(120, token_budget // 4))
-        opening = f'{lead}\n摘要：\n{opening[abstract.end():].strip()}'
+        opening = f'{lead}\nAbstract:\n{opening[abstract.end():].strip()}'
     return bounded(opening, token_budget)
 
 
@@ -156,7 +156,8 @@ def _condensed_papers(papers: list[dict], topic: str, request: str) -> list[dict
                     lambda group, current_paper=paper: _condense('\n\n'.join(group), topic, request, current_paper)
                     if len(group) > 1 else group[0], groups,
                 ))
-        result.append({**paper, 'text': '以下是覆盖全文的逐页提炼笔记，并非原文：\n' + paper_notes[0]})
+        result.append({**paper, 'text': 'Page-by-page notes covering the full paper, not the original text:\n'
+                                          + paper_notes[0]})
     return result
 
 
@@ -189,8 +190,8 @@ def run(inputs: dict) -> dict:
 
     def make_prompt(condensed: bool = False) -> str:
         guidance = (CONDENSED_PAPER_GUIDANCE if condensed else FULL_PAPER_GUIDANCE) if papers else NO_PAPER_GUIDANCE
-        return QUESTION_PROMPT.format(paper_guidance=guidance, topics='、'.join(CONTENT_TOPICS)) + (
-            '输入材料（JSON）：\n' + json.dumps(material, ensure_ascii=False)
+        return QUESTION_PROMPT.format(paper_guidance=guidance, topics='; '.join(CONTENT_TOPICS)) + (
+            'Input materials (JSON):\n' + json.dumps(material, ensure_ascii=False)
         )
 
     prompt = make_prompt()

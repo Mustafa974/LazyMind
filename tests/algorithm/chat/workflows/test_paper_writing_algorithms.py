@@ -74,8 +74,9 @@ def test_f1_without_papers_uses_unverified_evidence_prompt(monkeypatch):
                         lambda **_kwargs: lambda prompt: prompts.append(prompt) or TOPIC_MARKDOWN)
     result = tools.run_algorithm('research_topic', {'topic': '研究主题'})
     assert result == {'question': TOPIC_MARKDOWN, 'is_demo': False}
-    assert '当前没有已解析的论文' in prompts[0]
-    assert '不得声称已阅读论文' in prompts[0]
+    assert 'No parsed papers are currently available' in prompts[0]
+    assert 'Do not claim to have read papers' in prompts[0]
+    assert 'Return only one Markdown document written in Chinese' in prompts[0]
 
 
 def test_f1_topic_inference_reads_paper_opening_not_filename(monkeypatch):
@@ -84,6 +85,7 @@ def test_f1_topic_inference_reads_paper_opening_not_filename(monkeypatch):
                         lambda **_kwargs: lambda prompt: prompts.append(prompt) or '{"topic": "证据可追溯性"}')
     papers = [{'id': 'P1', 'title': '无关文件名', 'text': '<!-- page:1 -->\n摘要：讨论证据可追溯性。'}]
     assert research_topic.infer_topic('根据论文确定选题', papers) == '证据可追溯性'
+    assert 'Use Chinese for a non-null topic value' in prompts[0]
     assert '讨论证据可追溯性' in prompts[0]
     assert '无关文件名' not in prompts[0]
 
@@ -99,12 +101,12 @@ def test_f1_long_paper_condenses_without_mutating_source_pool(monkeypatch):
 
     def model(prompt):
         prompts.append(prompt)
-        return TOPIC_MARKDOWN if '输入材料（JSON）：\n' in prompt else '[P1] 方法与结果仍需核验。'
+        return TOPIC_MARKDOWN if 'Input materials (JSON):\n' in prompt else '[P1] 方法与结果仍需核验。'
 
     monkeypatch.setattr(research_topic, 'AutoModel', lambda **_kwargs: model)
     result = tools.execute_step('research_topic', pool)
-    final_input = json.loads(prompts[-1].split('输入材料（JSON）：\n', 1)[1])
-    assert '逐页提炼笔记' in final_input['papers'][0]['text']
+    final_input = json.loads(prompts[-1].split('Input materials (JSON):\n', 1)[1])
+    assert 'Page-by-page notes' in final_input['papers'][0]['text']
     assert pool == before
     assert tools.material(result['pool'], 'papers')['content'] == [paper]
 
@@ -136,7 +138,7 @@ def test_f2_feedback_refines_f1_question_without_overwriting_evidence(monkeypatc
         prompts.append(prompt) or REFINED_TOPIC_MARKDOWN
     ))
     result = tools.execute_step('refine_topic', selected, '缩小研究范围')
-    model_input = json.loads(prompts[0].split('输入材料（JSON）：\n', 1)[1])
+    model_input = json.loads(prompts[0].split('Input materials (JSON):\n', 1)[1])
     assert model_input['question'] == old_question
     assert model_input['evidence'] == edited
     assert result['document'] == REFINED_TOPIC_MARKDOWN
