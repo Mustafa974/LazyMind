@@ -69,6 +69,7 @@ import {
   filterPresentCompositeItems,
   findAlignedCompositeRevision,
 } from './compositeArtifactLayout';
+import { PaperAnalysisCharts } from './PaperAnalysisCharts';
 import './WorkflowPanel.scss';
 
 const EMPTY_TASK_CENTER_TASKS: SubAgentTask[] = [];
@@ -1403,6 +1404,7 @@ function NamedTabSlot({
   const compactEmptyStates = React.useContext(CompactWorkflowEmptyStatesContext);
   const slotLabel = slotDef.label ?? slotDef.id;
   const isImageList = slotDef.type === 'image' && slotDef.cardinality === 'list';
+  const isPaperAnalysisCharts = session.workflow_id === 'paper-writing' && slotDef.id === 'analysis_chart';
   const isDraggable = Boolean(slotDef.ordered) && !readOnly;
   const [nativeCollapsed, setContentCollapsed] = useState(slotDef.widget?.collapsed === true);
   const collapseWhenEmpty = compactEmptyStates && slotDef.widget?.collapseWhenEmpty !== false;
@@ -1410,7 +1412,7 @@ function NamedTabSlot({
     revisions.length > 0 || Boolean(artifactStream), collapseWhenEmpty, slotDef.widget?.collapsed === true,
   );
   const contentCollapsed = compactEmptyStates ? externalCollapsed : nativeCollapsed;
-  const prefersFullGridRow = slotDef.widget?.itemLayout === 'grid'
+  const prefersFullGridRow = isPaperAnalysisCharts || slotDef.widget?.itemLayout === 'grid'
     || (slotDef.widget?.itemWidth ?? 0) >= 600
     || slotDef.widget?.collapsed === true;
   const isWriterDocument = slotDef.widget?.widgetType === 'writer-document';
@@ -1427,6 +1429,8 @@ function NamedTabSlot({
     >
       <span>{compactEmptyStates ? t(workflowEmptyStateKey(session, slotStepId)) : '—'}</span>
     </div>
+  ) : isPaperAnalysisCharts ? (
+    <PaperAnalysisCharts revisions={revisions} metadataSlots={session.slots ?? []} />
   ) : isImageList ? (
     <SortableImageList
       revisions={revisions}
