@@ -478,6 +478,9 @@ def run_paper_step() -> dict:
     else:
         if step not in STEP_NODE:
             raise ValueError(f'未知 Workflow 步骤: {step}')
+        if step == 'data_analysis':
+            from .analysis.attachments import bind_attachment
+            bound = bind_attachment(bound, context.workspace_path, request)
         pool = initialize_pool(bound, request)
         if step == 'research_topic' and 'paper_input' not in bound and not any(
             key.endswith('_pool') for key in bound
