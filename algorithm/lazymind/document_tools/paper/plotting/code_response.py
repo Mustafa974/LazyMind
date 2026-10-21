@@ -11,11 +11,29 @@ Existing JSON code/edits responses remain accepted for compatibility.
 '''
 
 
+def response_text(raw):
+    """Separate completed leading reasoning envelopes from the final response.
+
+    Never search for JSON/code inside reasoning or change tags inside the body.
+    An unfinished reasoning envelope has no independently identifiable final response.
+    """
+    text, removed = str(raw or '').strip(), 0
+    while True:
+        opening = re.match(r'<(think|thinking)>', text, flags=re.IGNORECASE)
+        if opening is None:
+            return text, removed
+        closing = re.search(r'</' + opening[1] + r'>', text[opening.end():], flags=re.IGNORECASE)
+        if closing is None:
+            raise ValueError('模型思考段未闭合，不能将其中的 JSON 或代码作为最终正文')
+        text = text[opening.end() + closing.end():].lstrip()
+        removed += 1
+
+
 def parse_code_response(raw):
     """Read ordinary Python text without guessing how to repair escaping or source syntax."""
     if isinstance(raw, dict):
         return raw
-    text = str(raw or '').strip()
+    text, _ = response_text(raw)
     if not text:
         raise ValueError('模型未返回代码')
     if text.startswith('{'):

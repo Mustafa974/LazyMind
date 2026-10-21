@@ -8,6 +8,7 @@ import re
 from ..analysis.inputs import make_plan
 from .api import reference as api_reference
 from .code_response import code_response, parse_code_response, CODE_INSTRUCTION, REPAIR_INSTRUCTION
+from .code_response import response_text
 from ..analysis import trace as diagnostics
 
 
@@ -32,7 +33,14 @@ def request_model(prompt: str, json_output=True):
         raise PlotModelError('绘图模型未返回内容，请检查模型服务状态；不将空响应当作绘图代码错误重写')
     if len(text) > 96 * 1024:
         raise ValueError('绘图模型返回内容过长')
-    return raw
+    if isinstance(raw, dict):
+        return raw
+    text, removed = response_text(raw)
+    if removed:
+        diagnostics.normalized_response(text, removed)
+    if not text:
+        raise PlotModelError('模型仅返回思考段，未返回独立正文，请检查模型服务状态')
+    return text
 
 
 def call_code_model(prompt: str) -> dict:
