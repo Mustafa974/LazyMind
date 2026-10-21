@@ -20,12 +20,26 @@ def _json_files(paths):
     ))
 
 
-def _select_attachment(config, request):
+def _select_attachment(config, request, reference=None):
     history = config.get('history_files_per_turn') or {}
     turns = sorted((key for key in history if str(key).isdigit()), key=int, reverse=True)
     groups = [history[key] for key in turns]
     groups.append(config.get('files') or [])
     groups = [_json_files(paths) for paths in groups]
+    if reference is not None:
+        # An explicit filename is a selector, never the contents of the input.
+        # Search only this conversation and do not silently choose another upload.
+        candidates = list(dict.fromkeys(
+            path for paths in groups for path in paths
+            if reference in (path, Path(urlsplit(path).path).name)
+        ))
+        if len(candidates) > 1:
+            raise ContractError('AMBIGUOUS_INPUT', 'input.paper_input',
+                                '指定的 JSON 附件存在多个同名版本，请明确选择一个文件')
+        if not candidates:
+            raise ContractError('MISSING_MATERIAL', 'input.paper_input',
+                                'paper_input 只有文件引用，但当前会话中找不到对应的 JSON 附件；请检查文件名和上传状态')
+        return candidates[0]
     named = [[path for path in paths if Path(urlsplit(path).path).name in request] for paths in groups]
     candidates = next((paths for paths in named if paths), []) or next((paths for paths in groups if paths), [])
     if len(candidates) > 1:
@@ -48,6 +62,40 @@ def _invalid_constant(value):
     raise ValueError(f'JSON 不允许 {value}')
 
 
+def _bound_reference(path):
+    """Keep real business objects; resolve filename-only scalar bindings in F4."""
+    try:
+        with Path(path).open('rb') as stream:
+            raw = stream.read(MAX_SOURCE_BYTES + 1)
+    except OSError as exc:
+        raise ContractError('MISSING_MATERIAL', 'input.paper_input', '无法读取已绑定的 F4 输入') from exc
+    if len(raw) > MAX_SOURCE_BYTES:
+        raise ContractError('INPUT_TOO_LARGE', 'input.paper_input', 'JSON 输入超过 100 MiB，请缩小输入')
+    try:
+        text = raw.decode('utf-8-sig').strip()
+    except UnicodeError as exc:
+        raise ContractError('INVALID_INPUT', 'input.paper_input', 'F4 输入必须采用 UTF-8 编码') from exc
+    try:
+        value = json.loads(text, object_pairs_hook=_unique_fields, parse_constant=_invalid_constant)
+    except json.JSONDecodeError as exc:
+        # Runtime imports text/json trigger strings verbatim, including filenames.
+        if not text or Path(urlsplit(text).path).suffix.lower() != '.json':
+            raise ContractError('INVALID_INPUT', 'input.paper_input',
+                                'F4 输入不是有效的 JSON 对象或 JSON 附件引用') from exc
+        value = text
+    except (ValueError, RecursionError) as exc:
+        raise ContractError('INVALID_INPUT', 'input.paper_input', 'F4 输入含重复字段或无效 JSON 值') from exc
+    # Preserve the same artifact-envelope support as the ordinary Runtime adapter.
+    from ..workflow import _unwrap
+    value = _unwrap(value)
+    if isinstance(value, dict):
+        return None
+    if not isinstance(value, str) or not value.strip() or Path(urlsplit(value).path).suffix.lower() != '.json':
+        raise ContractError('INVALID_INPUT', 'input.paper_input',
+                            'F4 输入必须是 JSON 对象，或当前会话中 JSON 附件的精确文件名')
+    return value.strip()
+
+
 def bind_attachment(bound: dict, workspace: str, request: str) -> dict:
     """Explicit inputs and confirmed pools take precedence over uploaded files.
 
@@ -55,10 +103,14 @@ def bind_attachment(bound: dict, workspace: str, request: str) -> dict:
     Resolve through that catalog, read the complete bytes, validate the F4 spec,
     then freeze a private input before the ordinary Runtime adapter consumes it.
     """
-    if 'paper_input' in bound or any(key.endswith('_pool') for key in bound):
+    if any(key.endswith('_pool') for key in bound):
+        return bound
+    reference = _bound_reference(bound['paper_input']) if 'paper_input' in bound else None
+    if 'paper_input' in bound and reference is None:
         return bound
     config = lazyllm.globals.get('agentic_config') or {}
-    source = _select_attachment(config, request)
+    source = (_select_attachment(config, request, reference=reference) if reference is not None
+              else _select_attachment(config, request))
     if source is None:
         return bound
     from lazymind.chat.engine.tools.file_resources.resolver import resolve_text_target
