@@ -15,7 +15,7 @@ INTERVALS = {'confidence': '置信区间', 'credible': '后验可信区间', 'pr
 def cell(value):
     text = str(value) if value is not None else '—'
     return (text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-            .replace('|', '&#124;').replace('\r', '').replace('\n', '<br>'))
+            .replace('|', '&#124;').replace('\r', '').replace('\n', ' / '))
 
 
 def scope_label(filters):
@@ -107,7 +107,7 @@ def complete_results(analysis, plan=None):
     """Full result table is a separate section, grouped by the original research question."""
     jobs = result_jobs(analysis, plan)
     anchors = {finding['id']: index for index, finding in enumerate(analysis['findings'], 1)}
-    lines = ['<a id="complete-results"></a>', '', '## 完整统计结果', '']
+    lines = ['<a id="block-complete-results"></a>', '', '## 完整统计结果', '']
     for target in analysis['targets']:
         selected = [finding for finding in analysis['findings'] if finding['target_id'] == target['id']]
         if selected:
@@ -124,7 +124,7 @@ def provenance(analysis, plan=None):
 
 
 def provenance_markdown(analysis, plan=None):
-    value = json.dumps(provenance(analysis, plan), ensure_ascii=False, indent=2, allow_nan=False)
-    value = value.replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026')
-    return ('<details>\n<summary>查看完整追溯记录（精确数值、内部编号、计算依据、模型与检查）</summary>\n\n'
-            '```json\n' + value + '\n```\n\n</details>')
+    """Keep the editable report free of unsupported HTML and duplicate machine records."""
+    return ('## 追溯记录\n\n'
+            f'本次 {len(analysis["findings"])} 项结果的精确数值、内部编号、计算依据、模型与检查'
+            '保存在结构化数据分析材料池 `data_analysis_pool.json` 中。')

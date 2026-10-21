@@ -108,7 +108,7 @@ def render(result, analysis, plan):
 
     def substitute(text):
         # Legacy response references remain navigable, but no longer expand entire statistics into the prose.
-        return re.sub(r'(?:\[结果:[^\]]+\]\s*)+', '[结果表](#complete-results) ', text).strip()
+        return re.sub(r'(?:\[结果:[^\]]+\]\s*)+', '[结果表](#block-complete-results) ', text).strip()
 
     lines = [substitute(result['summary']), '', '### 研究问题与结论']
     for answer in result['answers']:
