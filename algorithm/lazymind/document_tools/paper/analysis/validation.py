@@ -1,10 +1,8 @@
-"""Check computed values and inert SVG before any result is published."""
+"""Validate inert SVG and exported figure files before publication."""
 from __future__ import annotations
 
 import base64
-import math
 import re
-import statistics
 import xml.etree.ElementTree as ET
 
 
@@ -82,72 +80,3 @@ def validate_charts(charts) -> None:
                 signature = b'\x89PNG\r\n\x1a\n' if kind == 'png' else b'%PDF-'
                 if not raw.startswith(signature) or len(raw) > 4 * 1024 * 1024:
                     raise ValueError('图表导出格式错误或超过 4 MiB')
-
-
-def validate_result(result: dict, table: dict, plan: dict, *, validate_figures: bool = True) -> None:
-    expected_keys = {'data_sha256', 'row_count', 'statistics', 'comparisons', 'limitations', 'charts'}
-    if not isinstance(result, dict) or set(result) != expected_keys:
-        raise ValueError('分析执行结果字段不完整')
-    if (result['data_sha256'] != plan['data_sha256'] or type(result['row_count']) is not int
-            or result['row_count'] != len(table['rows'])):
-        raise ValueError('分析执行结果与本次输入数据版本不一致')
-    items = result['statistics']
-    if not isinstance(items, list) or len(items) != len(plan['groups']) * len(plan['metrics']):
-        raise ValueError('分析遗漏或增加了指标分组')
-    actual = {}
-    for item in items:
-        key = (item.get('group'), item.get('metric'))
-        if key in actual:
-            raise ValueError('分析分组重复')
-        actual[key] = item
-    gi = table['columns'].index(plan['group_by']) if plan['group_by'] is not None else None
-    for group in plan['groups']:
-        selected = [r for r in table['rows'] if gi is None or r[gi] == group]
-        for metric in plan['metrics']:
-            item = actual.get((group, metric), {})
-            mi = table['columns'].index(metric)
-            values = [r[mi] for r in selected if r[mi] is not None]
-            if (not values or type(item.get('count')) is not int or item['count'] != len(values)
-                    or item.get('missing') != len(selected) - len(values)):
-                raise ValueError('分析样本数与原始数据不一致')
-            expected = {'mean': statistics.fmean(values), 'median': statistics.median(values),
-                        'min': min(values), 'max': max(values),
-                        'std': statistics.stdev(values) if len(values) >= 2 else None}
-            for name, number in expected.items():
-                observed = item.get(name)
-                if number is None:
-                    if observed is not None:
-                        raise ValueError('单样本不能报告样本标准差')
-                elif (type(observed) not in (int, float) or not math.isfinite(observed)
-                      or not math.isclose(observed, number, rel_tol=1e-9, abs_tol=1e-12)):
-                    raise ValueError(f'{group}/{metric} 的 {name} 与复算结果不一致')
-            ci = item.get('ci95')
-            if len(values) < 3:
-                if ci is not None:
-                    raise ValueError('样本不足时不能报告区间')
-            elif (not isinstance(ci, list) or len(ci) != 2
-                  or any(type(v) not in (int, float) or not math.isfinite(v) for v in ci)
-                  or not min(values) <= ci[0] <= ci[1] <= max(values)):
-                raise ValueError('置信区间无效')
-    if not isinstance(result['limitations'], list) or any(not isinstance(s, str) for s in result['limitations']):
-        raise ValueError('分析局限必须是字符串列表')
-    if not isinstance(result['comparisons'], list):
-        raise ValueError('对比结果必须是列表')
-    for comparison in result['comparisons']:
-        for name in ('mean_diff', 'p_value', 'p_adjusted'):
-            value = comparison.get(name)
-            if value is not None and (type(value) not in (int, float) or not math.isfinite(value)):
-                raise ValueError('对比结果包含非有限数值')
-            if name != 'mean_diff' and value is not None and not 0 <= value <= 1:
-                raise ValueError('p 值超出有效范围')
-    if not validate_figures:
-        if result['charts'] != []:
-            raise ValueError('纯统计计算不得混入图表')
-        return
-    validate_charts(result['charts'])
-    if len(result['charts']) != len(plan['metrics']):
-        raise ValueError('图表数量与指标计划不一致')
-    for chart, metric in zip(result['charts'], plan['metrics']):
-        expected_columns = [*([plan['group_by']] if plan['group_by'] is not None else []), metric]
-        if chart['columns'] != expected_columns or chart['title'] != metric:
-            raise ValueError('图表数据来源与本次分析计划不一致')

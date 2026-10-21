@@ -1,28 +1,15 @@
-"""Plan first, then independently generate and render figures with bounded concurrency."""
+"""Render one planned figure with bounded code repair and export checks."""
 from __future__ import annotations
 
-from concurrent.futures import as_completed
 import hashlib
 import os
 
 from .code import validate_code
-from .data import bind_figure
-from .executor import PlotEnvironmentError, configuration, execute_plot
-from .model import PlotModelError, generate_code, plan_figures
-from .skills import PlotSkills
-from .style_profiles import bind_series
+from .executor import PlotEnvironmentError, execute_plot
+from .model import PlotModelError
 from .templates import compose_native_program, validate_native_program
 from ..analysis.validation import validate_charts
-from ..execution.threads import ThreadPoolExecutor
 from ..analysis import trace as diagnostics
-
-
-def prepare(table: dict, topic: str, request: str):
-    configuration()  # Fail deployment mistakes before spending model calls.
-    limits()
-    skills = PlotSkills()
-    statistics_plan, figure_plan = plan_figures(table, topic, request, skills)
-    return statistics_plan, figure_plan, skills
 
 
 def limits() -> tuple[int, int]:
@@ -42,14 +29,14 @@ def limits() -> tuple[int, int]:
 
 
 def draw_one(bound: dict, measured: dict, spec: dict, reference: str, attempts: int,
-             code_generator=None) -> tuple[dict, dict]:
+             code_generator) -> tuple[dict, dict]:
     previous, error = '', ''
     history = []
     for attempt in range(1, attempts + 1):
         try:
             details = dict(figure_id=spec['id'], attempt=attempt)
             with diagnostics.stage('figure_code_generation', **details):
-                previous = (code_generator or generate_code)(bound, measured, spec, reference, previous, error)
+                previous = code_generator(bound, measured, spec, reference, previous, error)
                 name = diagnostics.figure_name(spec['id'])
                 diagnostics.save(f'figure-{name}-code-{attempt}.py', previous)
             with diagnostics.stage('figure_code_validation', **details):
@@ -87,30 +74,3 @@ def draw_one(bound: dict, measured: dict, spec: dict, reference: str, attempts: 
             error = current_error if len(history) == 1 else '\n'.join(
                 f'Attempt {item["attempt"]}: {item["error"]}' for item in history)[-12000:]
     raise RuntimeError(f'图表 {spec["id"]} 在 {attempts} 次尝试后失败，未发布本轮图表: {error}')
-
-
-def draw(table: dict, statistics: dict, plan: dict, skills: PlotSkills) -> tuple[list, dict]:
-    attempts, concurrency = limits()
-    # Resolve all resources and data before starting model calls. Each job owns its input and retry state.
-    jobs = []
-    for spec in plan['figures']:
-        reference = skills.reference(spec['style'], spec.get('base_style'))
-        styled = {**spec, 'style_contract': skills.style_contract(spec['style'], spec.get('base_style'))}
-        bound, measured, styled = bind_figure(table, statistics, plan['analysis'], styled)
-        styled['style_contract'] = bind_series(styled['style_contract'], styled['data_contract']['group_order'])
-        jobs.append((bound, measured, styled, reference))
-    workers = min(concurrency, len(jobs))
-    ordered = [None] * len(jobs)
-    # LazyLLM's executor propagates the request's session and ContextVars to keep the configured model role.
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(draw_one, *job, attempts): index for index, job in enumerate(jobs)}
-        try:
-            for future in as_completed(futures):
-                ordered[futures[future]] = future.result()
-        except BaseException:
-            for future in futures:
-                future.cancel()
-            raise
-    charts, traces = map(list, zip(*ordered))
-    return charts, {'figure_plan': plan, 'skill_resources_sha256': dict(skills.hashes),
-                    'concurrency': workers, 'visual_review': 'deferred_not_implemented', 'figures': traces}

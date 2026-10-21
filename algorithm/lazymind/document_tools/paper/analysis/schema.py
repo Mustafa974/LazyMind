@@ -378,26 +378,6 @@ def refs_exist(refs, tables, field):
 
 def normalize_input(value):
     value = copy.deepcopy(value)
-    # Deliberate v1 two-field adapter. Options/metadata are not silently discarded.
-    data = value.get('data') if isinstance(value, dict) else None
-    if isinstance(data, dict) and set(data) == {'columns', 'rows'}:
-        types = []
-        if not isinstance(data['columns'], list) or not isinstance(data['rows'], list):
-            raise ContractError('INVALID_INPUT', 'input.data', 'columns/rows 必须是数组')
-        for row in data['rows']:
-            if not isinstance(row, list) or len(row) != len(data['columns']):
-                raise ContractError('INVALID_INPUT', 'input.data.rows', '行宽不一致')
-        for index in range(len(data['columns'])):
-            kinds = {type(row[index]) for row in data['rows'] if row[index] is not None}
-            if not kinds or not kinds <= {str, int, float, bool}:
-                raise ContractError('INVALID_INPUT', 'input.data.column_types', '空列或复杂类型必须明确声明')
-            if kinds <= {int, float}:
-                types.append('number' if float in kinds else 'integer')
-            elif len(kinds) == 1:
-                types.append({str: 'string', bool: 'boolean'}[next(iter(kinds))])
-            else:
-                raise ContractError('INVALID_INPUT', 'input.data.column_types', '混合类型不能自动推断')
-        data.update(column_types=types, units=[None] * len(types))
     result = parse(AnalysisInput, value)
     result['topic'] = result['topic'].strip()
     if not result['topic']:

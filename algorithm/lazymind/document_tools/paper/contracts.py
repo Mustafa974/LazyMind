@@ -1,8 +1,7 @@
 """Business-only contracts. Storage, versions and workflow routing stay outside."""
 import copy
-import os
+import math
 
-from .analysis.inputs import normalize_data
 from .analysis.validation import validate_charts, validate_svg
 
 from .review_schema import SavedReview, text_digest
@@ -69,7 +68,23 @@ def validate_value(kind, value):
             from .analysis.schema import DataTable, DataBundle, parse
             parse(DataBundle if 'tables' in value else DataTable, value)
         else:
-            normalize_data(value)
+            # Other paper stages keep their original table contract; F4 validates its own spec.
+            if not isinstance(value, dict) or set(value) != {'columns', 'rows'}:
+                raise ValueError('data 必须包含 columns/rows')
+            columns, rows = value['columns'], value['rows']
+            if (not isinstance(columns, list) or not columns
+                    or any(not isinstance(c, str) or not c.strip() for c in columns)):
+                raise ValueError('columns 必须是非空列名列表')
+            if len(set(columns)) != len(columns) or not isinstance(rows, list) or not rows:
+                raise ValueError('列名不能重复，rows 必须是非空列表')
+            for row in rows:
+                if not isinstance(row, list) or len(row) != len(columns):
+                    raise ValueError('数据行长度必须与列数相同')
+                for cell in row:
+                    if cell is not None and type(cell) not in (str, int, float, bool):
+                        raise ValueError('单元格必须是 JSON 标量')
+                    if isinstance(cell, float) and not math.isfinite(cell):
+                        raise ValueError('数据不允许 NaN/Infinity')
     elif kind == 'charts':
         if value == []:
             return
@@ -102,7 +117,7 @@ def validate_value(kind, value):
 
 
 def validate_input(step, value):
-    if step == 'data_analysis' and os.environ.get('LAZYMIND_PAPER_ANALYSIS_MODE', 'generated') != 'legacy':
+    if step == 'data_analysis':
         from .analysis.schema import normalize_input, ContractError
         try:
             return normalize_input(value)
@@ -113,17 +128,12 @@ def validate_input(step, value):
     module = ALIASES.get(step, step)
     fields = FIELDS[module]
     allowed = {'topic', 'request', 'mode', *fields}
-    if module == 'data_analysis':
-        allowed.add('constraints')
     if not isinstance(value, dict) or set(value) - allowed:
         raise ValueError(f'{step} 输入含未知字段')
     text(value.get('topic'), 'topic')
     if not isinstance(value.get('request', ''), str):
         raise ValueError('request 必须是字符串')
     result = {'topic': value['topic'], 'request': value.get('request', '')}
-    if module == 'data_analysis' and 'constraints' in value:
-        from .analysis.schema import Constraints, parse
-        result['constraints'] = parse(Constraints, value['constraints'])
     if step in MODES:
         if value.get('mode', MODES[step]) != MODES[step]:
             raise ValueError(f'{step} mode 必须是 {MODES[step]}')
@@ -141,13 +151,6 @@ def validate_input(step, value):
     required = {'refine_topic': ('evidence',), 'peer_review': ('manuscript',),
                 'revise_document': ('manuscript', 'review'), 'reading_reflection': ('papers',)}.get(step, ())
     missing = [name for name in required if not result[name]]
-    if step == 'data_analysis':
-        actual_experiment = (result['experiment'] and result['experiment']['executed']
-                             and result['experiment']['results'] is not None)
-        if not result['data'] and not actual_experiment:
-            missing.append('数据或已执行实验结果')
-        if result['data'] is not None and actual_experiment:
-            raise ValueError('同时提供数据和已执行实验结果，请明确选择一个数据来源')
     if step == 'write_document':
         writing_materials = ('papers', 'question', 'evidence', 'analysis', 'outline', 'manuscript')
         if not any(result[k] for k in writing_materials):
@@ -167,7 +170,7 @@ def validate_output(module, value, inputs=None):
         raise ValueError(f'{module} 算法输出字段不符合约定')
     if type(value['is_demo']) is not bool:
         raise ValueError('输出 is_demo 必须是布尔值')
-    if module == 'data_analysis' and isinstance(value['analysis'], dict):
+    if module == 'data_analysis':
         from .analysis.schema import AnalysisOutput, parse, validate_analysis
         from .analysis.schema import validate_charts as validate_structured_charts
         parse(AnalysisOutput, value, 'output')
