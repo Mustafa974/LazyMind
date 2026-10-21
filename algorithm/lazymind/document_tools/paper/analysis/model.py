@@ -120,7 +120,9 @@ The first registered verifier set supports these operations (others must use una
   Describe association, not causation or proof of independence.
 Use interval_level=null for description, or 0.95 unless otherwise requested. Mean/difference intervals use Student t/
 Welch, not bootstrap. Two-sided intervals can accompany one-sided tests but say so. Unit inherits the response column;
-probabilities and correlation coefficients are dimensionless. Filters operate on original columns and JSON scalar types.
+probabilities and correlation coefficients are dimensionless. Job column/filter/pair_by/predictor names must match the chosen table's actual column names exactly:
+use task for raw table data (not data.task); a joined view instead has literal original_table.column names.
+Figure coordinate names are separate from job input columns. Filters preserve original JSON scalar types.
 Comparisons require disjoint filters and baseline_filters.
 Pair keys must uniquely identify each object WITHIN a group.
 Use joins for an explicit one-to-one/many-to-one relationship, with a rationale based on supplied facts.

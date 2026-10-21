@@ -29,6 +29,28 @@ def evidence_catalog(inputs):
     return entries
 
 
+def bind_job_columns(job, tables):
+    """Strip only the current table's redundant qualifier; exact source names win."""
+    table = tables.get(job['table_id'])
+    if table is None:
+        return
+    columns, prefix = table['columns'], job['table_id'] + '.'
+
+    def local(name):
+        if name not in columns and name.startswith(prefix) and name[len(prefix):] in columns:
+            return name[len(prefix):]
+        return name
+
+    for field in ('column', 'other_column', 'trials_column', 'coefficient'):
+        if job.get(field):
+            job[field] = local(job[field])
+    for field in ('pair_by', 'predictors'):
+        job[field] = [local(name) for name in job.get(field, [])]
+    for field in ('filters', 'baseline_filters'):
+        for rule in job.get(field, []):
+            rule['column'] = local(rule['column'])
+
+
 def expected_unit(job, tables):
     operation = job['operation']
     if operation in ('pearson', 'spearman', 'beta_mean', 'beta_probability'):

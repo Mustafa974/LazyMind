@@ -27,7 +27,8 @@ def material_claim(claims):
 
 
 class PlanRepairError(ValueError):
-    def __init__(self, issues):
+    def __init__(self, issues, *, plan=None):
+        self.plan = plan
         merged = {}
         for issue in issues:
             key = (issue.get('job_id'), issue.get('figure_id'), issue['field'])

@@ -265,6 +265,8 @@ def run(raw_inputs):
             error = str(exc)[-4000:]
             planning.append(dict(attempt=attempt, outcome='failed', error=error, repair_figures=figure_issues))
         except PlanRepairError as exc:
+            if exc.plan is not None:
+                candidate = exc.plan
             issues = exc.issues
             error = str(exc)[-4000:]
             planning.append(dict(attempt=attempt, outcome='failed', error=error, repair_fields=issues))

@@ -12,7 +12,7 @@ from .schema import (
 )
 from .views import materialize
 from .plan_repair import PlanRepairError, material_claim
-from .plan_bindings import evidence_catalog, bind_job_fields, bind_figure_mapping
+from .plan_bindings import evidence_catalog, bind_job_columns, bind_job_fields, bind_figure_mapping
 
 
 class Filter(Object):
@@ -113,6 +113,8 @@ def validate_plan(value, inputs):
         raise ValueError('目标与计算任务不对应')
     for target in targets.values():
         refs_exist(target['columns'], sources, 'plan.targets')
+    for job in jobs.values():
+        bind_job_columns(job, tables)
     for model in models.values():
         if not set(model['target_ids']) <= targets.keys():
             raise ValueError('模型引用未知目标')
@@ -166,7 +168,7 @@ def validate_plan(value, inputs):
         refs_exist(figure['columns'], sources, 'plan.figures.columns')
         missing.extend(bind_figure_mapping(figure, jobs, sources))
     if missing:
-        raise PlanRepairError(missing)
+        raise PlanRepairError(missing, plan=plan)
     return plan
 
 
