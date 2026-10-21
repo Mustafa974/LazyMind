@@ -9,6 +9,7 @@ from ..analysis.inputs import make_plan
 from .api import reference as api_reference
 from .code_response import code_response, parse_code_response, CODE_INSTRUCTION, REPAIR_INSTRUCTION
 from .code_response import response_text
+from . import transport
 from ..analysis import trace as diagnostics
 
 
@@ -24,9 +25,15 @@ def request_model(prompt: str, json_output=True):
     options = {'stream_output': False}
     if json_output:
         options['response_format'] = {'type': 'json_object'}
+    policy = transport.configuration()
+    client = AutoModel(model='llm')
+    supported = transport.configure(client, policy)
     with diagnostics.stage('model_request', model_alias='llm', json_output=json_output,
-                           request_bytes=len(prompt.encode())):
-        raw = AutoModel(model='llm')(prompt, **options)
+                           request_bytes=len(prompt.encode()), transport_controlled=supported,
+                           connect_timeout_seconds=policy.connect if supported else None,
+                           read_timeout_seconds=policy.read if supported else None,
+                           max_transport_attempts=policy.attempts if supported else None):
+        raw = transport.call(client, prompt, options, policy, supported)
         diagnostics.response(raw)
     text = str(raw or '').strip()
     if not text:

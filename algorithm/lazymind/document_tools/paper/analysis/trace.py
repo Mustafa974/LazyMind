@@ -30,6 +30,7 @@ LABELS = {
     'figure_code_generation': '生成绘图代码', 'figure_code_validation': '校验绘图代码',
     'figure_execution': '执行绘图代码', 'figure_validation': '检查图表文件',
     'output_validation': '校验最终结果', 'output_publication': '保存产物', 'model_request': '等待模型响应',
+    'model_transport_attempt': '等待模型通信',
 }
 PRIVATE_FIELDS = {'reasoning', 'reasoning_content', 'thinking', 'chain_of_thought',
                   'api_key', 'authorization', 'password', 'access_token', 'secret'}
@@ -40,6 +41,7 @@ def timestamp():
 
 
 def redact(text):
+    text = re.sub(r'\b(?:user_|sk-)[A-Za-z0-9_-]{20,}', '<redacted>', text)
     text = re.sub(r'(?i)\bBearer\s+[^\s,;\"\x27}]+', 'Bearer <redacted>', text)
     text = re.sub(r'(?i)((?:api[_-]?key|authorization|password|secret|token)[\s\"\x27:=]+)[^\s,;}]+',
                   r'\1<redacted>', text)
@@ -54,6 +56,14 @@ def clean(value):
     return redact(value) if isinstance(value, str) else value
 
 
+def exception_chain(exc):
+    seen = set()
+    while exc is not None and id(exc) not in seen and len(seen) < 8:
+        seen.add(id(exc))
+        yield exc
+        exc = exc.__cause__ or exc.__context__
+
+
 def safe_error(exc):
     if isinstance(exc, json.JSONDecodeError):
         return dict(type=type(exc).__name__, message=exc.msg, line=exc.lineno, column=exc.colno, position=exc.pos)
@@ -64,6 +74,26 @@ def safe_error(exc):
         value = getattr(exc, key, None)
         if isinstance(value, str):
             result[key] = value[:160]
+    causes = list(exception_chain(exc))[1:]
+    if causes:
+        result['causes'] = [dict(type=type(item).__name__, message=redact(str(item))[:512]) for item in causes]
+    terminal = getattr(exc, 'terminal', None)
+    if terminal is not None:
+        result['model_call'] = {
+            key: getattr(terminal, key) for key in
+            ('model_call_id', 'attempt_count', 'kind', 'duration_ms', 'has_semantic_output')
+            if isinstance(getattr(terminal, key, None), (str, int, bool))
+        }
+        failure = getattr(terminal, 'failure', None)
+        if failure is not None:
+            info = {}
+            for key in ('origin', 'code', 'diagnostic_id', 'response_started', 'provider_http_status',
+                        'provider_error_code', 'provider_error_type'):
+                value = getattr(failure, key, None)
+                value = getattr(value, 'value', value)
+                if value is None or isinstance(value, (str, int, bool)):
+                    info[key] = redact(value)[:160] if isinstance(value, str) else value
+            result['model_call']['failure'] = info
     return result
 
 
@@ -147,7 +177,9 @@ class Recorder:
             self.record('stage_started', stage_id=identifier, stage=name, **details)
             parent = next((s for s in self.summary['stages'] if s['id'] == item['parent_id']), {})
             label = LABELS.get(name, name)
-            if name == 'model_request' and parent:
+            if name == 'model_transport_attempt' and parent.get('stage') == 'model_request':
+                parent = next((s for s in self.summary['stages'] if s['id'] == parent['parent_id']), parent)
+            if name in ('model_request', 'model_transport_attempt') and parent:
                 label = LABELS.get(parent['stage'], parent['stage']) + ' · 等待模型响应'
             attempt = details.get('attempt', parent.get('attempt'))
             figure = details.get('figure_id', parent.get('figure_id'))
