@@ -79,6 +79,7 @@ slots:
   - {id: finish_document, label: 结束说明, type: file, cardinality: single, exposed: false}
 ui:
   hide_skipped_steps: true
+  hide_unstarted_steps: true
   task_presentation:
     hidden_steps: [finish]
   slots:

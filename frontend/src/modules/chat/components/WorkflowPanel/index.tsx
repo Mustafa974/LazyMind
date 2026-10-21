@@ -1863,11 +1863,13 @@ export function WorkflowPanel({
       ui.tab_visibility_ready_material,
       session?.projection,
       ui.hide_skipped_steps,
+      ui.hide_unstarted_steps && session?.workflow_mode === 'dynamic',
     );
     if (!tabs.length || !persistedFocusedTab) return;
     const idx = tabs.findIndex((t) => t.id === persistedFocusedTab);
     if (idx !== -1) setActiveTabIdx(idx);
-  }, [ui.tabs, ui.tab_visibility_ready_material, ui.hide_skipped_steps, persistedFocusedTab, session?.slots, session?.projection]);
+  }, [ui.tabs, ui.tab_visibility_ready_material, ui.hide_skipped_steps, ui.hide_unstarted_steps,
+    persistedFocusedTab, session?.slots, session?.projection, session?.workflow_mode]);
 
   // Until the user explicitly chooses a visible tab, follow the runtime
   // frontier. This also moves focus immediately when a skip material removes
@@ -1879,6 +1881,7 @@ export function WorkflowPanel({
       ui.tab_visibility_ready_material,
       session?.projection,
       ui.hide_skipped_steps,
+      ui.hide_unstarted_steps && session?.workflow_mode === 'dynamic',
     );
     const focusedTabVisible = Boolean(
       persistedFocusedTab && tabs.some((tab) => tab.id === persistedFocusedTab),
@@ -1893,6 +1896,8 @@ export function WorkflowPanel({
     ui.tabs,
     ui.tab_visibility_ready_material,
     ui.hide_skipped_steps,
+    ui.hide_unstarted_steps,
+    session?.workflow_mode,
     session?.projection,
     persistedFocusedTab,
     session?.current_step_id,
@@ -1930,6 +1935,7 @@ export function WorkflowPanel({
     ui.tab_visibility_ready_material,
     session.projection,
     ui.hide_skipped_steps,
+    ui.hide_unstarted_steps && session.workflow_mode === 'dynamic',
   );
   const hasTabs = tabs.length > 0;
   const visibleActiveTabIdx = hasTabs
