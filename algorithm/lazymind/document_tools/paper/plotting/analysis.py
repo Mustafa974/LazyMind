@@ -15,6 +15,7 @@ from .bindings import bind_context, finding_table, figure_semantics, result_view
 from .figure_data import prepare_figure_data
 from ..analysis.prompt_payload import figure_statistics, figure_spec, drawing_reference, native_interface
 from .code_response import code_response, CODE_INSTRUCTION, REPAIR_INSTRUCTION
+from .templates import NATIVE_FUNCTION_GUIDANCE
 from ..analysis.schema import digest
 from ..execution.threads import ThreadPoolExecutor
 from ..analysis import trace as diagnostics
@@ -52,7 +53,7 @@ quantity semantics and one allowed colormaps[mode][0] string. Color does not enc
 
 def generate_bound_code(table, analysis, spec, reference, previous, error):
     """Ask for scientific presentation code, with host-owned identity binding and a small API."""
-    prompt = CODE_INSTRUCTION + '''Implement draw(data, statistics, spec) -> Figure for ONLY this planned figure.
+    prompt = CODE_INSTRUCTION + NATIVE_FUNCTION_GUIDANCE + '''Implement draw(data, statistics, spec) -> Figure for ONLY this planned figure.
 Return the executable source directly and an accurate caption in the optional text block. 只做合理推理，不要过度思考。
 The host validates findings, scopes, dimensions, intervals and group identity, and preloads the native functions.
 Use result_grid(data, metric, series_column, category_column, where) -> dict for data mapping; do not implement readers,
@@ -117,7 +118,8 @@ def generate_code(table, analysis, spec, reference, previous, error):
     if (spec.get('style') in BOUND_GUIDANCE and spec.get('style_contract', {}).get('version') == 'paper-v1'
             and table.get('metadata', {}).get('result_records')):
         return generate_bound_code(table, analysis, spec, reference, previous, error)
-    prompt = CODE_INSTRUCTION + '''Include an accurate figure caption in the optional text block.
+    native_guidance = NATIVE_FUNCTION_GUIDANCE if spec.get('style') != 'custom' else ''
+    prompt = CODE_INSTRUCTION + native_guidance + '''Include an accurate figure caption in the optional text block.
 只做合理推理，不要过度思考。
 Use only task-relevant reasoning; do not overthink. Return the executable source directly.
 Implement draw(data, statistics, spec) -> Figure.
@@ -237,7 +239,7 @@ do not claim p values or tests when finding.test is null. User-designated focal 
 
 def generate_prepared_code(table, spec, reference, previous, error):
     """The model arranges the figure; the host supplies every native data/axis argument."""
-    prompt = CODE_INSTRUCTION + '''Implement draw(data, statistics, spec) -> Figure for this planned figure.
+    prompt = CODE_INSTRUCTION + NATIVE_FUNCTION_GUIDANCE + '''Implement draw(data, statistics, spec) -> Figure for this planned figure.
 Use task-relevant reasoning only. Return source directly, optionally with an accurate caption.
 data['figure'] is paper.figure.v1: points contain verified estimate/interval.low/interval.high and provenance;
 panels contain the complete arguments for the supplied native function. Do not read statistics or other data keys.

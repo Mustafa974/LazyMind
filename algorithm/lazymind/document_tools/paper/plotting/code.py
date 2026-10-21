@@ -31,11 +31,17 @@ def validate_code(code: str) -> None:
         raise ValueError('顶层仅允许导入、函数定义和常量赋值')
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            if any(alias.name.split('.')[0] not in ALLOWED_IMPORTS for alias in node.names):
-                raise ValueError('绘图代码导入了未允许的模块')
+            invalid = [alias.name for alias in node.names if alias.name.split('.')[0] not in ALLOWED_IMPORTS]
+            if invalid:
+                raise ValueError(f'第 {node.lineno} 行绘图代码导入了未允许的模块: {", ".join(invalid)}；'
+                                 'skill 函数由后端直接注入，无需导入 skill 模块；'
+                                 f'允许的模块: {", ".join(sorted(ALLOWED_IMPORTS))}')
         elif isinstance(node, ast.ImportFrom):
             if node.level or (node.module or '').split('.')[0] not in ALLOWED_IMPORTS:
-                raise ValueError('绘图代码导入了未允许的模块')
+                module = '.' * node.level + (node.module or '')
+                raise ValueError(f'第 {node.lineno} 行绘图代码导入了未允许的模块: {module}；'
+                                 '删除该导入，skill 函数使用后端已注入的原名直接调用；'
+                                 f'允许的模块: {", ".join(sorted(ALLOWED_IMPORTS))}')
         elif isinstance(node, ast.Name) and (node.id in FORBIDDEN or node.id.startswith('__')):
             raise ValueError(f'绘图代码不允许访问 {node.id}')
         elif isinstance(node, ast.Attribute) and (node.attr.startswith('_') or node.attr in FORBIDDEN_ATTRIBUTES):

@@ -8,7 +8,7 @@ import os
 import re
 from pathlib import Path
 
-from .templates import paper_template
+from .templates import NATIVE_FUNCTION_GUIDANCE, paper_template
 
 STYLES = {
     'bar_paired_delta': ('bar_paired.py', 'paired baseline/method bars'),
@@ -76,6 +76,7 @@ class PlotSkills:
         self.read(reference_path)
         result = self._paper_contract(selected)
         result.update(source_style=selected, reference_path=reference_path, adapted=style == 'custom',
+                      helper_module=Path(STYLES[selected][0]).stem,
                       enforce_appearance=True,
                       title_placement='metadata_only',
                       bar_colors=result['colors'])
@@ -127,11 +128,14 @@ class PlotSkills:
         common = self.read('plot-from-data/scripts/paper_common.py')
         template = paper_template(script, common, contract['function'], contract['native_template'],
                                   tuple(contract.get('helpers', [])))
+        availability = (NATIVE_FUNCTION_GUIDANCE if style != 'custom' else
+                        'For custom geometry, include reviewed helper source if needed; '
+                        'skill modules cannot be imported.\n')
         return result + (
-            '\nAPPROVED DRAWING HELPERS (no example data or file I/O):\n'
-            'For native styles the host loads these reviewed functions unchanged. Return draw and '
+            '\nAPPROVED DRAWING HELPERS (no example data or file I/O):\n' + availability
+            + 'For native styles the host loads these reviewed functions unchanged. Return draw and '
             'data-mapping helpers, and CALL the native_template with its exact signature. '
-            'Do not redefine template helpers. Standalone scripts copy or import the same source. '
+            'Do not redefine native template helpers. '
             'Bind actual data, stable per-group appearance and data-dependent '
             'limits through the arguments. Missing values are not zero. For a genuinely custom '
             'geometry, inherit appearance without forcing the native helper.\n'

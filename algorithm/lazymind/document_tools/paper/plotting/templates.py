@@ -6,6 +6,12 @@ import copy
 import re
 from pathlib import Path
 
+NATIVE_FUNCTION_GUIDANCE = '''Native drawing functions and their helpers are already injected by the host as globals.
+Call their supplied names directly. Do not import skill modules or redefine these functions.
+For example, call draw_point_intervals(...) directly; never use from paper_extended import draw_point_intervals.
+Only third-party/standard modules in execution_rules.allowed_imports may be imported.
+'''
+
 
 def _called_functions(function, functions):
     """Resolve direct calls and simple local aliases/literal dispatch dictionaries."""
@@ -55,8 +61,19 @@ def compose_native_program(code: str, reference: str, spec: dict) -> str:
     if spec.get('data_contract', {}).get('result_view_version') == 1:
         adapters = Path(__file__).with_name('result_api.py').read_text()
         reserved.update(n.name for n in ast.parse(adapters).body if isinstance(n, ast.FunctionDef))
-    bindings = [node for node in ast.parse(code).body
-                if not isinstance(node, ast.FunctionDef) or node.name not in reserved]
+    bindings = []
+    for node in ast.parse(code).body:
+        if (isinstance(node, ast.ImportFrom) and not node.level
+                and node.module in {contract.get('helper_module'), 'paper_common'}):
+            invalid = [alias.name for alias in node.names
+                       if alias.name not in reserved or alias.asname not in (None, alias.name)]
+            if invalid:
+                raise ValueError(f'skill 模块 {node.module} 的导入包含未提供函数或别名: {", ".join(invalid)}；'
+                                 f'删除该导入，直接使用已注入的函数名: {", ".join(sorted(reserved))}')
+            # These exact reviewed definitions are appended below; no module is loaded.
+            continue
+        if not isinstance(node, ast.FunctionDef) or node.name not in reserved:
+            bindings.append(node)
     return ast.unparse(ast.Module(body=bindings, type_ignores=[])) + '\n\n' + template + '\n\n' + adapters
 
 
