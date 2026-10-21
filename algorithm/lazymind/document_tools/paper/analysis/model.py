@@ -9,6 +9,7 @@ from .profiles import planning_profile
 from ..plotting.model import call_model, call_code_model
 from ..plotting.code_response import code_response, CODE_INSTRUCTION, REPAIR_INSTRUCTION
 from .prompt_payload import execution_plan
+from .plan_bindings import evidence_catalog
 
 
 def profiles(inputs):
@@ -51,15 +52,20 @@ to rescue an optional self-chosen method. Choose another defensible analysis of 
 its limits, and preserve adverse results. Do not choose a method/scope by the resulting p value or effect direction.
 Do not ask the caller for test names, a prior object or an analysis_options configuration.
 Choose descriptive calculations, inference, a Bayesian model, covariates, missing-value policy and figures as needed.
-Distinguish known observation facts from analytical choices. Copy a short VERBATIM quote from request/context/design/
-experiment into design_evidence for EVERY job with interval_level != null (including a single-group mean),
+Distinguish known observation facts from analytical choices. Select existing evidence_catalog IDs in
+design_evidence_refs for EVERY job with interval_level != null (including a single-group mean),
 EVERY t test, correlation_test=true job, OLS or beta job, and EVERY paired comparison.
-A seed name alone does not prove pairing.
+The host copies the cited source text into design_evidence; omit that text rather than rewriting or translating it.
+Choose entries that actually support the observation unit/dependence/pairing. An ID alone does not establish
+independence or make an unsupported test valid. A seed name alone does not prove pairing.
+Omit unit: the host inherits source units for means/differences, derives coefficient units, uses count for counts
+and dimensionless null for correlation/probability. No numeric conversion is performed. An explicit conflicting
+unit is an error. A default null is not a request to erase an available source unit.
 Each job returns ONE scalar estimate with its interval/test, not a grouped result or a table.
 Keep the plan JSON concise without reducing the research scope or prescribing figure types/counts. Reuse ONE target
 for related scalar jobs answering the SAME research question; do not create a duplicate target for each result cell.
-Each target's unique ColumnRefs cover its actual jobs. In design_evidence copy the SHORTEST sufficient verbatim quote
-about the observation unit/dependence, not the entire study description. Keep methods, limitations, captions and
+Each target's unique ColumnRefs cover its actual jobs. Cite only the sufficient evidence_catalog entries about
+the observation unit/dependence, not the entire study description. Keep methods, limitations, captions and
 instructions specific but nonrepetitive. Do not repeat a scalar job merely to use it in another figure: figures may
 share finding_ids. These are representation rules, not permission to drop requested conditions or comparisons.
 Use sparse job objects: OMIT optional fields with schema defaults unless this job overrides them. The host restores
@@ -162,17 +168,24 @@ Return only JSON, with missing_materials=[] and unavailable_method=null when fea
     from ..plotting.skills import PlotSkills
     skills = PlotSkills()
     payload = {'schema': Plan.model_json_schema(), 'facts': facts, 'profiles': profiles(inputs),
+               'evidence_catalog': evidence_catalog(inputs),
                'styles': skills.catalog(), 'style_guidance': skills.instructions, 'previous_error': previous_error}
     return call_model(prompt + json.dumps(payload, ensure_ascii=False, allow_nan=False))
 
 
 def repair_plan(inputs, plan, issues):
     prompt = '''Repair ONLY the specified invalid parts of an existing statistical plan.
-Return JSON {"updates":[{"job_id":"existing ID","field":"design_evidence|pair_by" or null,"value":...}]}.
+Return JSON {"updates":[{"job_id":"existing ID","field":"design_evidence_refs|pair_by|unit" or null,"value":...}],
+"figure_updates":[{"figure_id":"requested figure ID","figure":full FigurePlan}]}.
 Return exactly one update for EACH requested job_id/field pair. No unrelated changes or full replacement plan.
-For a named field, return ONLY its missing value. design_evidence must be a short VERBATIM quote from supplied
-request/context/design/experiment facts; pair_by must use existing matching keys. Named-field patches cannot change
-filters or methods.
+For design_evidence_refs return a list of existing evidence_catalog IDs supporting the actual design;
+the host resolves the source text. Do not rewrite/translate quotations. pair_by uses existing matching keys.
+For unit use the issue's expected unit exactly, with no numeric conversion. Named-field patches cannot change
+filters or methods. Legacy design_evidence repairs may copy source text verbatim, but IDs are preferred.
+If an issue has figure_id, use figure_updates, not updates. Include EVERY requested figure mapping repair;
+copy its existing figure and change ONLY data_mapping. Use available_dimensions in the issue to resolve ambiguity.
+For paired contrasts, distinguish selected and baseline identities; never pool or discard competing baseline results.
+With no requested figure repairs, omit figure_updates unless a whole-job replacement affects that figure.
 For field=null, repair only that invalid job and return value as a nonempty LIST of replacement job objects.
 Keep its target_id. You may split a mistakenly pooled job into per-method/per-benchmark scalar jobs with unique IDs.
 If its target asks for each method, split it into all requested methods with explicit filters; do not choose only
@@ -186,7 +199,8 @@ if an existing model is shared with an unaffected job. Unused models belonging s
 The optional figure_updates list contains {"figure_id":"affected ID","figure":full FigurePlan} ONLY for affected
 figures. Preserve ID, columns and the finding_ids after replacement; update labels/geometry/caption for the actual new
 estimand and units, including negative results. Other jobs, targets, models and figures remain unchanged.
-Named-field repairs cannot supply model_updates/figure_updates. The host updates affected figure finding_ids.
+Named-field repairs cannot supply model_updates; figure_updates are allowed only for explicitly requested mappings.
+The host updates affected figure finding_ids after whole-job replacement.
 Preserve all requested comparisons and negative results. Missing values never become zero. Do not exclude rows to
 obtain favorable results. Keep source response units (and disclose coefficient units). Retain cohort/method filters;
 only an OLS_NOT_IDENTIFIABLE issue permits revising self-chosen numeric predictor-range filters.
@@ -201,7 +215,7 @@ or silently replace inference explicitly required by the user with description.
     facts = {k: v for k, v in inputs.items() if k not in ('data', 'experiment')}
     if inputs['experiment']:
         facts['experiment'] = {k: v for k, v in inputs['experiment'].items() if k != 'results'}
-    payload = dict(plan=plan, issues=issues, facts=facts,
+    payload = dict(plan=plan, issues=issues, facts=facts, evidence_catalog=evidence_catalog(inputs),
                    schema=Plan.model_json_schema(), profiles=profiles(inputs))
     response = call_model(prompt + json.dumps(payload, ensure_ascii=False, allow_nan=False))
     if isinstance(response, dict) and set(response) == {'missing_materials'}:

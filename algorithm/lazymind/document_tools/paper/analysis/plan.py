@@ -12,6 +12,7 @@ from .schema import (
 )
 from .views import materialize
 from .plan_repair import PlanRepairError, material_claim
+from .plan_bindings import evidence_catalog, bind_job_fields, bind_figure_mapping
 
 
 class Filter(Object):
@@ -42,6 +43,7 @@ class Job(Object):
     alternative: Literal['two_sided', 'greater', 'less'] = 'two_sided'
     missing_policy: Literal['error', 'complete_case'] = 'error'
     design_evidence: str = ''
+    design_evidence_refs: list[Text] = Field(default_factory=list)
     unit: Text | None = None
 
 
@@ -124,99 +126,31 @@ def validate_plan(value, inputs):
             if any(any(j[k] != model_jobs[0][k] for k in fields) for j in model_jobs[1:]):
                 raise ValueError('同一后验模型的任务必须使用相同观测范围；不同范围需要不同模型 ID')
     missing = []
+    catalog = {item['id']: item for item in evidence_catalog(inputs)}
     facts = ' '.join(json.dumps(
         {k: inputs[k] for k in ('request', 'data_context', 'study_design', 'experiment')},
         ensure_ascii=False).replace('\\n', ' ').split())
     for job in jobs.values():
+        missing.extend(bind_job_fields(job, tables, catalog))
         inference = (job['interval_level'] is not None
                      or job['correlation_test']
                      or job['operation'] in ('paired_t', 'welch_t', 'ols_coefficient')
                      or job['operation'].startswith('beta_'))
         if (inference or paired_operation(job['operation'])) and not job['design_evidence']:
-            missing.append(dict(job_id=job['id'], field='design_evidence',
-                                message='从已有材料逐字补充实验单位和依赖结构的依据；不要修改其他字段'))
+            missing.append(dict(job_id=job['id'], field='design_evidence_refs',
+                                message='从 evidence_catalog 选择已有实验单位和依赖结构依据的编号；不要改写原文或修改其他字段'))
         elif ((inference or paired_operation(job['operation']))
-              and ' '.join(job['design_evidence'].split()) not in facts):
-            missing.append(dict(job_id=job['id'], field='design_evidence',
-                                message='设计依据必须引用已有材料的原文；只修正该字段，保留已有计算口径和其他字段'))
+              and not job['design_evidence_refs'] and ' '.join(job['design_evidence'].split()) not in facts):
+            missing.append(dict(job_id=job['id'], field='design_evidence_refs',
+                                message='设计依据必须引用已有材料的原文；仅选择 evidence_catalog 中的原文编号，保留计算口径及其他字段'))
         if paired_operation(job['operation']) and not job['pair_by']:
             missing.append(dict(job_id=job['id'], field='pair_by',
                                 message='根据已有设计事实补充配对键；不要修改其他字段'))
-    if missing:
-        raise PlanRepairError(missing)
     for job in jobs.values():
-        columns = [job['column'], *job['pair_by'], *job['predictors'],
-                   *[f['column'] for f in job['filters'] + job['baseline_filters']]]
-        if job['other_column']:
-            columns.append(job['other_column'])
-        if job['trials_column']:
-            columns.append(job['trials_column'])
-        refs_exist([dict(table_id=job['table_id'], column=c) for c in dict.fromkeys(columns)], tables, 'plan.jobs')
-        tab = tables[job['table_id']]
-        target_refs = {(ref['table_id'], ref['column']) for ref in targets[job['target_id']]['columns']}
-        numeric_columns = [job['column'], *job['predictors']]
-        if job['other_column']:
-            numeric_columns.append(job['other_column'])
-        if job['trials_column']:
-            numeric_columns.append(job['trials_column'])
-        required_refs = {(job['table_id'], c) if job['table_id'] in sources else tuple(c.split('.', 1))
-                         for c in numeric_columns}
-        if not required_refs <= target_refs:
-            raise ValueError('分析目标遗漏实际计算的响应、自变量或试验次数来源列')
-        for rule in job['filters'] + job['baseline_filters']:
-            kind = tab['column_types'][tab['columns'].index(rule['column'])]
-            if rule['operator'] == 'not_null':
-                if rule['value'] is not None:
-                    raise ValueError('not_null 不能附带比较值')
-                continue
-            values = rule['value'] if rule['operator'] == 'in' else [rule['value']]
-            if not isinstance(values, list) or not values:
-                raise ValueError('in 比较必须提供非空列表')
-            permitted = {'integer': (int,), 'number': (int, float), 'boolean': (bool,),
-                         'string': (str,), 'date': (str,), 'datetime': (str,)}[kind]
-            if any(v is not None and type(v) not in permitted for v in values):
-                raise ValueError('筛选值类型与原始列不一致')
-        model = models.get(job['model_id'])
-        if job['model_id'] is not None and (model is None or job['target_id'] not in model['target_ids']):
-            raise ValueError('任务引用的模型无效')
-        op = job['operation']
-        unit = tables[job['table_id']]['units'][tables[job['table_id']]['columns'].index(job['column'])]
-        if op in ('pearson', 'spearman'):
-            if not job['other_column'] or job['unit'] is not None:
-                raise ValueError('相关分析必须声明两个数值列，相关系数无量纲，unit 必须为 null')
-            if job['baseline_filters'] or job['pair_by'] or job['predictors'] or job['trials_column']:
-                raise ValueError('相关分析使用同一行的两个变量，不接受组间基线、匹配键或回归字段')
-            if tab['column_types'][tab['columns'].index(job['other_column'])] not in ('integer', 'number'):
-                raise ValueError('相关分析的第二个变量必须为数值列')
-            if op == 'spearman' and job['interval_level'] is not None:
-                raise ValueError('Spearman 区间尚未注册；不能使用 Pearson Fisher 区间替代')
-            if job['column'] == job['other_column'] and (job['correlation_test'] or job['interval_level']):
-                raise ValueError('自相关对角线只能作描述，不检验也不附加区间')
-        elif job['other_column'] is not None or job['correlation_test']:
-            raise ValueError('other_column/correlation_test 仅用于相关分析')
-        if op not in ('count', 'ols_coefficient', 'beta_mean', 'beta_probability', 'pearson', 'spearman') \
-                and job['unit'] != unit:
-            raise ValueError('分析单位必须与原始响应列一致，不能默默换算')
-        if op != 'count':
-            tab = tables[job['table_id']]
-            if tab['column_types'][tab['columns'].index(job['column'])] not in ('integer', 'number'):
-                raise ValueError('统计响应列必须为数值类型')
-        if op in ('difference', 'paired_difference', 'paired_t', 'welch_t') and not job['baseline_filters']:
-            raise ValueError('比较任务缺少基线范围')
-        if op.startswith('beta_'):
-            if (not model or not model['likelihood'] or len(model['priors']) != 1
-                    or model['priors'][0]['distribution'] != 'beta'):
-                raise ValueError('Beta 模型需要一个已声明的 beta 先验和二元/计数似然')
-            if model['priors'][0]['source'] == 'historical':
-                raise ValueError('历史先验的数据构建与去重检查尚未注册，不能作为默认先验静默替代')
-            if op == 'beta_probability' and job['threshold'] is None:
-                raise ValueError('后验事件需要明确阈值')
-        if op == 'ols_coefficient' and (
-            not model or not job['predictors'] or job['coefficient'] not in ['intercept', *job['predictors']]
-        ):
-            raise ValueError('回归任务缺少模型、自变量或系数名称')
-        if op == 'count' and job['interval_level'] is not None:
-            raise ValueError('计数任务不能自动附加推断区间')
+        try:
+            validate_job(job, tables, sources, targets, models)
+        except (ValueError, KeyError, TypeError) as exc:
+            missing.append(dict(job_id=job['id'], field=None, message=str(exc)))
     correlation_tests = set()
     for job in jobs.values():
         if job['correlation_test']:
@@ -230,8 +164,82 @@ def validate_plan(value, inputs):
         if not figure['finding_ids'] or not set(figure['finding_ids']) <= jobs.keys():
             raise ValueError('结果图须引用实际计算任务')
         refs_exist(figure['columns'], sources, 'plan.figures.columns')
+        missing.extend(bind_figure_mapping(figure, jobs, sources))
+    if missing:
+        raise PlanRepairError(missing)
     return plan
 
 
 def paired_operation(operation):
     return operation in ('paired_difference', 'paired_t')
+
+
+def validate_job(job, tables, sources, targets, models):
+    columns = [job['column'], *job['pair_by'], *job['predictors'],
+               *[f['column'] for f in job['filters'] + job['baseline_filters']]]
+    if job['other_column']:
+        columns.append(job['other_column'])
+    if job['trials_column']:
+        columns.append(job['trials_column'])
+    refs_exist([dict(table_id=job['table_id'], column=c) for c in dict.fromkeys(columns)], tables, 'plan.jobs')
+    tab = tables[job['table_id']]
+    target_refs = {(ref['table_id'], ref['column']) for ref in targets[job['target_id']]['columns']}
+    numeric_columns = [job['column'], *job['predictors']]
+    if job['other_column']:
+        numeric_columns.append(job['other_column'])
+    if job['trials_column']:
+        numeric_columns.append(job['trials_column'])
+    required_refs = {(job['table_id'], c) if job['table_id'] in sources else tuple(c.split('.', 1))
+                     for c in numeric_columns}
+    if not required_refs <= target_refs:
+        raise ValueError('分析目标遗漏实际计算的响应、自变量或试验次数来源列')
+    for rule in job['filters'] + job['baseline_filters']:
+        kind = tab['column_types'][tab['columns'].index(rule['column'])]
+        if rule['operator'] == 'not_null':
+            if rule['value'] is not None:
+                raise ValueError('not_null 不能附带比较值')
+            continue
+        values = rule['value'] if rule['operator'] == 'in' else [rule['value']]
+        if not isinstance(values, list) or not values:
+            raise ValueError('in 比较必须提供非空列表')
+        permitted = {'integer': (int,), 'number': (int, float), 'boolean': (bool,),
+                     'string': (str,), 'date': (str,), 'datetime': (str,)}[kind]
+        if any(v is not None and type(v) not in permitted for v in values):
+            raise ValueError('筛选值类型与原始列不一致')
+    model = models.get(job['model_id'])
+    if job['model_id'] is not None and (model is None or job['target_id'] not in model['target_ids']):
+        raise ValueError('任务引用的模型无效')
+    op = job['operation']
+    if op in ('pearson', 'spearman'):
+        if not job['other_column']:
+            raise ValueError('相关分析必须声明两个数值列，相关系数无量纲，unit 必须为 null')
+        if job['baseline_filters'] or job['pair_by'] or job['predictors'] or job['trials_column']:
+            raise ValueError('相关分析使用同一行的两个变量，不接受组间基线、匹配键或回归字段')
+        if tab['column_types'][tab['columns'].index(job['other_column'])] not in ('integer', 'number'):
+            raise ValueError('相关分析的第二个变量必须为数值列')
+        if op == 'spearman' and job['interval_level'] is not None:
+            raise ValueError('Spearman 区间尚未注册；不能使用 Pearson Fisher 区间替代')
+        if job['column'] == job['other_column'] and (job['correlation_test'] or job['interval_level']):
+            raise ValueError('自相关对角线只能作描述，不检验也不附加区间')
+    elif job['other_column'] is not None or job['correlation_test']:
+        raise ValueError('other_column/correlation_test 仅用于相关分析')
+    if op != 'count':
+        tab = tables[job['table_id']]
+        if tab['column_types'][tab['columns'].index(job['column'])] not in ('integer', 'number'):
+            raise ValueError('统计响应列必须为数值类型')
+    if op in ('difference', 'paired_difference', 'paired_t', 'welch_t') and not job['baseline_filters']:
+        raise ValueError('比较任务缺少基线范围')
+    if op.startswith('beta_'):
+        if (not model or not model['likelihood'] or len(model['priors']) != 1
+                or model['priors'][0]['distribution'] != 'beta'):
+            raise ValueError('Beta 模型需要一个已声明的 beta 先验和二元/计数似然')
+        if model['priors'][0]['source'] == 'historical':
+            raise ValueError('历史先验的数据构建与去重检查尚未注册，不能作为默认先验静默替代')
+        if op == 'beta_probability' and job['threshold'] is None:
+            raise ValueError('后验事件需要明确阈值')
+    if op == 'ols_coefficient' and (
+        not model or not job['predictors'] or job['coefficient'] not in ['intercept', *job['predictors']]
+    ):
+        raise ValueError('回归任务缺少模型、自变量或系数名称')
+    if op == 'count' and job['interval_level'] is not None:
+        raise ValueError('计数任务不能自动附加推断区间')

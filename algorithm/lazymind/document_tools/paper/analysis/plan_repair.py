@@ -28,8 +28,16 @@ def material_claim(claims):
 
 class PlanRepairError(ValueError):
     def __init__(self, issues):
-        self.issues = issues
-        super().__init__('；'.join(f'{i["job_id"]}.{i["field"] or "job"}: {i["message"]}' for i in issues))
+        merged = {}
+        for issue in issues:
+            key = (issue.get('job_id'), issue.get('figure_id'), issue['field'])
+            if key not in merged:
+                merged[key] = copy.deepcopy(issue)
+            elif issue['message'] != merged[key]['message']:
+                merged[key]['message'] += '；' + issue['message']
+        self.issues = list(merged.values())
+        super().__init__('；'.join(f'{i.get("job_id", i.get("figure_id"))}.{i["field"] or "job"}: '
+                                  f'{i["message"]}' for i in self.issues))
 
 
 def preserve_scope(job, changed, issue):
@@ -52,10 +60,12 @@ def apply_updates(plan, response, issues):
             or set(response) - {'updates', 'model_updates', 'figure_updates'}
             or not isinstance(response['updates'], list)):
         raise ValueError('局部修复必须只返回 updates 列表')
-    allowed = {(item['job_id'], item['field']) for item in issues}
-    by_issue = {(item['job_id'], item['field']): item for item in issues}
+    job_issues = [item for item in issues if 'job_id' in item]
+    local_figures = {item['figure_id'] for item in issues if 'figure_id' in item}
+    allowed = {(item['job_id'], item['field']) for item in job_issues}
+    by_issue = {(item['job_id'], item['field']): item for item in job_issues}
     whole_jobs = {job_id for job_id, field in allowed if field is None}
-    if not whole_jobs and (response.get('model_updates') or response.get('figure_updates')):
+    if not whole_jobs and (response.get('model_updates') or (response.get('figure_updates') and not local_figures)):
         raise ValueError('字段补全不能修改模型或图表')
     updates = {}
     for item in response['updates']:
@@ -71,6 +81,11 @@ def apply_updates(plan, response, issues):
     replacements, jobs = {}, []
     for job in result['jobs']:
         identifier = job['id']
+        for (job_id, field), value in updates.items():
+            if job_id == identifier and field is not None:
+                if field not in {'design_evidence', 'design_evidence_refs', 'pair_by', 'unit'}:
+                    raise ValueError('当前字段补全仅支持设计依据引用、配对键和单位')
+                job[field] = value
         if (identifier, None) in updates:
             changed = updates[(identifier, None)]
             if not isinstance(changed, list) or not changed or any(
@@ -83,11 +98,6 @@ def apply_updates(plan, response, issues):
             replacements[identifier] = [row['id'] for row in changed]
             jobs.extend(changed)
         else:
-            for (job_id, field), value in updates.items():
-                if job_id == identifier:
-                    if field not in {'design_evidence', 'pair_by'}:
-                        raise ValueError('当前字段补全仅支持设计依据和配对键')
-                    job[field] = value
             jobs.append(job)
     ids = [job['id'] for job in jobs]
     if len(set(ids)) != len(ids):
@@ -132,11 +142,18 @@ def apply_updates(plan, response, issues):
         if not isinstance(update, dict) or set(update) != {'figure_id', 'figure'}:
             raise ValueError('图表修复须包含 figure_id/figure')
         identifier, figure = update['figure_id'], update['figure']
-        if identifier not in affected_figures or identifier in seen or not isinstance(figure, dict):
+        if identifier not in affected_figures | local_figures or identifier in seen or not isinstance(figure, dict):
             raise ValueError('不能修复无关图表或重复修复图表')
         if any(figure.get(k) != figures[identifier].get(k) for k in ('id', 'columns', 'finding_ids')):
             raise ValueError('图表修复不能删除结果或改变原始来源')
+        if identifier in local_figures and identifier not in affected_figures and any(
+            figure.get(key) != figures[identifier].get(key)
+            for key in figure.keys() | figures[identifier].keys() if key != 'data_mapping'
+        ):
+            raise ValueError('映射字段修复不能改变图型、研究目的或其他图表字段')
         seen.add(identifier)
         figures[identifier] = copy.deepcopy(figure)
+    if not local_figures <= seen:
+        raise ValueError('局部修复缺少指定图表映射')
     result['figures'] = [figures[f['id']] for f in result.get('figures', [])]
     return result
