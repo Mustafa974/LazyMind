@@ -3,11 +3,65 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import copy
+import inspect
 import io
 import json
 import re
 import sys
 import traceback
+
+
+def prepared_call_guard(namespace, payload):
+    """Verify actual native calls retain every host-bound number, identity and range."""
+    if payload['spec'].get('data_contract', {}).get('prepared_view_version') != 1:
+        return lambda figure: None
+    panels = copy.deepcopy(payload['table']['figure']['panels'])
+    name = payload['spec']['style_contract']['native_template']
+    native = namespace[name]
+    signature = inspect.signature(native)
+    used, axes = set(), set()
+    states = []
+
+    def plain(value):
+        if isinstance(value, dict):
+            return {key: plain(item) for key, item in value.items()}
+        if isinstance(value, (tuple, list)):
+            return [plain(item) for item in value]
+        if hasattr(value, 'tolist'):
+            return plain(value.tolist())
+        return value
+
+    def guarded(*args, **kwargs):
+        bound = dict(signature.bind(*args, **kwargs).arguments)
+        axis = bound.pop('ax')
+        title = bound.pop('title', '')
+        title = title if isinstance(title, str) and re.fullmatch(r'\([A-Za-z]\)', title) else ''
+        actual = plain(bound)
+        match = next((i for i, panel in enumerate(panels) if i not in used and actual == plain(
+            {key: value for key, value in panel['arguments'].items() if key != 'title'})), None)
+        if match is None:
+            raise ValueError("Call the native function with one unchanged panel['arguments']; "
+                             'do not rebuild data, interval endpoints, series identities or axis limits')
+        if id(axis) in axes:
+            raise ValueError('Prepared panel scopes need separate axes; do not overlay different quantities')
+        used.add(match)
+        axes.add(id(axis))
+        result = native(ax=axis, title=title, **bound)
+        states.append((axis, axis.get_xlim(), axis.get_ylim(), axis.get_xscale(), axis.get_yscale()))
+        return result
+
+    namespace[name] = guarded
+
+    def complete(figure=None):
+        if len(used) != len(panels):
+            raise ValueError('Draw every prepared panel exactly once; selected findings cannot be omitted')
+        for axis, xlim, ylim, xscale, yscale in states:
+            if ((figure is not None and axis not in figure.axes) or axis.get_xlim() != xlim
+                    or axis.get_ylim() != ylim or axis.get_xscale() != xscale or axis.get_yscale() != yscale):
+                raise ValueError('Keep prepared numeric/category axis limits and scales; do not crop or reverse them')
+
+    return complete
 
 
 def apply_title_policy(figure, spec):
@@ -509,7 +563,9 @@ def render(payload: dict) -> dict:
         namespace = {}
         with contextlib.redirect_stdout(sys.stderr):
             exec(compile(payload['code'], '<generated-plot>', 'exec'), namespace)
+            verify_prepared_calls = prepared_call_guard(namespace, payload)
             figure = namespace['draw'](payload['table'], payload['statistics'], payload['spec'])
+            verify_prepared_calls(figure)
         if not isinstance(figure, Figure) or not figure.axes:
             raise ValueError('draw 必须返回包含坐标轴的 Matplotlib Figure')
         width, height = figure.get_size_inches()

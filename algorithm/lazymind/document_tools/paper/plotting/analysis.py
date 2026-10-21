@@ -12,6 +12,7 @@ from .code import ALLOWED_IMPORTS, FORBIDDEN, FORBIDDEN_ATTRIBUTES
 from .skills import PlotSkills
 from .style_profiles import bind_series
 from .bindings import bind_context, finding_table, figure_semantics, result_view
+from .figure_data import prepare_figure_data
 from ..analysis.prompt_payload import figure_statistics, figure_spec, drawing_reference, native_interface
 from .code_response import code_response, CODE_INSTRUCTION, REPAIR_INSTRUCTION
 from ..analysis.schema import digest
@@ -111,6 +112,8 @@ claims, causal claims, extra panels, changed endpoints or invented observations.
 
 
 def generate_code(table, analysis, spec, reference, previous, error):
+    if table.get('figure', {}).get('panels'):
+        return generate_prepared_code(table, spec, reference, previous, error)
     if (spec.get('style') in BOUND_GUIDANCE and spec.get('style_contract', {}).get('version') == 'paper-v1'
             and table.get('metadata', {}).get('result_records')):
         return generate_bound_code(table, analysis, spec, reference, previous, error)
@@ -232,6 +235,47 @@ do not claim p values or tests when finding.test is null. User-designated focal 
     return code
 
 
+def generate_prepared_code(table, spec, reference, previous, error):
+    """The model arranges the figure; the host supplies every native data/axis argument."""
+    prompt = CODE_INSTRUCTION + '''Implement draw(data, statistics, spec) -> Figure for this planned figure.
+Use task-relevant reasoning only. Return source directly, optionally with an accurate caption.
+data['figure'] is paper.figure.v1: points contain verified estimate/interval.low/interval.high and provenance;
+panels contain the complete arguments for the supplied native function. Do not read statistics or other data keys.
+For EVERY panel call the native function as native_function(ax, **panel['arguments']) exactly once.
+Use the actual native_api function name, not the placeholder native_function. Do not rebuild, replace, mutate,
+filter, average or hardcode those arguments. The host verifies native calls against the original bound data.
+The arguments already include the correct numeric/category axes, labels, unit, intervals, colors and markers.
+No result_grid call or result_records parsing is needed or available. Missing intervals remain absent, never zero.
+You choose the Matplotlib panel arrangement, using the supplied paper layout and native functions unchanged.
+For one panel use layout=spec['style_contract']['layout'], plt.subplots(figsize=tuple(layout['single_inches']))
+and fig.subplots_adjust(**layout['single_panel']); for two use layout['two_inches'] and layout['two_panels'].
+For more panels arrange a grid with readable final-size fonts; never truncate the panel list to two.
+Place all panels. Keep their finding scopes distinct; do not add or drop panels. No statistical computation,
+file/network access, rcParams changes, dynamic reflection or example data. No overall or panel title text;
+titles are separate metadata. Explain panel scopes and actual interval kind/level in the caption.
+For point_interval contrasts, use panel['comparisons'] with label_difference_axis(ax, comparisons, None, None)
+and its returned full subtraction labels for the legend. The helper draws the zero reference. Never label only
+the baseline. Keep the prepared x label and axis range. Only add direction cues when explicitly supported.
+''' + (REPAIR_INSTRUCTION if previous else '')
+    compact = figure_spec(spec, table)
+    for field in ('rc', 'rules', 'series_colors', 'bar_series_colors', 'series_edges', 'series_markers',
+                  'series_line_styles', 'series_sizes', 'quantity_semantics'):
+        compact['style_contract'].pop(field, None)
+    payload = dict(data={'figure': table['figure']}, spec=compact, native_api=native_interface(reference, spec),
+                   execution_rules={'allowed_imports': sorted(ALLOWED_IMPORTS),
+                                    'forbidden_names': sorted(FORBIDDEN),
+                                    'forbidden_attributes': sorted(FORBIDDEN_ATTRIBUTES)},
+                   previous_code=previous, error=error)
+    result = call_code_model(prompt + '\nINPUT_JSON:\n' + json.dumps(
+        payload, ensure_ascii=False, allow_nan=False, separators=(',', ':')))
+    code = code_response(result, previous, metadata=('caption',))
+    if 'caption' in result:
+        if not isinstance(result['caption'], str) or not result['caption'].strip():
+            raise ValueError('图注必须为非空文本')
+        spec['caption'] = result['caption']
+    return code
+
+
 def prepare_figures(analysis, figures, inputs=None, jobs=None):
     skills = PlotSkills()
     findings = {f['id']: f for f in analysis['findings']}
@@ -254,6 +298,9 @@ def prepare_figures(analysis, figures, inputs=None, jobs=None):
         bound['metadata'].update(view)
         if view:
             spec['data_contract']['result_view_version'] = 1
+            bound['figure'] = prepare_figure_data(figure, bound['metadata'], spec['style_contract'])
+            if bound['figure']['panels']:
+                spec['data_contract']['prepared_view_version'] = 1
         selected_targets = {finding['target_id'] for finding in selected}
         figure_analysis = {**analysis, 'findings': selected,
                            'summary': '；'.join(finding['statement'] for finding in selected),
@@ -331,6 +378,8 @@ def draw(analysis, figures, inputs=None, jobs=None, prefetched=None):
 
     def render_one(item):
         figure, bound, figure_analysis, spec, reference, hashes = item
+        if bound.get('figure'):
+            diagnostics.save(f"figure-{diagnostics.figure_name(figure['id'])}-data.json", bound['figure'])
         legacy_chart, trace = draw_one(bound, figure_analysis, spec, reference, attempts, code_generator=generator)
         chart = dict(id=figure['id'], title=figure['title'], columns=figure['columns'],
                      svg=legacy_chart['svg'], finding_ids=figure['finding_ids'], caption=spec['caption'])

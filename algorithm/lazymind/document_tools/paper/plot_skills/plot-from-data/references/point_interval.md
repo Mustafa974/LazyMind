@@ -2,7 +2,7 @@
 
 Call `paper_extended.py::draw_point_intervals(ax, summaries, methods, categories, colors, edges, markers, title, xlabel, xlim)`.
 
-`summaries[method]` is one `[estimate, lower, upper]` triple per actual category. All triples must be finite and ordered lower ≤ estimate ≤ upper. Use supplied/host-verified endpoints exactly, including asymmetry. The helper does not estimate uncertainty, resample or infer pairing. If intervals are missing, choose an appropriate observed-value chart rather than inventing endpoints.
+`summaries[method]` is one `[estimate, lower, upper]` triple per actual category. All triples must be finite and ordered lower ≤ estimate ≤ upper. Use supplied/host-verified endpoints exactly, including asymmetry. The helper does not estimate uncertainty, resample or infer pairing. When a verified estimate has no interval, retain its point without an error bar; never invent endpoints. Unobserved cells stay missing and are never replaced by zero.
 
 Use horizontal intervals with small identity-bound markers, x grid, category labels and a shared legend for adjacent related panels. The approved two-panel 182×78 mm layout reserves a top strip (top=0.78). Actual effects may use a null reference (zero for differences, one for ratios) only when meaningful. Means of positive outcomes need not start at zero because no bar length encodes the value. Keep every interval inside the x range.
 

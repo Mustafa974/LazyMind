@@ -45,6 +45,13 @@ class Job(Object):
     unit: Text | None = None
 
 
+class FigureMapping(Object):
+    series_column: Text | None = None
+    category_column: Text
+    facets: list[Text] = Field(default_factory=list)
+    xscale: Literal['linear', 'log'] = 'linear'
+
+
 class FigurePlan(Object):
     id: Text
     title: Text
@@ -55,6 +62,7 @@ class FigurePlan(Object):
     finding_ids: list[Text]
     columns: list[ColumnRef]
     instructions: Text
+    data_mapping: FigureMapping | None = None
 
 
 class Join(Object):

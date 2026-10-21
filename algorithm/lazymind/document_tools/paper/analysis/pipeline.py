@@ -248,6 +248,14 @@ def run(raw_inputs):
                 if failed_jobs:
                     raise PlanRepairError(failed_jobs)
                 check_figure_plan(candidate, references)
+                # Bind/validate figure inputs before spending any drawing-code model calls.
+                from ..plotting.analysis import prepare_figures
+                from ..plotting.figure_data import FigureDataError
+                try:
+                    prepare_figures(build_analysis(inputs, candidate, references), candidate['figures'],
+                                    inputs, candidate['jobs'])
+                except FigureDataError as exc:
+                    raise FigurePlanRepairError([dict(figure_id=exc.figure_id, message=str(exc))]) from exc
             plan = candidate
             diagnostics.save('locked-plan.json', plan)
             planning.append(dict(attempt=attempt, outcome='passed'))

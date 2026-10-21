@@ -98,7 +98,7 @@ def draw_heatmap(ax, values, row_labels, column_labels, title, xlabel, ylabel,
 
 
 def draw_point_intervals(ax, summaries, methods, categories, colors, edges, markers, title, xlabel, xlim):
-    """Summaries are verified [estimate, low, high] triples, never recomputed here."""
+    """Verified [estimate, low, high] triples; null endpoints mean a point without an interval."""
     if (not methods or len(set(methods)) != len(methods)
             or any(len(style) != len(methods) for style in [colors, edges, markers])):
         raise ValueError('Every distinct method needs its own supplied appearance; do not truncate groups')
@@ -106,15 +106,22 @@ def draw_point_intervals(ax, summaries, methods, categories, colors, edges, mark
     offsets = np.linspace(-.22, .22, len(methods)) if len(methods) > 1 else [0]
     for method, color, edge, marker, offset in zip(methods, colors, edges, markers, offsets):
         rows = np.asarray(summaries[method], dtype=float)
-        if rows.shape != (len(categories), 3) or not np.all(np.isfinite(rows)):
-            raise ValueError('Provide one complete estimate/low/high triple per category and method')
+        if rows.shape != (len(categories), 3) or np.any(np.isinf(rows)):
+            raise ValueError('Provide one estimate/low/high triple per category and method; missing cells stay null')
         estimate, low, high = rows.T
-        if np.any(low > estimate) or np.any(high < estimate):
+        observed = np.isfinite(estimate)
+        interval = np.isfinite(low) & np.isfinite(high)
+        if np.any(np.isnan(low) != np.isnan(high)) or np.any(interval & ~observed):
+            raise ValueError('An interval needs both endpoints and an observed estimate')
+        if np.any(low[interval] > estimate[interval]) or np.any(high[interval] < estimate[interval]):
             raise ValueError('Interval endpoints must enclose their estimate')
-        if low.min() < xlim[0] or high.max() > xlim[1]:
+        finite = rows[np.isfinite(rows)]
+        if len(finite) and (finite.min() < xlim[0] or finite.max() > xlim[1]):
             raise ValueError('Do not crop uncertainty intervals')
-        ax.errorbar(estimate, np.arange(len(categories)) + offset,
-                    xerr=np.vstack([estimate - low, high - estimate]), fmt=marker,
+        error = np.full((2, len(estimate)), np.nan)
+        error[:, interval] = np.vstack([estimate[interval] - low[interval], high[interval] - estimate[interval]])
+        ax.errorbar(estimate[observed], (np.arange(len(categories)) + offset)[observed],
+                    xerr=error[:, observed] if interval.any() else None, fmt=marker,
                     markersize=3.7, markerfacecolor=color, markeredgecolor=edge,
                     markeredgewidth=.5, ecolor=edge, elinewidth=.85,
                     capsize=2, capthick=.65, label=method, zorder=3)

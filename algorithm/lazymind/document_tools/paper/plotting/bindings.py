@@ -181,8 +181,6 @@ def result_view(findings, jobs, inputs, contract, context):
     """Bind verified values, scopes and identity once, outside the model's drawing code."""
     if inputs is None or not jobs:
         return {}
-    if any(rule['operator'] != 'eq' for job in jobs for rule in job['filters'] + job['baseline_filters']):
-        return {}  # Range/set scopes keep the complete existing model interface; never infer point coordinates.
     indexed = {job['id']: job for job in jobs}
     tables = table_map(inputs)
     records, observed, dimensions = [], {}, {}
@@ -210,7 +208,9 @@ def result_view(findings, jobs, inputs, contract, context):
         record = {key: copy.deepcopy(value) for key, value in finding.items()
                   if key not in ('statement', 'columns', 'calculation')}
         record.update(metric=job['column'], operation=job['operation'], coordinates=coordinates,
-                      comparisons=comparisons)
+                      comparisons=comparisons,
+                      scope={key: copy.deepcopy(job[key]) for key in
+                             ('table_id', 'filters', 'baseline_filters', 'pair_by')})
         records.append(record)
     for ref, values in observed.items():
         source_ref = ref.removeprefix('baseline.')

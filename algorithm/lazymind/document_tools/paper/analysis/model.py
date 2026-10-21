@@ -137,6 +137,15 @@ titles are returned only in Chart.title, never drawn on the canvas. Put panel de
 and use only (a)/(b) identifiers on the image; retain meaningful axis labels and units.
 finding_ids name jobs. Do not promise raw trajectories/embeddings from aggregate findings. Choose an installed style
 from the catalog; custom requires base_style. Figure columns remain original ColumnRefs. No invented uncertainty.
+For point_interval, bar_grouped_hatch, line_confidence_band and line_training_curve, declare data_mapping once:
+series_column is the qualified grouping coordinate or null, category_column is the qualified category/x coordinate,
+facets lists additional coordinates that must remain separate, and xscale is linear or log (confidence curves only).
+Use table_id.column for selected filters and baseline.table_id.column for baseline filters. A contrast across
+baselines typically uses baseline.data.method as series and data.task as category; use the ACTUAL table/column names.
+For an ungrouped scalar use category_column='finding_id'. Numeric trajectories require numeric category coordinates.
+Range/set filter bounds are scopes, not observed coordinates; never use them as category/x measurements.
+This only binds the selected findings; it never changes computations, figure choice/count, signs or units.
+The host prepares native drawing arguments and validates ambiguous/missing cells before code generation.
 This interface draws scalar Findings, not original sample/prediction vectors. Do not select histogram, ECDF,
 violin, ROC/PR or raw hexbin styles here. Use verified estimate/interval points, method bars or actual result
 matrices instead; contouring requires a complete grid of those results with explicit coordinates.
