@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import os
 
 from .code_response import parse_code_response, response_text
 from . import transport
@@ -29,7 +30,34 @@ def request_model(prompt: str, json_output=True):
                            connect_timeout_seconds=policy.connect if supported else None,
                            read_timeout_seconds=policy.read if supported else None,
                            max_transport_attempts=policy.attempts if supported else None):
-        raw = transport.call(client, prompt, options, policy, supported)
+        preview = diagnostics.response_preview(json_output)
+        streaming = (preview is not None and supported and not getattr(preview.recorder, 'streaming_rejected', False)
+                     and os.environ.get('LAZYMIND_PAPER_MODEL_STREAM', 'auto') != 'off')
+        if streaming:
+            options['stream_output'] = {'_stream_sink': preview.sink}
+        try:
+            try:
+                raw = transport.call(client, prompt, options, policy, supported)
+            except Exception as exc:
+                # Downgrade only an explicit pre-response rejection of streaming.
+                # Interrupted streams and ordinary service errors retain their existing policy.
+                failure = getattr(getattr(exc, 'terminal', None), 'failure', None)
+                messages = ' '.join(str(item) for item in diagnostics.exception_chain(exc)).lower()
+                unsupported = (streaming and not preview.received_text and failure is not None
+                               and not getattr(getattr(exc, 'terminal', None), 'has_semantic_output', True)
+                               and getattr(failure, 'provider_http_status', None) in (400, 422, 501)
+                               and 'stream' in messages
+                               and any(word in messages for word in ('unsupported', 'not supported', 'not allowed')))
+                if not unsupported:
+                    raise
+                preview.recorder.streaming_rejected = True
+                raw = transport.call(client, prompt, {**options, 'stream_output': False}, policy, supported)
+            if preview:
+                preview.finish(raw)
+        except BaseException:
+            if preview:
+                preview.abort()
+            raise
         diagnostics.response(raw)
     text = str(raw or '').strip()
     if not text:

@@ -127,6 +127,8 @@ class Recorder:
         self.warned = False
         self.clock = {}
         self.progress = 5
+        from .live import PublicProgress
+        self.public = PublicProgress(self)
         self.root = Path(workspace) / 'f4-trace' / uuid.uuid4().hex
         self.root.mkdir(parents=True, mode=0o700)
         self.summary = dict(schema='paper-f4-trace.v1', trace_id=self.root.name, task_id=task_id,
@@ -190,6 +192,7 @@ class Recorder:
                                'current_phase': f'F4 · {label}{suffix}'})
                 except Exception:
                     LOG.warning('F4 trace progress notification failed')
+            self.public.begin(item, LABELS.get(name, name))
             return item
 
     def end(self, item, exc=None):
@@ -202,6 +205,7 @@ class Recorder:
                 self.progress = max(self.progress, MILESTONES.get(item['stage'], self.progress))
             self.record('stage_finished', stage_id=item['id'], stage=item['stage'], status=item['status'],
                         duration_ms=item['duration_ms'], **({'error': item['error']} if exc else {}))
+            self.public.end(item, exc)
 
     def save(self, name, value):
         with self.lock:
@@ -220,6 +224,7 @@ class Recorder:
                     self.total_bytes += len(raw)
             self.summary['artifacts'] = [a for a in self.summary['artifacts'] if a['path'] != name] + [info]
             self.record('artifact_saved', **info)
+            self.public.note(name, value)
 
     def finish(self, exc=None):
         with self.lock:
@@ -227,6 +232,7 @@ class Recorder:
             if exc:
                 self.summary['error'] = safe_error(exc)
             self.record('run_finished', status=self.summary['status'])
+            self.public.flush()
             LOG.info('F4 trace %s: task=%s status=%s path=%s',
                      'incomplete' if self.summary.get('storage_error') else 'saved',
                      self.summary['task_id'], self.summary['status'], self.root)
@@ -281,6 +287,14 @@ def save(name, value):
 
 def enabled():
     return _current.get() is not None
+
+
+def response_preview(json_output):
+    recorder = _current.get()
+    if recorder is None or not recorder.emit:
+        return None
+    from .live import ResponsePreview
+    return ResponsePreview(recorder, _parent.get(), json_output)
 
 
 def response(raw):

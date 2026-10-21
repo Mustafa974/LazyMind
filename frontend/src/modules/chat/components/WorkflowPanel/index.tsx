@@ -61,6 +61,7 @@ import { SlideThumb } from './ppt/SlideThumb';
 import { WorkflowTabActions } from './actions/WorkflowTabActions';
 import { WorkflowPanelTabActiveContext, SlotEditingContext } from './slotEditingContext';
 import { findWriterArtifactStream } from './writerArtifactStream';
+import { PaperAnalysisProgress } from './PaperAnalysisProgress';
 import { resolveCompletedContinueStep, resolveExternalContinueAction, resolveWorkflowContinueAction } from './workflowContinue';
 import { resolvePendingApprovalStep } from './workflowApproval';
 import { moveSelectedCompositePages, sameCompositePageOrder } from './compositePageReorder';
@@ -2351,6 +2352,8 @@ export function WorkflowPanel({
               >
                 <WorkflowPanelTabActiveContext.Provider value={idx === visibleActiveTabIdx}>
                 <SlotDownloadContext.Provider value={!previewing && workflowTabAllowsDownload(tab, idx, tabs.length)}>
+                  {session.workflow_id === 'paper-writing' && resolveWorkflowTabStepId(tab, session.steps) === 'data_analysis'
+                    && <PaperAnalysisProgress session={session} active={idx === visibleActiveTabIdx} />}
                   {previewing && <div className="workflow-panel__preview-label" role="status">{t('chat.workflowGeneratingPreview')}</div>}
                   <TabSlotGrid
                     tab={executionPreviewTab(tab, session, preview)}

@@ -19,6 +19,7 @@ from lazymind.chat.api import (
     model_features_routes,
     workflow_routes,
     subagent_routes,
+    paper_progress_routes,
 )
 from lazymind.chat.service.utils.trace_archive import start_local_trace_maintenance
 from lazymind.chat.runtime_loader import start_background_chat_runtime_warmup
@@ -45,6 +46,7 @@ logging.getLogger('httpx').setLevel(logging.WARNING)
 def register_chat_routers(app: FastAPI) -> FastAPI:
     # health is always available for liveness probes.
     app.include_router(health_routes.router)
+    app.include_router(paper_progress_routes.router)
     # Agent control callbacks must remain available in both direct and router modes.
     app.include_router(agent_control_routes.router)
     app.include_router(mail_read_routes.router)
