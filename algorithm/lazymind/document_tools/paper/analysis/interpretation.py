@@ -10,6 +10,7 @@ from .schema import Object, Text, ContractError, parse, table_map
 from ..plotting.model import PlotModelError
 from .prompt_payload import interpretation_evidence
 from .presentation import numeric_table
+from . import trace as diagnostics
 
 
 class Answer(Object):
@@ -172,11 +173,12 @@ Never change statistics or methods to improve a conclusion. On validation failur
     for attempt in range(1, attempts + 1):
         candidate = None
         try:
-            candidate = call(prompt + '\nINPUT_JSON:\n' + json.dumps(
-                dict(**payload, previous_response=previous, previous_error=error),
-                ensure_ascii=False, allow_nan=False, separators=(',', ':')))
-            result = validate(candidate, analysis, numeric_identifiers, language)
-            summary = render(result, analysis, plan)
+            with diagnostics.stage('interpretation', attempt=attempt):
+                candidate = call(prompt + '\nINPUT_JSON:\n' + json.dumps(
+                    dict(**payload, previous_response=previous, previous_error=error),
+                    ensure_ascii=False, allow_nan=False, separators=(',', ':')))
+                result = validate(candidate, analysis, numeric_identifiers, language)
+                summary = render(result, analysis, plan)
             history.append(dict(attempt=attempt, outcome='passed'))
             return summary, dict(attempts=history, response=result,
                                  numeric_evidence_source='independently_verified_findings')

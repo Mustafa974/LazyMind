@@ -8,6 +8,7 @@ import re
 from ..analysis.inputs import make_plan
 from .api import reference as api_reference
 from .code_response import code_response, parse_code_response, CODE_INSTRUCTION, REPAIR_INSTRUCTION
+from ..analysis import trace as diagnostics
 
 
 class PlotModelError(RuntimeError):
@@ -22,7 +23,10 @@ def request_model(prompt: str, json_output=True):
     options = {'stream_output': False}
     if json_output:
         options['response_format'] = {'type': 'json_object'}
-    raw = AutoModel(model='llm')(prompt, **options)
+    with diagnostics.stage('model_request', model_alias='llm', json_output=json_output,
+                           request_bytes=len(prompt.encode())):
+        raw = AutoModel(model='llm')(prompt, **options)
+        diagnostics.response(raw)
     text = str(raw or '').strip()
     if not text:
         raise PlotModelError('绘图模型未返回内容，请检查模型服务状态；不将空响应当作绘图代码错误重写')

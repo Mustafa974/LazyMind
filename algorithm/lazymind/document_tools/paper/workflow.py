@@ -14,6 +14,7 @@ from .api import run_algorithm
 from .contracts import MissingMaterials
 from .entry import MAX_MANUSCRIPT_CHARS, read_manuscript
 from .review_schema import text_digest
+from .analysis import trace as diagnostics
 
 SCHEMA = 'paper-material-pool.v1'
 ROUTES = {
@@ -450,6 +451,7 @@ def initialize_pool(bound: dict[str, str], request: str = '') -> dict:
     return pool_from_business(value)
 
 
+@diagnostics.workflow_trace
 def run_paper_step() -> dict:
     """Execute the authoritative current step and save its artifacts in one batch.
 
@@ -480,7 +482,8 @@ def run_paper_step() -> dict:
             raise ValueError(f'未知 Workflow 步骤: {step}')
         if step == 'data_analysis':
             from .analysis.attachments import bind_attachment
-            bound = bind_attachment(bound, context.workspace_path, request)
+            with diagnostics.stage('input_binding'):
+                bound = bind_attachment(bound, context.workspace_path, request)
         pool = initialize_pool(bound, request)
         if step == 'research_topic' and 'paper_input' not in bound and not any(
             key.endswith('_pool') for key in bound
@@ -532,7 +535,12 @@ def run_paper_step() -> dict:
             path = Path(context.workspace_path) / markdown_filename(STEP_LABELS[step])
             path.write_text(artifact['value'], encoding='utf-8')
             artifact.update(content_type='file', value=str(path))
-    saved = save_artifacts(artifacts)
+    with diagnostics.stage('output_publication'):
+        saved = save_artifacts(artifacts)
+        diagnostics.save('published-files.json', [
+            {'slot': item['key'], 'filename': Path(item['value']).name}
+            for item in artifacts if item['content_type'] == 'file'
+        ])
     return {
         'status': 'completed', 'step': step, 'saved': saved,
         # Stop the node with user-facing text, not a stringified publication receipt.

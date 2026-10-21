@@ -23,6 +23,7 @@ from .methods import executed_methods
 from .prompt_payload import runtime_plan
 from .presentation import finding_label
 from ..execution.threads import ThreadPoolExecutor
+from . import trace as diagnostics
 
 _trace_sink = ContextVar('paper_analysis_trace_sink', default=None)
 
@@ -170,11 +171,17 @@ def execute_locked(inputs, plan, references, attempts):
     code, error, history, rendered, checked = '', '', [], None, None
     for attempt in range(1, attempts + 1):
         try:
-            code = model.generate_program(inputs, copy.deepcopy(plan), code, error)
-            executor.validate_code(code)
+            with diagnostics.stage('analysis_code_generation', attempt=attempt):
+                code = model.generate_program(inputs, copy.deepcopy(plan), code, error)
+                diagnostics.save(f'analysis-code-{attempt}.py', code)
+            with diagnostics.stage('analysis_code_validation', attempt=attempt):
+                executor.validate_code(code)
             payload = dict(tables=table_map(inputs), plan=runtime_plan(plan), code=code, seed=42)
-            rendered = executor.execute(payload)
-            checked = verify(rendered['results'], plan, inputs, references)
+            with diagnostics.stage('analysis_execution', attempt=attempt):
+                rendered = executor.execute(payload)
+                diagnostics.save(f'computed-results-{attempt}.json', rendered['results'])
+            with diagnostics.stage('numerical_verification', attempt=attempt):
+                checked = verify(rendered['results'], plan, inputs, references)
             history.append(dict(attempt=attempt, outcome='passed',
                                 code_sha256=hashlib.sha256(code.encode()).hexdigest()))
             break
@@ -190,8 +197,16 @@ def execute_locked(inputs, plan, references, attempts):
 
 
 def run(raw_inputs):
-    inputs = normalize_input(raw_inputs)
-    executor.configuration()  # Deployment failures are not model/code repair requests.
+    with diagnostics.stage('input_validation'):
+        inputs = normalize_input(raw_inputs)
+        if diagnostics.enabled():
+            diagnostics.save('input-summary.json', {
+                **{key: value for key, value in binding(inputs).items() if key.endswith('sha256')},
+                'tables': [{'id': key, 'rows': len(table['rows']), 'columns': len(table['columns'])}
+                           for key, table in table_map(inputs).items()],
+            })
+    with diagnostics.stage('environment_validation'):
+        executor.configuration()  # Deployment failures are not model/code repair requests.
     try:
         attempts = int(os.environ.get('LAZYMIND_PAPER_GENERATED_ANALYSIS_ATTEMPTS', '3'))
         if not 1 <= attempts <= 3:
@@ -203,29 +218,38 @@ def run(raw_inputs):
     for attempt in range(1, attempts + 1):
         try:
             if figure_issues and candidate is not None:
-                candidate = model.repair_figures(inputs, candidate, figure_issues)
+                with diagnostics.stage('figure_plan_repair', attempt=attempt):
+                    candidate = model.repair_figures(inputs, candidate, figure_issues)
+                    diagnostics.save(f'plan-attempt-{attempt}.json', candidate)
                 figure_issues = []
             elif issues and candidate is not None:
-                candidate = model.repair_plan(inputs, candidate, issues)
+                with diagnostics.stage('plan_repair', attempt=attempt):
+                    candidate = model.repair_plan(inputs, candidate, issues)
+                    diagnostics.save(f'plan-attempt-{attempt}.json', candidate)
             else:
-                candidate = model.make_plan(inputs, error)
-            candidate = validate_plan(candidate, inputs)
-            views = materialize(inputs, candidate['joins'])
-            models = {m['id']: m for m in candidate['models']}
-            references, failed_jobs = {}, []
-            for job in candidate['jobs']:
-                try:
-                    references[job['id']] = reference(job, inputs, models, views)
-                except AnalysisFeasibilityError as exc:
-                    failed_jobs.append(dict(job_id=job['id'], field=None, message=str(exc),
-                                            reason_code=exc.code, repair_scope='analytical_choice',
-                                            diagnostics=exc.diagnostics))
-                except (ValueError, TypeError, KeyError) as exc:
-                    failed_jobs.append(dict(job_id=job['id'], field=None, message=str(exc)))
-            if failed_jobs:
-                raise PlanRepairError(failed_jobs)
-            check_figure_plan(candidate, references)
+                with diagnostics.stage('plan_generation', attempt=attempt):
+                    candidate = model.make_plan(inputs, error)
+                    diagnostics.save(f'plan-attempt-{attempt}.json', candidate)
+            with diagnostics.stage('plan_validation', attempt=attempt):
+                candidate = validate_plan(candidate, inputs)
+            with diagnostics.stage('reference_validation', attempt=attempt):
+                views = materialize(inputs, candidate['joins'])
+                models = {m['id']: m for m in candidate['models']}
+                references, failed_jobs = {}, []
+                for job in candidate['jobs']:
+                    try:
+                        references[job['id']] = reference(job, inputs, models, views)
+                    except AnalysisFeasibilityError as exc:
+                        failed_jobs.append(dict(job_id=job['id'], field=None, message=str(exc),
+                                                reason_code=exc.code, repair_scope='analytical_choice',
+                                                diagnostics=exc.diagnostics))
+                    except (ValueError, TypeError, KeyError) as exc:
+                        failed_jobs.append(dict(job_id=job['id'], field=None, message=str(exc)))
+                if failed_jobs:
+                    raise PlanRepairError(failed_jobs)
+                check_figure_plan(candidate, references)
             plan = candidate
+            diagnostics.save('locked-plan.json', plan)
             planning.append(dict(attempt=attempt, outcome='passed'))
             break
         except FigurePlanRepairError as exc:
@@ -258,11 +282,16 @@ def run(raw_inputs):
         if digest(plan) != locked:
             raise ContractError('INVALID_OUTPUT', 'analysis.plan', '执行中计划发生变化')
         analysis = build_analysis(inputs, plan, checked)
+        diagnostics.save('verified-results.json', analysis)
         summary, interpretation_trace, charts, figure_trace = finish_verified(
             analysis, inputs, plan, attempts, prefetched=prefetched)
     analysis['summary'] = summary
-    analysis = validate_analysis(analysis, inputs)
-    validate_charts(charts, analysis)
+    with diagnostics.stage('output_validation'):
+        analysis = validate_analysis(analysis, inputs)
+        validate_charts(charts, analysis)
+        diagnostics.save('analysis.json', analysis)
+        diagnostics.save('figures.json', [dict(id=chart['id'], title=chart['title'],
+                                              svg_bytes=len(chart['svg'].encode())) for chart in charts])
     trace = dict(contract=VERSION, input_sha256=analysis['input_sha256'], plan=plan, plan_sha256=locked,
                  runtime_plan_sha256=digest(runtime_plan(plan)),
                  plan_adaptations={'alternative_spelling': {'two_sided': 'two-sided'}},

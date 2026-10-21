@@ -14,6 +14,7 @@ from .style_profiles import bind_series
 from .templates import compose_native_program, validate_native_program
 from ..analysis.validation import validate_charts
 from ..execution.threads import ThreadPoolExecutor
+from ..analysis import trace as diagnostics
 
 
 def prepare(table: dict, topic: str, request: str):
@@ -46,18 +47,30 @@ def draw_one(bound: dict, measured: dict, spec: dict, reference: str, attempts: 
     history = []
     for attempt in range(1, attempts + 1):
         try:
-            previous = (code_generator or generate_code)(bound, measured, spec, reference, previous, error)
-            previous = compose_native_program(previous, reference, spec)
-            validate_code(previous)
-            validate_native_program(previous, spec)
-            rendered = execute_plot({'table': bound, 'statistics': measured, 'spec': spec,
-                                     'data_sha256': measured['data_sha256'], 'code': previous})
-            if set(rendered) != {'svg', 'exports'}:
-                raise ValueError('绘图执行结果必须包含 svg/exports')
-            chart = {'id': spec['id'], 'title': spec['title'], 'columns': spec['columns'], **rendered}
-            if spec.get('caption'):
-                chart['caption'] = spec['caption']
-            validate_charts([chart])
+            details = dict(figure_id=spec['id'], attempt=attempt)
+            with diagnostics.stage('figure_code_generation', **details):
+                previous = (code_generator or generate_code)(bound, measured, spec, reference, previous, error)
+                name = diagnostics.figure_name(spec['id'])
+                diagnostics.save(f'figure-{name}-code-{attempt}.py', previous)
+            with diagnostics.stage('figure_code_validation', **details):
+                previous = compose_native_program(previous, reference, spec)
+                validate_code(previous)
+                validate_native_program(previous, spec)
+            with diagnostics.stage('figure_execution', **details):
+                rendered = execute_plot({'table': bound, 'statistics': measured, 'spec': spec,
+                                         'data_sha256': measured['data_sha256'], 'code': previous})
+            with diagnostics.stage('figure_validation', **details):
+                if set(rendered) != {'svg', 'exports'}:
+                    raise ValueError('绘图执行结果必须包含 svg/exports')
+                chart = {'id': spec['id'], 'title': spec['title'], 'columns': spec['columns'], **rendered}
+                if spec.get('caption'):
+                    chart['caption'] = spec['caption']
+                validate_charts([chart])
+                diagnostics.save(f'figure-{name}-exports.json', {
+                    'id': spec['id'], 'svg_bytes': len(rendered['svg'].encode()),
+                    'formats': sorted(rendered['exports']),
+                    'code_sha256': hashlib.sha256(previous.encode()).hexdigest(),
+                })
             history.append({'attempt': attempt, 'status': 'passed_execution_and_file_checks'})
             trace = {'id': spec['id'], 'code': previous, 'data_contract': spec['data_contract'],
                      'caption': spec.get('caption', ''),

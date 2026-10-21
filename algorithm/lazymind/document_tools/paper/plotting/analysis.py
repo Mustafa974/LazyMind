@@ -16,6 +16,7 @@ from ..analysis.prompt_payload import figure_statistics, figure_spec, drawing_re
 from .code_response import code_response, CODE_INSTRUCTION, REPAIR_INSTRUCTION
 from ..analysis.schema import digest
 from ..execution.threads import ThreadPoolExecutor
+from ..analysis import trace as diagnostics
 
 
 BOUND_GUIDANCE = {
@@ -282,7 +283,10 @@ class PrefetchedCodes:
     @staticmethod
     def generate(item):
         _, bound, analysis, spec, reference, _ = item
-        code = generate_code(bound, analysis, spec, reference, '', '')
+        with diagnostics.stage('figure_code_prefetch', figure_id=spec['id'], attempt=1):
+            code = generate_code(bound, analysis, spec, reference, '', '')
+            name = diagnostics.figure_name(spec['id'])
+            diagnostics.save(f'figure-{name}-code-1.py', code)
         return code, spec.get('caption')
 
     def consume(self, bound, analysis, spec, reference, previous, error):
