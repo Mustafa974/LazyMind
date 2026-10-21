@@ -159,7 +159,7 @@ def _handoff_tool(
                                 for value in (session, user_input)) else 'UNDECLARED')
 
     @_register_host_file(capability)
-    def advance_step_and_hand_off(step_id: str) -> str:
+    def advance_step_and_hand_off(step_id: str) -> Union[str, Dict[str, Any]]:
         """Execute one Ready Workflow step, then hand off for result approval."""
         selected_session_id = session() if callable(session) else session
         selected_session_id = str(selected_session_id or '').strip()
@@ -224,6 +224,17 @@ def _handoff_tool(
                     result.update(_state_refresh_notice())
                 if step_id in rewindable:
                     result = _compact_transition_result(result)
+                if result.get('accepted') is True:
+                    # Structured tool results are consumed by the executor before
+                    # another model call, including sessions created in this turn.
+                    return {
+                        **result,
+                        '_agent_control': {
+                            'stop': True,
+                            'reason': 'workflow_handoff',
+                            'final_text': '已交由工作流执行，请在工作流中查看进度和结果。',
+                        },
+                    }
                 return _result_text(result)
             except WorkflowClientError as exc:
                 if exc.code != 'STATE_VERSION_CONFLICT' or attempt > 0:
@@ -1736,9 +1747,9 @@ def resolve_workflow_injection(
         return WorkflowAgentContribution(
             # advance_step is synchronous: its terminal result and refreshed
             # Ready frontier must be returned to the same ChatAgent turn so a
-            # user-requested continuous run can keep advancing.  Only the
-            # explicit hand-off variant transfers ownership and ends the turn.
-            tools, ['advance_step_and_hand_off'],
+            # user-requested continuous run can keep advancing. Handoff stops
+            # through its accepted structured result, never merely by tool name.
+            tools, [],
             patch, runtime_context, runtime_policy, bind_successor,
         )
 
