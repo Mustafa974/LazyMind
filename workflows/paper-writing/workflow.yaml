@@ -1,6 +1,6 @@
 id: paper-writing
 name: 论文写作
-description: 支持选题、综述、实验、分析、写作、审稿与阅读心得；模拟审稿已接真实算法，其他能力仍在开发。
+description: 支持选题、综述、实验、分析、写作、审稿与阅读心得；数据分析与模拟审稿已接真实算法，其他能力仍在开发。
 when_to_use: >
   Use when the user requests the paper-writing workflow or review of an uploaded academic manuscript.
   Bind the exact attachment filename to manuscript_file and select peer_review directly;
@@ -73,7 +73,7 @@ slots:
   - {id: revise_document_document, label: "论文修订", type: file, cardinality: single}
   - {id: reading_reflection_pool, label: "阅读心得材料池", type: file, cardinality: single, exposed: false}
   - {id: reading_reflection_document, label: "阅读心得", type: file, cardinality: single}
-  - {id: analysis_chart, label: 分析图表, type: file, cardinality: single}
+  - {id: analysis_chart, label: 分析图表, type: file, cardinality: list, ordered: true}
   - {id: finish_document, label: 结束说明, type: file, cardinality: single, exposed: false}
 ui:
   hide_skipped_steps: true
