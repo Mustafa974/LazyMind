@@ -33,7 +33,7 @@ def mock_f1_model(monkeypatch):
     ['F4', 'F5'], ['F7'], ['F2', 'F7'],
     ['F2', 'F3', 'F4'], *[[f'F{i}'] for i in range(1, 8)],
 ])
-def test_scenarios_preserve_sources_versions_and_inputs(path):
+def test_scenarios_preserve_sources_versions_and_inputs(path, reflection_calls):
     pool = tools.seed_pool()
     original = copy.deepcopy(pool)
     for node in path:
@@ -64,11 +64,13 @@ def test_ten_feedback_rounds_from_direct_entry(start, feedback):
 
 
 @pytest.mark.parametrize('count', [1, 2])
-def test_single_multiple_paper_reflection(count):
+def test_single_multiple_paper_reflection(count, reflection_calls):
     pool = tools.seed_pool()
     tools.material(pool, 'papers')['content'] = tools.material(pool, 'papers')['content'][:count]
     result = tools.execute_mock('F7', pool)
-    assert f'{count} 篇' in result['document']
+    papers = tools.material(pool, 'papers')['content']
+    assert reflection_calls[0]['papers'] == papers
+    assert all(paper['id'] in result['document'] for paper in papers)
 
 
 def test_edited_artifact_is_imported_as_new_version_and_used_for_review():
@@ -94,12 +96,13 @@ def test_feedback_snapshot_wins_over_old_upstream_pool():
 
 
 @pytest.mark.parametrize('node,kind', [('F4', 'data'), ('F6', 'manuscript'), ('F7', 'papers')])
-def test_missing_input_fails_without_mutation_then_can_resume(node, kind):
+def test_missing_input_fails_without_mutation_then_can_resume(node, kind, reflection_calls):
     pool = tools.seed_pool()
     ref = pool['current'].pop(kind)
     before = copy.deepcopy(pool)
     with pytest.raises(tools.MissingMaterials, match='缺少材料'):
         tools.execute_mock(node, pool)
+    assert not reflection_calls
     assert pool == before
     pool['current'][kind] = ref
     assert tools.execute_mock(node, pool)['status'] == 'completed'
@@ -266,6 +269,19 @@ def test_f1_real_pdf_overrides_demo_marker(runtime, monkeypatch):
     assert tools.material(pool, 'papers')['mock'] is False
     assert tools.material(pool, 'papers')['content'][0]['id'] == 'P1'
     assert '演示数据' not in tools._read_bound(outputs['research_topic_document'])
+
+
+@pytest.fixture
+def reflection_calls(monkeypatch):
+    calls = []
+
+    def model(prompt):
+        inputs = json.loads(prompt.split('Input materials (JSON):\n', 1)[1])
+        calls.append(inputs)
+        return '# 阅读心得\n\n' + '、'.join(paper['id'] for paper in inputs['papers'])
+
+    monkeypatch.setattr(api.ALGORITHMS['reading_reflection'], 'AutoModel', lambda **_: model)
+    return calls
 
 
 def test_f1_pdf_resources_are_scoped_deduplicated_and_parsed(tmp_path, monkeypatch):
