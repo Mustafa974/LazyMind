@@ -40,9 +40,14 @@ class PlotSkills:
         # Explicit overrides remain authoritative; a broken override must fail rather than silently fall back.
         self.root = (Path(configured).expanduser() if configured else
                      Path(__file__).resolve().parents[1] / 'plot_skills').resolve()
+        # Keep existing explicit overrides of a repository containing this skill usable.
+        if configured and not (self.root / 'SKILL.md').is_file():
+            legacy = (self.root / 'plot-from-data').resolve()
+            if legacy.is_relative_to(self.root) and (legacy / 'SKILL.md').is_file():
+                self.root = legacy
         self.hashes: dict[str, str] = {}
-        self.instructions = self.read('plot-from-data/SKILL.md')
-        preset = 'plot-from-data/references/paper_profile.json'
+        self.instructions = self.read('SKILL.md')
+        preset = 'references/paper_profile.json'
         self.paper_profile = json.loads(self.read(preset))
         if self.paper_profile.get('base', {}).get('version') != 'paper-v1':
             raise ValueError('未知的论文绘图 preset 版本，请核对 skill 与应用版本')
@@ -65,14 +70,14 @@ class PlotSkills:
 
     def script(self, style: str) -> str:
         name = STYLES[style][0]
-        path = 'plot-from-data/scripts/' + name
+        path = 'scripts/' + name
         return self.read(path)
 
     def style_contract(self, style: str, base_style: str | None = None) -> dict:
         selected = base_style if style == 'custom' else style
         if selected not in STYLES or selected not in self.catalog():
             raise ValueError('每张图必须选择已有 skill；custom 必须明确有效的 base_style')
-        reference_path = f'plot-from-data/references/{selected}.md'
+        reference_path = f'references/{selected}.md'
         self.read(reference_path)
         result = self._paper_contract(selected)
         result.update(source_style=selected, reference_path=reference_path, adapted=style == 'custom',
@@ -122,10 +127,10 @@ class PlotSkills:
                     'axis limits, statistical methods or output paths. The host handles fonts and file export.\n')
         contract = self.style_contract(style, base_style)
         result = guidance + json.dumps(contract, ensure_ascii=False)
-        result += '\n' + self.read('plot-from-data/references/paper_style.md')
+        result += '\n' + self.read('references/paper_style.md')
         result += '\n' + self.read(contract['reference_path'])
         script = self.script(contract['source_style'])
-        common = self.read('plot-from-data/scripts/paper_common.py')
+        common = self.read('scripts/paper_common.py')
         template = paper_template(script, common, contract['function'], contract['native_template'],
                                   tuple(contract.get('helpers', [])))
         availability = (NATIVE_FUNCTION_GUIDANCE if style != 'custom' else
