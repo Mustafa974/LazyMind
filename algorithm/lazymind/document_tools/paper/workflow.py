@@ -387,6 +387,11 @@ def initialize_pool(bound: dict[str, str], request: str = '') -> dict:
              if key.endswith(('_pool', '_document'))}
     if any(key.endswith('_pool') for key in saved):
         return pool_from_inputs(saved)
+    return _pool_from_entry(_read_entry_value(bound), request)
+
+
+def _read_entry_value(bound: dict[str, str]) -> dict:
+    """Read bound business inputs without creating a pool or selecting paper sources."""
     value = _read_bound(bound['paper_input']) if 'paper_input' in bound else {}
     if not isinstance(value, dict):
         raise ValueError('程序化 paper_input 必须是业务对象；上传论文请绑定 manuscript_file')
@@ -402,6 +407,11 @@ def initialize_pool(bound: dict[str, str], request: str = '') -> dict:
         if 'manuscript' in value:
             raise ValueError('同时提供了论文文件和正文，请选择一个待审稿版本')
         value['manuscript'] = read_manuscript(bound['manuscript_file'])
+    return value
+
+
+def _pool_from_entry(value: dict, request: str, *, fallback_topic: str = '') -> dict:
+    """Finish the existing initialization after the caller has prepared business materials."""
     if not value and ('[paper:demo]' in request or '默认演示材料' in request):
         return seed_pool()
     if value.get('demo'):
@@ -417,6 +427,8 @@ def initialize_pool(bound: dict[str, str], request: str = '') -> dict:
             value['topic'] = title[:120] or '论文审稿'
         elif request.strip():
             value['topic'] = request.strip()[:120]
+        elif fallback_topic:
+            value['topic'] = fallback_topic
         else:
             raise MissingMaterials('请提供论文文件、正文或研究主题')
     value.setdefault('request', request)
@@ -451,22 +463,37 @@ def run_paper_step() -> dict:
     else:
         if step not in STEP_NODE:
             raise ValueError(f'未知 Workflow 步骤: {step}')
-        pool = initialize_pool(bound, request)
-        if step == 'research_topic' and 'paper_input' not in bound and not any(
+        if step in {'research_topic', 'reading_reflection'} and not any(
             key.endswith('_pool') for key in bound
         ):
-            papers = research_topic.prepare_papers(
-                _conversation_papers(context.params.get('history_files_per_turn')),
-            )
-            if papers and any(item['mock'] for item in pool['materials']):
-                # Real uploaded papers take precedence over a demo marker in the request.
-                pool = pool_from_business({'topic': research_topic.infer_topic(request, papers),
-                                           'request': request, 'papers': papers})
-            elif not any(item['mock'] for item in pool['materials']):
+            value = _read_entry_value(bound)
+            use_attachments = 'paper_input' not in bound
+            if use_attachments:
+                papers = _conversation_papers(context.params.get('history_files_per_turn'))
+                if step == 'research_topic':
+                    papers = research_topic.prepare_papers(papers)
                 if papers:
-                    add_material(pool, 'papers', papers, [], [paper['id'] for paper in papers])
+                    # Real attachments take precedence over a demo marker in the request.
+                    value['papers'] = papers
+            fallback_topic = ''
+            if value.get('schema') != SCHEMA and not value.get('demo'):
+                papers = value.get('papers', [])
+                if 'papers' in value:
+                    contracts.validate_value('papers', papers)
+                demo_request = not value and ('[paper:demo]' in request or '默认演示材料' in request)
+                if step == 'reading_reflection' and not papers and not demo_request:
+                    raise MissingMaterials('请先选择至少一篇论文，或上传论文附件，再生成阅读心得。')
+                fallback_topic = '；'.join(paper['title'] for paper in papers)
+            pool = _pool_from_entry(value, request, fallback_topic=fallback_topic)
+            if step == 'research_topic' and use_attachments and not any(item['mock'] for item in pool['materials']):
                 if 'paper_topic' not in bound:
                     pool['topic'] = research_topic.infer_topic(pool.get('request') or request, papers)
+        else:
+            pool = initialize_pool(bound, request)
+        if step == 'reading_reflection':
+            papers = material(pool, 'papers')
+            if papers is None or not papers['content']:
+                raise MissingMaterials('请先选择至少一篇论文，或上传论文附件，再生成阅读心得。')
         request = _step_request(step, pool, context.params)
         fail = '[mock:fail]' in request + instruction and '[mock:retry]' not in request + instruction
         result = execute_step(step, pool, request, fail=fail)
