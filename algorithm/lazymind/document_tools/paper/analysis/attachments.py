@@ -1,7 +1,9 @@
 """Bind a complete F4 input from conversation attachments without LLM transcription."""
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from pathlib import Path
 import tempfile
 from urllib.parse import urlsplit
@@ -47,6 +49,36 @@ def _select_attachment(config, request, reference=None):
         raise ContractError('AMBIGUOUS_INPUT', 'input.paper_input',
                             f'本轮有多个 JSON 附件（{names}），请明确指定文件名或绑定 paper_input')
     return candidates[0] if candidates else None
+
+
+def _upload_requested(config, request):
+    """The Host's request selects the source; a model-authored JSON copy does not."""
+    if re.search(r'(?:不要|不用|忽略|不使用).{0,16}(?:上传|附件)|(?:ignore|do not|don.t).{0,24}(?:uploaded|attached)',
+                 request, re.I):
+        return False
+    history = config.get('history_files_per_turn') or {}
+    paths = _json_files([*(config.get('files') or []), *(p for group in history.values() for p in group or [])])
+    return (any(Path(urlsplit(path).path).name in request for path in paths)
+            or bool(re.search(r'上传|附件|\buploaded\b|\battached\b', request, re.I)))
+
+
+def standalone_f4_request(request):
+    return bool(re.search(r'(?:只|仅|单独).{0,30}(?:F4|data_analysis|数据分析)|'
+                          r'(?:only|standalone).{0,40}(?:F4|data_analysis|data analysis)', request, re.I))
+
+
+def workflow_input_bindings(bindings, request):
+    """F4 startup imports a catalog reference, never a model's copy of file contents."""
+    if not standalone_f4_request(request) or any(key.endswith('_pool') for key in bindings):
+        return bindings
+    config = lazyllm.globals.get('agentic_config') or {}
+    if not _upload_requested(config, request):
+        return bindings
+    source = _select_attachment(config, request)
+    if source is None:
+        raise ContractError('MISSING_MATERIAL', 'input.paper_input', '当前会话未找到所要求的 JSON 附件，请检查上传状态')
+    # This exact path comes from the Host's catalog, not from the model.
+    return {**bindings, 'paper_input': source}
 
 
 def _unique_fields(pairs):
@@ -97,7 +129,7 @@ def _bound_reference(path):
 
 
 def bind_attachment(bound: dict, workspace: str, request: str) -> dict:
-    """Explicit inputs and confirmed pools take precedence over uploaded files.
+    """Confirmed pools are pinned; an explicit upload request uses original attachment bytes.
 
     Candidates come only from the host's current conversation attachment catalog.
     Resolve through that catalog, read the complete bytes, validate the F4 spec,
@@ -105,12 +137,17 @@ def bind_attachment(bound: dict, workspace: str, request: str) -> dict:
     """
     if any(key.endswith('_pool') for key in bound):
         return bound
-    reference = _bound_reference(bound['paper_input']) if 'paper_input' in bound else None
-    if 'paper_input' in bound and reference is None:
-        return bound
     config = lazyllm.globals.get('agentic_config') or {}
-    source = (_select_attachment(config, request, reference=reference) if reference is not None
-              else _select_attachment(config, request))
+    if _upload_requested(config, request):
+        source = _select_attachment(config, request)
+        if source is None:
+            raise ContractError('MISSING_MATERIAL', 'input.paper_input', '当前会话未找到所要求的 JSON 附件，请检查上传状态')
+    else:
+        reference = _bound_reference(bound['paper_input']) if 'paper_input' in bound else None
+        if 'paper_input' in bound and reference is None:
+            return bound
+        source = (_select_attachment(config, request, reference=reference) if reference is not None
+                  else _select_attachment(config, request))
     if source is None:
         return bound
     from lazymind.chat.engine.tools.file_resources.resolver import resolve_text_target
@@ -134,6 +171,9 @@ def bind_attachment(bound: dict, workspace: str, request: str) -> dict:
     except (UnicodeError, ValueError, RecursionError) as exc:
         raise ContractError('INVALID_INPUT', 'input.paper_input',
                             f'附件 {filename} 不是有效的 UTF-8 JSON：{exc}') from exc
+    from . import trace
+    trace.save('input-source.json', dict(kind='conversation_attachment', filename=filename,
+                                         bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest()))
     value = normalize_input(value)
     directory = Path(tempfile.mkdtemp(prefix='f4-input-', dir=workspace))
     target = directory / 'paper_input.json'

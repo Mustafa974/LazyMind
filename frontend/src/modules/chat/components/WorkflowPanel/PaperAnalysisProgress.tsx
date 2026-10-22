@@ -10,6 +10,7 @@ type Output = { text: string; format: 'json' | 'python' | 'text'; mode: 'streami
 type Step = { step_id: string; order: number; title: string; status: string; summary?: string;
   started_at: string | null; finished_at: string | null; elapsed_ms: number | null; output?: Output };
 type Snapshot = { task_id: string; execution_id: string; revision: number; status: string; process_steps: Step[];
+  error?: { code: string; field?: string; message: string } | null;
   timing: { started_at: string | null; finished_at: string | null; measured_at: string }; };
 const terminal = new Set(['succeeded', 'failed', 'canceled', 'interrupted']);
 const knownStatus = new Set(['pending', 'running', ...terminal]);
@@ -27,7 +28,9 @@ export function readPaperProgress(value: unknown, taskId: string): Snapshot | nu
       ? out : undefined;
     return { ...step, output };
   });
-  return { ...data, process_steps: steps.sort((a, b) => a.order - b.order) };
+  const error = data.error && typeof data.error.code === 'string' && typeof data.error.message === 'string'
+    ? { ...data.error, message: data.error.message.slice(0, 1200) } : null;
+  return { ...data, error, process_steps: steps.sort((a, b) => a.order - b.order) };
 }
 
 function duration(ms: number) {
@@ -153,7 +156,7 @@ export function PaperAnalysisProgress({ session, active = true }: { session: Wor
         {completed.find(item => item.summary?.startsWith('计划已确定'))?.summary && ` · ${completed.find(item => item.summary?.startsWith('计划已确定'))!.summary}`}</p>
       {!connected && <div className='paper-f4-progress__notice' role='status'>进度连接暂时中断，正在重连；执行状态尚待确认。<button type='button' onClick={() => setReload(value => value + 1)}>重新连接</button></div>}
       {connected && running && currentWait >= 60000 && !current?.output?.text && !retrying && <div className='paper-f4-progress__notice'><ClockCircleOutlined />模型尚未返回内容，任务仍在运行，可稍后回来查看。</div>}
-      {!running && latest?.status === 'failed' && <p className='paper-f4-progress__notice'>{latest.summary}</p>}
+      {!running && (view?.error || latest?.status === 'failed') && <p className='paper-f4-progress__notice' role='alert'>{view?.error?.message || latest?.summary}</p>}
       {running && current?.output && <ModelOutput output={current.output} />}
     </div>
     <details open={expanded} onToggle={event => setExpanded(event.currentTarget.open)}>

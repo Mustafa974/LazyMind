@@ -13,6 +13,21 @@ PUBLIC_STAGES = {
 MAX_OUTPUT = 96 * 1024
 
 
+def public_error(error):
+    """Expose bounded contract messages, never exception causes or raw trace payloads."""
+    from .trace import redact
+    if not isinstance(error, dict):
+        return None
+    code = error.get('code', '')
+    if not isinstance(code, str) or not re.fullmatch(r'[A-Z][A-Z_]{0,63}', code):
+        return dict(code='EXECUTION_FAILED', message='本次执行失败；诊断已保存，请检查执行记录。')
+    message = str(error.get('message', '执行失败'))
+    message = re.sub(r'input_value=.*?(?=\n|$)', 'input_value=<omitted>', message)
+    message = re.sub(r'\s*For further information visit https?://[^\s]+', '', message)
+    message = re.sub(r'\s*\[type=[^\]]+\]', '', message)
+    return dict(code=code, field=str(error.get('field', ''))[:160], message=redact(message)[:1200])
+
+
 class PublicProgress:
     def __init__(self, recorder):
         self.recorder = recorder
@@ -43,9 +58,10 @@ class PublicProgress:
                 output['truncated'] = output.get('truncated', False) or len(raw) > remaining
                 remaining = max(0, remaining - len(raw))
         summary = self.recorder.summary
+        error = public_error(summary.get('error'))
         self.recorder._guard(lambda: self.recorder._write_json(self.recorder.root / 'public.json', dict(
             schema_version=1, task_id=summary['task_id'], execution_id=summary['trace_id'],
-            revision=sum(s['revision'] for s in steps), process_steps=steps,
+            revision=sum(s['revision'] for s in steps), process_steps=steps, error=error,
             timing=dict(started_at=summary['started_at'], finished_at=summary.get('ended_at'), measured_at=timestamp()))))
 
     def owner(self, item):
@@ -77,8 +93,9 @@ class PublicProgress:
         step.update(status='failed' if exc else 'succeeded', finished_at=item['ended_at'],
                     elapsed_ms=item['duration_ms'])
         if exc:
-            step['summary'] = '本次阶段未通过，后续修复和最终任务状态将在此更新。'
-        elif step['summary'].startswith(('等待模型', '首次请求', '正在接收模型', '模型返回已结束', '模型完整结果')):
+            from .trace import safe_error
+            step['summary'] = public_error(safe_error(exc))['message']
+        elif step['summary'].startswith(('等待模型', '首次请求', '前次请求', '正在接收模型', '模型返回已结束', '模型完整结果')):
             step['summary'] = '本阶段已完成。'
         self.send(identifier)
 

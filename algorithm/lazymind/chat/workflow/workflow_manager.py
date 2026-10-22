@@ -1205,6 +1205,9 @@ def _workflow_trigger_tools(
                     if _is_explicit_merged_request_context(supplied_context)
                     else bound_query or supplied_context
                 )
+                if bound_id == 'paper-writing':
+                    from lazymind.document_tools.paper.analysis.attachments import workflow_input_bindings
+                    input_bindings = workflow_input_bindings(input_bindings, effective_context)
                 existing_session_id = str(
                     (session_holder or {}).get('session_id') or '',
                 ).strip()
@@ -1420,6 +1423,15 @@ def _workflow_trigger_tools(
             ' No user attachments are available: do not bind file materials, but pass literal '
             'values for required text/json input_bindings.'
         )
+        if workflow_id == 'paper-writing':
+            from lazymind.document_tools.paper.analysis.attachments import standalone_f4_request
+            if standalone_f4_request(current_query) and attachments_available:
+                attachment_guidance = (
+                    ' For standalone F4, paper_input accepts the exact JSON attachment filename. '
+                    'The Host reads the complete original file. Never transcribe, summarize, repair, '
+                    'or embed the uploaded JSON in tool arguments; pass only its filename, or omit '
+                    'paper_input when the request unambiguously selects one JSON attachment.'
+                )
         trigger_workflow.__doc__ = (
             description + input_contract + attachment_guidance
             + ' Omit inputs whose values were not supplied; do not invent values or '

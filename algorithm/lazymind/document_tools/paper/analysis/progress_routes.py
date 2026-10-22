@@ -12,6 +12,8 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from .live import public_error
+
 router = APIRouter()
 WORKSPACES = Path(os.environ.get('LAZYMIND_SUBAGENT_WORKSPACE_ROOT', '/data/subagent'))
 GATEWAY = os.environ.get('LAZYMIND_F4_GATEWAY_URL', 'http://kong:8000').rstrip('/')
@@ -75,7 +77,14 @@ def read_snapshot(task_id, task):
                     step['output'] = {key: output[key] for key in ('text', 'format', 'mode', 'truncated') if key in output}
                 steps.append(step)
             value.update(execution_id=trace_id, revision=public['revision'], process_steps=steps,
-                         timing={**public['timing'], 'measured_at': measured})
+                         timing={**public['timing'], 'measured_at': measured},
+                         error=public_error(public.get('error')))
+            if not value.get('error') and task.get('status') == 'failed':
+                summary_path = source.with_name('summary.json')
+                if summary_path.resolve().is_relative_to(WORKSPACES.resolve()) and summary_path.stat().st_size <= 2 * 1024 * 1024:
+                    saved = json.loads(summary_path.read_text())
+                    if saved.get('task_id') == task_id and saved.get('trace_id') == trace_id:
+                        value['error'] = public_error(saved.get('error'))
         except (OSError, ValueError, KeyError, TypeError):
             pass  # Startup and atomic replacement may briefly have no readable public snapshot.
     value['status'] = task['status']

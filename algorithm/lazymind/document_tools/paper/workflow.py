@@ -484,7 +484,10 @@ def run_paper_step() -> dict:
             from .analysis.attachments import bind_attachment
             with diagnostics.stage('input_binding'):
                 bound = bind_attachment(bound, context.workspace_path, request)
-        pool = initialize_pool(bound, request)
+            with diagnostics.stage('input_validation'):
+                pool = initialize_pool(bound, request)
+        else:
+            pool = initialize_pool(bound, request)
         if step == 'research_topic' and 'paper_input' not in bound and not any(
             key.endswith('_pool') for key in bound
         ):

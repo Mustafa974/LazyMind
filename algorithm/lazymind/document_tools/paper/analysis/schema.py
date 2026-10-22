@@ -59,9 +59,9 @@ class DataTable(Object):
             raise ValueError('columns/column_types/units 长度须相同')
         if len(self.rows) * len(self.columns) > 1_000_000:
             raise ValueError('表格超过 100 万单元格')
-        for row in self.rows:
+        for row_number, row in enumerate(self.rows, 1):
             if len(row) != len(self.columns):
-                raise ValueError('行宽与列数不一致')
+                raise ValueError(f'第 {row_number} 行有 {len(row)} 个字段，但 columns 定义了 {len(self.columns)} 列；请核对原始数据，系统不会自动补值或删列')
             for value, kind in zip(row, self.column_types):
                 if value is None:
                     continue
@@ -356,7 +356,13 @@ def parse(cls, value, field='input'):
         if not field.startswith('output') and isinstance(exc, ValidationError):
             if any(e['type'] == 'too_long' or '超过' in e['msg'] for e in exc.errors()):
                 code = 'INPUT_TOO_LARGE'
-        raise ContractError(code, field, str(exc)) from exc
+        message = str(exc)
+        if isinstance(exc, ValidationError):
+            errors = exc.errors(include_input=False, include_url=False)
+            message = '; '.join(
+                ('.'.join(str(part) for part in item['loc']) + ': ' if item['loc'] else '') + item['msg']
+                for item in errors[:5])
+        raise ContractError(code, field, message) from exc
 
 
 def table_map(inputs):
