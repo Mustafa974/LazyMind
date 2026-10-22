@@ -481,7 +481,8 @@ def run_paper_step() -> dict:
         if step not in STEP_NODE:
             raise ValueError(f'未知 Workflow 步骤: {step}')
         if step == 'data_analysis':
-            from .analysis.attachments import bind_attachment
+            from .analysis.attachments import bind_attachment, retry_request
+            request = retry_request(context.params, request)
             with diagnostics.stage('input_binding'):
                 bound = bind_attachment(bound, context.workspace_path, request)
             with diagnostics.stage('input_validation'):
