@@ -217,6 +217,32 @@ def test_f1_paper_chunks_use_full_prompt_budget_without_losing_text(monkeypatch)
     assert all(len(research_topic._note_prompt(chunk, paper)) <= chunk_limit for chunk in chunks)
 
 
+@pytest.mark.parametrize('texts,limit,expected', [
+    ([], 4, []), (['a'], 3, [['a']]),
+    (['a', 'b', 'c'], 6, [['a', 'b'], ['c']]),
+    (['a', 'b', 'c'], 5, [['a'], ['b'], ['c']]),
+])
+def test_paper_budget_groups_preserve_order_and_count_prompt_overhead(texts, limit, expected, monkeypatch):
+    monkeypatch.setattr(research_topic, 'estimate_tokens', len)
+    before = list(texts)
+    groups = research_topic.group_texts_by_prompt_budget(
+        texts, lambda source: f'[{source}]', limit, overflow_message='输入超预算',
+    )
+    assert groups == expected
+    assert [text for group in groups for text in group] == texts == before
+
+
+def test_paper_budget_helpers_preserve_caller_errors_and_empty_input(monkeypatch):
+    monkeypatch.setattr(research_topic, 'estimate_tokens', len)
+    for function, source in [(research_topic.split_text_by_prompt_budget, 'a'),
+                             (research_topic.group_texts_by_prompt_budget, ['a'])]:
+        with pytest.raises(ValueError, match='指定的预算错误'):
+            function(source, lambda text: f'[{text}]', 2, overflow_message='指定的预算错误')
+    assert research_topic.split_text_by_prompt_budget(
+        '', lambda text: f'[{text}]', 2, overflow_message='指定的预算错误',
+    ) == []
+
+
 def test_f1_prompt_limit_uses_active_model_budget_and_128k_fallback(monkeypatch):
     import lazyllm
     from lazymind.chat.engine.agent_runtime.budget import build_context_budget
