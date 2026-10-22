@@ -34,3 +34,20 @@
   &.is-failed > &__overview > &__heading > .anticon { color: var(--ant-color-warning, #b9650d); }
   @media (max-width: 520px) { margin: 12px 8px 16px; &__overview { padding: 13px; } &__toggle { padding: 10px 13px; } &__timeline { padding-left: 13px; padding-right: 13px; } }
 }
+
+// F4's timeline and artifacts share one scroll owner. The panel chrome stays fixed.
+// Include the panel class so this also overrides the expanded workspace's clipping.
+.workflow-panel .workflow-panel__body > .workflow-panel__f4-tab[role='tabpanel']:not([hidden]) {
+  display: block;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+  scroll-padding-block: 12px;
+
+  &:focus-visible {
+    outline: 2px solid var(--ant-color-primary, #356dff);
+    outline-offset: -2px;
+  }
+}

@@ -2343,17 +2343,20 @@ export function WorkflowPanel({
             tabs.map((tab, idx) => {
               const preview = externalPresentation && !anySlotEditing ? executionPreview(session, tab, activities) : session;
               const previewing = preview !== session;
+              const isPaperAnalysis = session.workflow_id === 'paper-writing'
+                && resolveWorkflowTabStepId(tab, session.steps) === 'data_analysis';
               return <div
                 key={tab.id}
                 id={`workflow-tab-panel-${tab.id}`}
                 role='tabpanel'
+                className={isPaperAnalysis ? 'workflow-panel__f4-tab' : undefined}
+                tabIndex={isPaperAnalysis ? 0 : undefined}
                 aria-labelledby={`workflow-tab-${session.session_id}-${tab.id}`}
                 hidden={idx !== visibleActiveTabIdx}
               >
                 <WorkflowPanelTabActiveContext.Provider value={idx === visibleActiveTabIdx}>
                 <SlotDownloadContext.Provider value={!previewing && workflowTabAllowsDownload(tab, idx, tabs.length)}>
-                  {session.workflow_id === 'paper-writing' && resolveWorkflowTabStepId(tab, session.steps) === 'data_analysis'
-                    && <PaperAnalysisProgress session={session} active={idx === visibleActiveTabIdx} />}
+                  {isPaperAnalysis && <PaperAnalysisProgress session={session} active={idx === visibleActiveTabIdx} />}
                   {previewing && <div className="workflow-panel__preview-label" role="status">{t('chat.workflowGeneratingPreview')}</div>}
                   <TabSlotGrid
                     tab={executionPreviewTab(tab, session, preview)}
