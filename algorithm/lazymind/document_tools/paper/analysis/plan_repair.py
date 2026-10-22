@@ -84,7 +84,7 @@ def apply_updates(plan, response, issues):
         identifier = job['id']
         for (job_id, field), value in updates.items():
             if job_id == identifier and field is not None:
-                if field not in {'design_evidence', 'design_evidence_refs', 'pair_by', 'unit'}:
+                if field not in {'design_evidence_refs', 'pair_by', 'unit'}:
                     raise ValueError('当前字段补全仅支持设计依据引用、配对键和单位')
                 job[field] = value
         if (identifier, None) in updates:

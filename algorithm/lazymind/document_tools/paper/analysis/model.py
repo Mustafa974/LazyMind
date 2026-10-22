@@ -146,6 +146,7 @@ and use only (a)/(b) identifiers on the image; retain meaningful axis labels and
 finding_ids name jobs. Do not promise raw trajectories/embeddings from aggregate findings. Choose an installed style
 from the catalog; custom requires base_style. Figure columns remain original ColumnRefs. No invented uncertainty.
 For point_interval, bar_grouped_hatch, line_confidence_band and line_training_curve, declare data_mapping once:
+It is required for these styles; the host does not infer omitted axes, series or facets.
 series_column is the qualified grouping coordinate or null, category_column is the qualified category/x coordinate,
 facets lists additional coordinates that must remain separate, and xscale is linear or log (confidence curves only).
 Use table_id.column for selected filters and baseline.table_id.column for baseline filters. A contrast across
@@ -183,7 +184,7 @@ Return exactly one update for EACH requested job_id/field pair. No unrelated cha
 For design_evidence_refs return a list of existing evidence_catalog IDs supporting the actual design;
 the host resolves the source text. Do not rewrite/translate quotations. pair_by uses existing matching keys.
 For unit use the issue's expected unit exactly, with no numeric conversion. Named-field patches cannot change
-filters or methods. Legacy design_evidence repairs may copy source text verbatim, but IDs are preferred.
+filters or methods. design_evidence is host-derived and read-only; repair its references, never its text.
 If an issue has figure_id, use figure_updates, not updates. Include EVERY requested figure mapping repair;
 copy its existing figure and change ONLY data_mapping. Use available_dimensions in the issue to resolve ambiguity.
 For paired contrasts, distinguish selected and baseline identities; never pool or discard competing baseline results.

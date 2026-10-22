@@ -40,11 +40,6 @@ class PlotSkills:
         # Explicit overrides remain authoritative; a broken override must fail rather than silently fall back.
         self.root = (Path(configured).expanduser() if configured else
                      Path(__file__).resolve().parents[1] / 'plot_skills').resolve()
-        # Keep existing explicit overrides of a repository containing this skill usable.
-        if configured and not (self.root / 'SKILL.md').is_file():
-            legacy = (self.root / 'plot-from-data').resolve()
-            if legacy.is_relative_to(self.root) and (legacy / 'SKILL.md').is_file():
-                self.root = legacy
         self.hashes: dict[str, str] = {}
         self.instructions = self.read('SKILL.md')
         preset = 'references/paper_profile.json'

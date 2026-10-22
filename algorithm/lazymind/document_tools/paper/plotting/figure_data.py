@@ -15,36 +15,6 @@ class FigureDataError(ValueError):
         super().__init__(message)
 
 
-def mapping_for(figure, metadata):
-    """Use explicit planned axes, or an unambiguous/declared-order compatibility mapping."""
-    if figure.get('data_mapping'):
-        return copy.deepcopy(figure['data_mapping'])
-    rows, dimensions = metadata['result_records'], metadata['result_dimensions']
-    varying = [key for key, items in dimensions.items() if len(items) > 1]
-    numeric = [key for key in varying if all(type(item['value']) in (int, float) for item in dimensions[key])]
-    comparisons = [key for key in dimensions if all(row['comparisons'].get(key) for row in rows)]
-    baseline = [key for key in comparisons if key.startswith('baseline.')]
-    series = baseline[0] if len(baseline) == 1 else None
-    category = next((key for key in numeric if key != series), None)
-    if category is None and series is not None:
-        rest = [key for key in varying if key != series]
-        category = rest[0] if len(rest) == 1 else None
-    if series is None and category is not None:
-        rest = [key for key in varying if key != category]
-        series = rest[0] if len(rest) == 1 else None
-    if category is None:
-        declared = [group['table_id'] + '.' + group['column'] for group in metadata['source_groups']]
-        ordered = [key for key in declared if key in varying]
-        if len(varying) == 2 and set(ordered) == set(varying):
-            series, category = ordered
-        elif len(varying) <= 1:
-            category = varying[0] if varying else 'finding_id'
-        else:
-            raise ValueError('Ambiguous figure axes; declare data_mapping with series_column/category_column/facets')
-    return dict(series_column=series, category_column=category,
-                facets=[key for key in varying if key not in (series, category)], xscale='linear')
-
-
 def _point(record):
     estimate, interval = record['value'], record['interval']
     if type(estimate) not in (int, float) or not math.isfinite(estimate):
@@ -63,7 +33,9 @@ def _point(record):
 
 
 def _panels(figure, metadata, contract):
-    mapping = mapping_for(figure, metadata)
+    mapping = figure.get('data_mapping')
+    if not mapping:
+        raise ValueError('data_mapping is required; declare series_column/category_column/facets')
     series, category = mapping['series_column'], mapping['category_column']
     facets = mapping.get('facets', [])
     dimensions = copy.deepcopy(metadata['result_dimensions'])

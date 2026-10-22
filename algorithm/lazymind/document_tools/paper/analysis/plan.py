@@ -42,7 +42,7 @@ class Job(Object):
     operator: Literal['gt', 'ge', 'lt', 'le'] = 'gt'
     alternative: Literal['two_sided', 'greater', 'less'] = 'two_sided'
     missing_policy: Literal['error', 'complete_case'] = 'error'
-    design_evidence: str = ''
+    design_evidence: str = Field(default='', json_schema_extra={'readOnly': True})
     design_evidence_refs: list[Text] = Field(default_factory=list)
     unit: Text | None = None
 
@@ -129,22 +129,15 @@ def validate_plan(value, inputs):
                 raise ValueError('同一后验模型的任务必须使用相同观测范围；不同范围需要不同模型 ID')
     missing = []
     catalog = {item['id']: item for item in evidence_catalog(inputs)}
-    facts = ' '.join(json.dumps(
-        {k: inputs[k] for k in ('request', 'data_context', 'study_design', 'experiment')},
-        ensure_ascii=False).replace('\\n', ' ').split())
     for job in jobs.values():
         missing.extend(bind_job_fields(job, tables, catalog))
         inference = (job['interval_level'] is not None
                      or job['correlation_test']
                      or job['operation'] in ('paired_t', 'welch_t', 'ols_coefficient')
                      or job['operation'].startswith('beta_'))
-        if (inference or paired_operation(job['operation'])) and not job['design_evidence']:
+        if (inference or paired_operation(job['operation'])) and not job['design_evidence_refs']:
             missing.append(dict(job_id=job['id'], field='design_evidence_refs',
                                 message='从 evidence_catalog 选择已有实验单位和依赖结构依据的编号；不要改写原文或修改其他字段'))
-        elif ((inference or paired_operation(job['operation']))
-              and not job['design_evidence_refs'] and ' '.join(job['design_evidence'].split()) not in facts):
-            missing.append(dict(job_id=job['id'], field='design_evidence_refs',
-                                message='设计依据必须引用已有材料的原文；仅选择 evidence_catalog 中的原文编号，保留计算口径及其他字段'))
         if paired_operation(job['operation']) and not job['pair_by']:
             missing.append(dict(job_id=job['id'], field='pair_by',
                                 message='根据已有设计事实补充配对键；不要修改其他字段'))

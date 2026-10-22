@@ -1,5 +1,7 @@
 """Compact offline F4 integration checks; run inside the Chat container."""
+import copy
 import json
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -118,10 +120,18 @@ def replay(monkeypatch, tmp_path):
                            analysis=analysis, plot=plot, events=events, context=context)
 
 
-@pytest.mark.parametrize('fault', ['none', 'plan', 'analysis', 'plot'])
+@pytest.mark.parametrize('fault', ['none', 'plan', 'mapping', 'interpretation', 'analysis', 'plot'])
 def test_f4_workflow_publishes_verified_files(replay, fault):
     if fault == 'plan':
         replay.structured.side_effect = [{}, replay.plan, replay.conclusion]
+    elif fault == 'mapping':
+        incomplete = copy.deepcopy(replay.plan)
+        incomplete['figures'][0].pop('data_mapping')
+        repair = dict(updates=[], figure_updates=[dict(figure_id='means', figure=replay.plan['figures'][0])])
+        replay.structured.side_effect = [incomplete, repair, replay.conclusion]
+    elif fault == 'interpretation':
+        invalid = {**replay.conclusion, 'summary': replay.conclusion['summary'] + '[结果:baseline]'}
+        replay.structured.side_effect = [replay.plan, invalid, replay.conclusion]
     elif fault == 'analysis':
         replay.analysis.side_effect = [{'code': ANALYSIS_CODE.replace('.mean()', '.sum()')},
                                        {'code': ANALYSIS_CODE}]
@@ -146,7 +156,7 @@ def test_f4_workflow_publishes_verified_files(replay, fault):
     assert next(p for p in paths if p.suffix == '.pdf').read_bytes().startswith(b'%PDF-')
     assert [item['node'] for item in pool['history']] == ['F4']
     assert (replay.structured.call_count, replay.analysis.call_count, replay.plot.call_count) == (
-        2 + (fault == 'plan'), 1 + (fault == 'analysis'), 1 + (fault == 'plot'))
+        2 + (fault in ('plan', 'mapping', 'interpretation')), 1 + (fault == 'analysis'), 1 + (fault == 'plot'))
 
 
 @pytest.mark.parametrize('fault', ['input', 'calculation'])
@@ -190,3 +200,38 @@ def test_chat_hands_f4_to_workflow_and_stops(monkeypatch):
     assert request.handoff and [step.step_id for step in request.steps] == ['data_analysis']
     assert result['task_id'] == 'f4-task' and _tool_result_stop_text(result)
     client.advance.assert_called_once()
+
+
+def test_design_evidence_requires_source_references(replay):
+    from lazymind.document_tools.paper.analysis.plan import validate_plan
+    from lazymind.document_tools.paper.analysis.plan_bindings import evidence_catalog
+    from lazymind.document_tools.paper.analysis.plan_repair import PlanRepairError, apply_updates
+    from lazymind.document_tools.paper.analysis.schema import normalize_input
+
+    value = json.loads(replay.source.read_text())
+    quote = '每条观测是独立测量，按方法分别计算均值区间。'
+    value['study_design'] = dict(description=quote)
+    inputs = normalize_input(value)
+    for job in replay.plan['jobs']:
+        job.update(interval_level=.95, design_evidence=quote)
+    with pytest.raises(PlanRepairError) as error:
+        validate_plan(replay.plan, inputs)
+    issues = error.value.issues
+    assert {issue['field'] for issue in issues} == {'design_evidence_refs'}
+    reference = next(item['id'] for item in evidence_catalog(inputs) if item['text'] == quote)
+    repaired = apply_updates(error.value.plan, dict(updates=[
+        dict(job_id=issue['job_id'], field=issue['field'], value=[reference]) for issue in issues]), issues)
+    locked = validate_plan(repaired, inputs)
+    assert all(job['design_evidence'] == quote for job in locked['jobs'])
+    locked['jobs'][0]['design_evidence'] = '模型改写的原文不能成为依据。'
+    assert validate_plan(locked, inputs)['jobs'][0]['design_evidence'] == quote
+
+
+def test_skill_override_requires_the_actual_skill_root(tmp_path):
+    from lazymind.document_tools.paper.plotting.skills import PlotSkills
+
+    root = tmp_path / 'plot-from-data'
+    shutil.copytree(PlotSkills().root, root)
+    with pytest.raises(RuntimeError, match='缺少绘图 skill'):
+        PlotSkills(str(tmp_path))
+    assert 'bar_grouped_hatch' in PlotSkills(str(root)).catalog()

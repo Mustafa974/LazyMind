@@ -27,9 +27,6 @@ class Interpretation(Object):
     limitations: list[Text] = Field(min_length=1)
 
 
-REFERENCE = re.compile(r'\[结果:([^\]]+)\]')
-
-
 def identifiers(inputs):
     """Allow literal method/metric identifiers such as Model-2 and p95, not estimates."""
     names = set()
@@ -56,8 +53,6 @@ def validate(value, analysis, numeric_identifiers, language=None):
             for identifier in ids
         ):
             raise ValueError('解释引用未知、重复或其他目标的结果')
-        if not set(REFERENCE.findall(answer['conclusion'])) <= set(ids):
-            raise ValueError('目标解释中的结果引用必须列在该目标的 finding_ids 中')
         keys = answer['key_finding_ids']
         if len(keys) != len(set(keys)) or not set(keys) <= set(ids):
             raise ValueError('关键数值必须是不重复且属于本问题支持证据的结果')
@@ -66,11 +61,9 @@ def validate(value, analysis, numeric_identifiers, language=None):
     for text in texts:
         if language == 'zh-CN' and not re.search(r'[\u4e00-\u9fff]', text):
             raise ValueError('本轮要求中文分析与结论；summary、每个 conclusion、机制说明和每条局限均须用中文')
-        if not set(REFERENCE.findall(text)) <= findings.keys():
-            raise ValueError('解释引用未知结果')
-        stripped = REFERENCE.sub('', text)
-        if '[结果:' in stripped:
-            raise ValueError('结果引用格式不完整')
+        if '[结果:' in text:
+            raise ValueError('正文不接受结果占位符；请通过 finding_ids 和 key_finding_ids 引用结果')
+        stripped = text
         for name in numeric_identifiers:
             # Do not strip a name inside a longer numeric claim/identifier.
             stripped = re.sub(r'(?<![A-Za-z0-9_])' + re.escape(name) + r'(?![A-Za-z0-9_])', '', stripped)
@@ -106,18 +99,14 @@ def render(result, analysis, plan):
     targets = {target['id']: target for target in analysis['targets']}
     jobs = {job['id']: job for job in plan['jobs']}
 
-    def substitute(text):
-        # Legacy response references remain navigable, but no longer expand entire statistics into the prose.
-        return re.sub(r'(?:\[结果:[^\]]+\]\s*)+', '[结果表](#block-complete-results) ', text).strip()
-
-    lines = [substitute(result['summary']), '', '### 研究问题与结论']
+    lines = [result['summary'], '', '### 研究问题与结论']
     for answer in result['answers']:
-        lines += ['', targets[answer['target_id']]['question'], '', substitute(answer['conclusion'])]
+        lines += ['', targets[answer['target_id']]['question'], '', answer['conclusion']]
         selected = [findings[identifier] for identifier in answer.get('key_finding_ids', [])]
         if selected:
             lines += ['', '**关键数值**', '', numeric_table(selected, jobs, compact=True)]
-    lines += ['', '### 解释与机制', '', substitute(result['mechanism_explanation']),
-              '', '### 结论局限', *['- ' + substitute(note) for note in result['limitations']]]
+    lines += ['', '### 解释与机制', '', result['mechanism_explanation'],
+              '', '### 结论局限', *['- ' + note for note in result['limitations']]]
     return '\n'.join(lines)
 
 

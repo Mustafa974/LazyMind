@@ -70,6 +70,8 @@ def expected_unit(job, tables):
 
 def bind_job_fields(job, tables, catalog):
     issues = []
+    # Source text is derived on every validation, never trusted from a model or cached plan.
+    job['design_evidence'] = ''
     refs = job.get('design_evidence_refs', [])
     if refs:
         invalid = [ref for ref in refs if ref not in catalog]
@@ -94,7 +96,10 @@ def bind_job_fields(job, tables, catalog):
 def bind_figure_mapping(figure, jobs, sources):
     """Qualify a unique alias; ambiguous selected/baseline axes require a local model repair."""
     mapping = figure.get('data_mapping')
-    if not mapping:
+    requires_mapping = figure['style'] in {
+        'point_interval', 'bar_grouped_hatch', 'line_confidence_band', 'line_training_curve'
+    }
+    if not mapping and not requires_mapping:
         return []
     rows, dimensions = [], {'finding_id'}
     for identifier in figure['finding_ids']:
@@ -108,6 +113,10 @@ def bind_figure_mapping(figure, jobs, sources):
                     row[prefix + column] = rule['value']
         dimensions.update(row)
         rows.append((job, row))
+    if not mapping:
+        return [dict(figure_id=figure['id'], field='data_mapping',
+                     message='该图表必须明确 data_mapping 的系列、类别和分面；只补全映射，不修改统计任务或图型',
+                     available_dimensions=sorted(dimensions))]
     errors = []
 
     def resolve(value):
@@ -133,9 +142,7 @@ def bind_figure_mapping(figure, jobs, sources):
         keys.append(mapping['series_column'])
     if len(set(keys)) != len(keys):
         errors.append('系列、类别和分面维度必须互不重复')
-    if not errors and figure['style'] in {
-        'point_interval', 'bar_grouped_hatch', 'line_confidence_band', 'line_training_curve'
-    }:
+    if not errors and requires_mapping:
         occupied = set()
         for job, row in rows:
             if any(key not in row for key in keys):
