@@ -21,6 +21,11 @@ from ..execution.threads import ThreadPoolExecutor
 from ..analysis import trace as diagnostics
 
 
+AXES_GUIDANCE = '''For every plt.subplots call use squeeze=False, then axes = axes.ravel().
+axes[i] is always one Axes, including a single panel. Pass axes[i], never the axes array, to native helpers.
+'''
+
+
 BOUND_GUIDANCE = {
     'bar_grouped_hatch': '''Use grid['values'] as data_dict, grid['methods'] as labels and grid['bar_colors'] as colors.
 Use range(len(grid['categories'])) for x_positions, total_w=.78, xlim=(-.56,len(grid['categories'])-.44),
@@ -59,7 +64,7 @@ quantity semantics and one allowed colormaps[mode][0] string. Color does not enc
 
 def generate_bound_code(table, analysis, spec, reference, previous, error):
     """Ask for scientific presentation code, with host-owned identity binding and a small API."""
-    prompt = CODE_INSTRUCTION + NATIVE_FUNCTION_GUIDANCE + '''Implement draw(data, statistics, spec) -> Figure for ONLY this planned figure.
+    prompt = CODE_INSTRUCTION + NATIVE_FUNCTION_GUIDANCE + AXES_GUIDANCE + '''Implement draw(data, statistics, spec) -> Figure for ONLY this planned figure.
 Return the executable source directly and an accurate caption in the optional text block. 只做合理推理，不要过度思考。
 The host validates findings, scopes, dimensions, intervals and group identity, and preloads the native functions.
 Use result_grid(data, metric, series_column, category_column, where) -> dict for data mapping; do not implement readers,
@@ -80,9 +85,10 @@ Native function signatures below are authoritative. Call them directly; do not r
 Use data['metadata']['result_records'] only for an uncommon mapping not covered by result_grid.
 No statistics/inference, file/network access, random data, rcParams setup, top-level calls, decorators or default
 arguments. All three draw arguments are dictionaries. Imports/functions/literal constants only at top level.
-For one panel: layout=spec['style_contract']['layout']; plt.subplots(figsize=tuple(layout['single_inches'])),
-then fig.subplots_adjust(**layout['single_panel']). For two use plt.subplots(1,2,figsize=tuple(layout['two_inches']))
-and layout['two_panels']. Finalize margins before native calls; the renderer fits native legends outside observations.
+For one panel use plt.subplots(1,1,figsize=tuple(layout['single_inches']),squeeze=False),
+where layout=spec['style_contract']['layout'], then fig.subplots_adjust(**layout['single_panel']).
+For two use plt.subplots(1,2,figsize=tuple(layout['two_inches']),squeeze=False) and layout['two_panels'].
+Finalize margins before native calls; the renderer fits native legends outside observations.
 Titles are metadata only: Chart.title is returned separately. Draw no overall figure title; do not call
 suptitle or add title text with fig.text/ax.text. Use the host's short scope label for prepared panels; otherwise pass '' or a subplot identifier.
 Keep short scope labels on panels and explanations in caption; retain axis names, units and legends.
@@ -126,7 +132,7 @@ def generate_code(table, analysis, spec, reference, previous, error):
             and table.get('metadata', {}).get('result_records')):
         return generate_bound_code(table, analysis, spec, reference, previous, error)
     native_guidance = NATIVE_FUNCTION_GUIDANCE if spec.get('style') != 'custom' else ''
-    prompt = CODE_INSTRUCTION + native_guidance + '''Include an accurate figure caption in the optional text block.
+    prompt = CODE_INSTRUCTION + native_guidance + AXES_GUIDANCE + '''Include an accurate figure caption in the optional text block.
 只做合理推理，不要过度思考。
 Use only task-relevant reasoning; do not overthink. Return the executable source directly.
 Implement draw(data, statistics, spec) -> Figure.
@@ -169,7 +175,8 @@ For paper-v1 native styles, the host loads the reviewed template functions uncha
 data-mapping helpers only; call the supplied native function with its exact signature. Do not redefine or modify
 template helpers, add local imports inside them, or replace their palette/interval logic.
 For two panels: layout = spec['style_contract']['layout'];
-fig, axes = plt.subplots(1, 2, figsize=tuple(layout['two_inches'])); fig.subplots_adjust(**layout['two_panels']).
+fig, axes = plt.subplots(1, 2, figsize=tuple(layout['two_inches']), squeeze=False);
+axes = axes.ravel(); fig.subplots_adjust(**layout['two_panels']).
 two_inches and two_panels are siblings, not nested. Finalize size and margins before native helper calls.
 For native bar helpers, legend_anchor is layout['legend_anchor'], NOT style_contract['legend_anchor'].
 For draw_paired_panel with positive bars, ylim=(0,max(1.0,1.2*max(actual_values_and_interval_uppers)))
@@ -246,7 +253,7 @@ do not claim p values or tests when finding.test is null. User-designated focal 
 
 def generate_prepared_code(table, spec, reference, previous, error):
     """The model arranges the figure; the host supplies every native data/axis argument."""
-    prompt = CODE_INSTRUCTION + NATIVE_FUNCTION_GUIDANCE + '''Implement draw(data, statistics, spec) -> Figure for this planned figure.
+    prompt = CODE_INSTRUCTION + NATIVE_FUNCTION_GUIDANCE + AXES_GUIDANCE + '''Implement draw(data, statistics, spec) -> Figure for this planned figure.
 Use task-relevant reasoning only. Return source directly, optionally with an accurate caption.
 data['figure'] is paper.figure.v1: points contain verified estimate/interval.low/interval.high and provenance;
 panels contain the complete arguments for the supplied native function. Do not read statistics or other data keys.
@@ -259,8 +266,8 @@ panel scope labels unchanged; they are different from the full external figure t
 when the category ticks already identify all groups. A legend is needed when several series share the categories.
 No result_grid call or result_records parsing is needed or available. Missing intervals remain absent, never zero.
 You choose the Matplotlib panel arrangement, using the supplied paper layout and native functions unchanged.
-For one panel use layout=spec['style_contract']['layout'], plt.subplots(figsize=tuple(layout['single_inches']))
-and fig.subplots_adjust(**layout['single_panel']); for two use layout['two_inches'] and layout['two_panels'].
+For one panel use layout=spec['style_contract']['layout']; fig, axes = plt.subplots(1,1,figsize=tuple(layout['single_inches']),squeeze=False);
+axes = axes.ravel(); fig.subplots_adjust(**layout['single_panel']); for two use layout['two_inches'] and layout['two_panels'].
 For more panels do not multiply the paper width by the panel count. Keep layout.two_inches[0] as the maximum width; use readable spacing without shrinking fonts. Never truncate the panel list.
 Place all panels. Keep their finding scopes distinct; do not add or drop panels. No statistical computation,
 file/network access, rcParams changes, dynamic reflection or example data. The full figure title is separate metadata. Keep the host-provided short scope labels, which identify

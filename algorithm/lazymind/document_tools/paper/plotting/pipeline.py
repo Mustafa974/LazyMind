@@ -34,16 +34,20 @@ def draw_one(bound: dict, measured: dict, spec: dict, reference: str, attempts: 
     previous, error = '', ''
     history = []
     for attempt in range(1, attempts + 1):
+        candidate = previous
+        candidate_spec = dict(spec)
         try:
             details = dict(figure_id=spec['id'], attempt=attempt)
             with diagnostics.stage('figure_code_generation', **details):
-                previous = code_generator(bound, measured, spec, reference, previous, error)
+                candidate = code_generator(bound, measured, candidate_spec, reference, previous, error)
                 name = diagnostics.figure_name(spec['id'])
-                diagnostics.save(f'figure-{name}-code-{attempt}.py', previous)
+                diagnostics.save(f'figure-{name}-code-{attempt}.py', candidate)
             with diagnostics.stage('figure_code_validation', **details):
-                previous = compose_native_program(previous, reference, spec)
-                validate_code(previous)
-                validate_native_program(previous, spec)
+                candidate = compose_native_program(candidate, reference, candidate_spec)
+                validate_code(candidate)
+                validate_native_program(candidate, candidate_spec)
+            previous = candidate
+            spec.update(candidate_spec)
             with diagnostics.stage('figure_execution', **details):
                 rendered = execute_plot({'table': bound, 'statistics': measured, 'spec': spec,
                                          'data_sha256': measured['data_sha256'], 'code': previous})
@@ -75,7 +79,7 @@ def draw_one(bound: dict, measured: dict, spec: dict, reference: str, attempts: 
         except (ValueError, TypeError, KeyError, SyntaxError, RuntimeError) as exc:
             current_error = str(exc)[-6000:]
             history.append({'attempt': attempt, 'status': 'failed', 'error': current_error,
-                            'code_sha256': hashlib.sha256(previous.encode()).hexdigest()})
+                            'code_sha256': hashlib.sha256(candidate.encode()).hexdigest()})
             error = current_error if len(history) == 1 else '\n'.join(
                 f'Attempt {item["attempt"]}: {item["error"]}' for item in history)[-12000:]
     # Keep full retry history in diagnostics/repair context; surface the latest cause

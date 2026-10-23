@@ -425,6 +425,7 @@ def fit_paper_layout(figure, spec, panel_density=()):
     overhangs = []
     for axis, box in zip(axes, positions):
         wrap(axis.xaxis.label, box.width)
+        wrap(axis.yaxis.label, box.height if axis.yaxis.label.get_rotation() % 180 == 90 else box.width)
         if spec.get('style') == 'point_interval':
             for label in axis.get_yticklabels():
                 wrap(label, width * .42 / len(axes))
