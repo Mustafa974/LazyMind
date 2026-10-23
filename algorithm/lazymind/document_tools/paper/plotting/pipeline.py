@@ -7,6 +7,7 @@ import os
 from .code import validate_code
 from .executor import PlotEnvironmentError, execute_plot
 from .model import PlotModelError
+from .figure_data import panel_caption
 from .templates import compose_native_program, validate_native_program
 from ..analysis.validation import validate_charts
 from ..analysis import trace as diagnostics
@@ -50,8 +51,12 @@ def draw_one(bound: dict, measured: dict, spec: dict, reference: str, attempts: 
                 if set(rendered) != {'svg', 'exports'}:
                     raise ValueError('绘图执行结果必须包含 svg/exports')
                 chart = {'id': spec['id'], 'title': spec['title'], 'columns': spec['columns'], **rendered}
-                if spec.get('caption'):
-                    chart['caption'] = spec['caption']
+                key = panel_caption(bound.get('figure', {}))
+                caption = spec.get('caption', '')
+                if key and not caption.endswith(key):
+                    caption = (caption + '\n' + key).strip()
+                if caption:
+                    chart['caption'] = spec['caption'] = caption
                 validate_charts([chart])
                 diagnostics.save(f'figure-{name}-exports.json', {
                     'id': spec['id'], 'svg_bytes': len(rendered['svg'].encode()),
@@ -73,4 +78,7 @@ def draw_one(bound: dict, measured: dict, spec: dict, reference: str, attempts: 
                             'code_sha256': hashlib.sha256(previous.encode()).hexdigest()})
             error = current_error if len(history) == 1 else '\n'.join(
                 f'Attempt {item["attempt"]}: {item["error"]}' for item in history)[-12000:]
-    raise RuntimeError(f'图表 {spec["id"]} 在 {attempts} 次尝试后失败，未发布本轮图表: {error}')
+    # Keep full retry history in diagnostics/repair context; surface the latest cause
+    # first so a bounded workflow error cannot truncate it behind earlier tracebacks.
+    cause = history[-1]['error'].strip().splitlines()[-1]
+    raise RuntimeError(f'图表 {spec["id"]} 在 {attempts} 次尝试后失败，未发布本轮图表: {cause}')
