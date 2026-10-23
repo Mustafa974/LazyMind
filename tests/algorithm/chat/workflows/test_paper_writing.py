@@ -163,7 +163,7 @@ def test_edited_experiment_report_keeps_simulated_result_and_history():
 
 @pytest.fixture
 def runtime(monkeypatch, tmp_path):
-    ctx = SimpleNamespace(params={}, workspace_path=str(tmp_path))
+    ctx = SimpleNamespace(params={}, workspace_path=str(tmp_path), emit=lambda _event: None, output_slots=[])
     batches = []
     context_module = ModuleType('lazymind.chat.engine.subagent.context')
     context_module.require_context = lambda: ctx
@@ -186,6 +186,7 @@ def test_runtime_wrapper_uses_host_inputs_and_saves_all_declared_outputs(runtime
     path.write_text(json.dumps({'data': seed}))
     for step in ['research_topic', 'literature_review', 'experiment', 'data_analysis', 'write_document', 'peer_review', 'reading_reflection']:
         ctx.params = {'step_id': step, 'remote_inputs': {'seed_pool': str(path)}}
+        ctx.output_slots = [item['material'] for item in state['steps'][step]['outputs']]
         tools.run_paper_step()
         assert {item['key'] for item in batches[-1]} == {
             item['material'] for item in state['steps'][step]['outputs']}
@@ -369,8 +370,11 @@ def test_f7_bound_papers_preserve_manuscript(binding, runtime, reflection_calls,
 
 def test_f7_uses_edited_f2_evidence_and_current_request(runtime, reflection_calls, tmp_path, monkeypatch):
     ctx, batches = runtime
+    monkeypatch.setattr(api.ALGORITHMS['literature_review'], 'run', lambda inputs: {
+        'evidence': '# 原始综述', 'papers': inputs['papers'], 'is_demo': False,
+    })
     seed = tools.pool_from_business({'topic': '既有主题', 'papers': [
-        {'id': 'P1', 'title': '参考论文', 'abstract': '摘要'},
+        {'id': 'P1', 'title': '参考论文', 'abstract': '摘要', 'citation': '参考论文（测试材料）'},
     ]})
     pool = tools.execute_step('literature_review', seed, '旧的综述要求')['pool']
     pool_path, document_path = tmp_path / 'pool.json', tmp_path / 'evidence.md'
@@ -390,6 +394,52 @@ def test_f7_uses_edited_f2_evidence_and_current_request(runtime, reflection_call
     assert result['current']['evidence']['version'] == pool['current']['evidence']['version'] + 1
     assert result['current']['evidence'] in result['history'][-1]['inputs']
     assert tools._read_bound(str(pool_path)) == pool
+
+
+@pytest.mark.parametrize('existing_question', [False, True])
+def test_bound_experiment_question_only_fills_missing_pool_material(existing_question, tmp_path):
+    value = {'topic': '既有主题'}
+    if existing_question:
+        value['question'] = '已经确认的研究问题'
+    original = tools.pool_from_business(value)
+    source, question = tmp_path / 'pool.json', tmp_path / 'question.txt'
+    source.write_text(json.dumps(original))
+    question.write_text('补充的研究问题')
+    pool = tools.initialize_pool({'seed_pool': str(source), 'experiment_question': str(question)})
+    expected = value['question'] if existing_question else question.read_text()
+    assert tools.material(pool, 'question')['content'] == expected
+    assert tools._read_bound(str(source)) == original
+    assert pool['sequence'] == original['sequence']
+
+
+@pytest.mark.parametrize('use_pool', [False, True])
+def test_f2_attachment_merge_preserves_bound_pool_priority(use_pool, runtime, tmp_path, monkeypatch):
+    ctx, batches = runtime
+    papers = [{'id': 'P1', 'title': '原论文', 'abstract': '原摘要', 'citation': '原论文（测试材料）'}]
+    value = {'topic': '既有主题', 'papers': papers}
+    if use_pool:
+        value = tools.pool_from_business(value)
+    source = tmp_path / 'input.json'
+    source.write_text(json.dumps(value))
+    uploaded = [{'id': 'P1', 'title': '重复论文', 'text': '不覆盖原摘要'},
+                {'id': 'P2', 'title': '新论文', 'text': '新正文', 'citation': '新论文（测试材料）'}]
+
+    def attachments(_history):
+        assert not use_pool
+        return uploaded
+
+    monkeypatch.setattr(tools, '_conversation_papers', attachments)
+    monkeypatch.setattr(api.ALGORITHMS['literature_review'], 'run', lambda inputs: {
+        'evidence': '# 文献综述', 'papers': inputs['papers'], 'is_demo': False,
+    })
+    ctx.params = {'step_id': 'literature_review',
+                  'remote_inputs': {'seed_pool' if use_pool else 'paper_input': str(source)}}
+    tools.run_paper_step()
+    outputs = {item['key']: item['value'] for item in batches[-1]}
+    result = tools._read_bound(outputs['literature_review_pool'])
+    expected = papers if use_pool else [papers[0], uploaded[1]]
+    assert tools.material(result, 'papers')['content'] == expected
+    assert tools._read_bound(str(source)) == value
 
 
 @pytest.mark.parametrize('source', ['request', 'paper_input'])

@@ -159,7 +159,7 @@ def _handoff_tool(
                                 for value in (session, user_input)) else 'UNDECLARED')
 
     @_register_host_file(capability)
-    def advance_step_and_hand_off(step_id: str) -> str:
+    def advance_step_and_hand_off(step_id: str) -> Union[str, Dict[str, Any]]:
         """Execute one Ready Workflow step, then hand off for result approval."""
         selected_session_id = session() if callable(session) else session
         selected_session_id = str(selected_session_id or '').strip()
@@ -224,6 +224,17 @@ def _handoff_tool(
                     result.update(_state_refresh_notice())
                 if step_id in rewindable:
                     result = _compact_transition_result(result)
+                if result.get('accepted') is True:
+                    # Structured tool results are consumed by the executor before
+                    # another model call, including sessions created in this turn.
+                    return {
+                        **result,
+                        '_agent_control': {
+                            'stop': True,
+                            'reason': 'workflow_handoff',
+                            'final_text': '已交由工作流执行，请在工作流中查看进度和结果。',
+                        },
+                    }
                 return _result_text(result)
             except WorkflowClientError as exc:
                 if exc.code != 'STATE_VERSION_CONFLICT' or attempt > 0:
@@ -749,15 +760,27 @@ def _tool_call_arguments(tool_call: Any) -> Dict[str, Any]:
     if not isinstance(function, dict) or str(function.get('name') or '') != 'ask_user':
         return {}
     arguments = function.get('arguments')
-    if isinstance(arguments, dict):
-        return arguments
     if isinstance(arguments, str):
         try:
-            parsed = json.loads(arguments)
+            arguments = json.loads(arguments)
         except json.JSONDecodeError:
             return {}
-        return parsed if isinstance(parsed, dict) else {}
-    return {}
+    if not isinstance(arguments, dict):
+        return {}
+    from lazymind.chat.engine.tools.ask_user import AskUserQuestion
+
+    # History keeps the original model arguments, not the validated tool input.
+    # Recognize the same accepted question format when restoring the user's goal.
+    questions = arguments.get('questions')
+    if not isinstance(questions, list):
+        return {}
+    try:
+        return {**arguments, 'questions': [
+            AskUserQuestion.model_validate(question).model_dump(exclude_none=True)
+            for question in questions
+        ]}
+    except ValueError:
+        return {}
 
 
 def _question_fingerprint(value: Any) -> str:
@@ -857,6 +880,24 @@ def _history_startup_ask_index(
         for call in message.get('tool_calls') or []:
             arguments = _tool_call_arguments(call)
             if not arguments:
+                continue
+            # A failed invocation never displayed a card. In particular, old
+            # validation failures must not suppress clarification after recovery.
+            failed = False
+            for reply in history[index + 1:]:
+                if (not isinstance(reply, dict) or reply.get('role') != 'tool'
+                        or reply.get('tool_call_id') != call.get('id')):
+                    continue
+                result = reply.get('content')
+                if isinstance(result, str):
+                    try:
+                        result = json.loads(result)
+                    except (TypeError, ValueError):
+                        continue
+                if isinstance(result, dict) and result.get('ok') is False:
+                    failed = True
+                    break
+            if failed:
                 continue
             for question in arguments.get('questions') or []:
                 if not isinstance(question, dict):
@@ -1194,6 +1235,9 @@ def _workflow_trigger_tools(
                     if _is_explicit_merged_request_context(supplied_context)
                     else bound_query or supplied_context
                 )
+                if bound_id == 'paper-writing':
+                    from lazymind.document_tools.paper.analysis.attachments import workflow_input_bindings
+                    input_bindings = workflow_input_bindings(input_bindings, effective_context)
                 existing_session_id = str(
                     (session_holder or {}).get('session_id') or '',
                 ).strip()
@@ -1409,6 +1453,15 @@ def _workflow_trigger_tools(
             ' No user attachments are available: do not bind file materials, but pass literal '
             'values for required text/json input_bindings.'
         )
+        if workflow_id == 'paper-writing':
+            from lazymind.document_tools.paper.analysis.attachments import standalone_f4_request
+            if standalone_f4_request(current_query) and attachments_available:
+                attachment_guidance = (
+                    ' For standalone F4, paper_input accepts the exact JSON attachment filename. '
+                    'The Host reads the complete original file. Never transcribe, summarize, repair, '
+                    'or embed the uploaded JSON in tool arguments; pass only its filename, or omit '
+                    'paper_input when the request unambiguously selects one JSON attachment.'
+                )
         trigger_workflow.__doc__ = (
             description + input_contract + attachment_guidance
             + ' Omit inputs whose values were not supplied; do not invent values or '
@@ -1736,9 +1789,9 @@ def resolve_workflow_injection(
         return WorkflowAgentContribution(
             # advance_step is synchronous: its terminal result and refreshed
             # Ready frontier must be returned to the same ChatAgent turn so a
-            # user-requested continuous run can keep advancing.  Only the
-            # explicit hand-off variant transfers ownership and ends the turn.
-            tools, ['advance_step_and_hand_off'],
+            # user-requested continuous run can keep advancing. Handoff stops
+            # through its accepted structured result, never merely by tool name.
+            tools, [],
             patch, runtime_context, runtime_policy, bind_successor,
         )
 
