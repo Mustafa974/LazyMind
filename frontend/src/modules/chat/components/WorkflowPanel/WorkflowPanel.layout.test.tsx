@@ -7,6 +7,7 @@ import { SlotEditingContext, WorkflowPanelTabActiveContext, type SlotEditingCont
 import { WorkflowPanel } from './index';
 import { controlActions, type WorkflowControlView } from '@/modules/chat/utils/workflowControl';
 import { loadWorkflowRunSnapshot } from '@/modules/chat/utils/loadWorkflowRun';
+import { useTaskCenterStore, type TaskArtifactStream } from '@/modules/chat/store/taskCenter';
 
 const fixture = vi.hoisted(() => ({
   session: {} as WorkflowSession,
@@ -40,7 +41,7 @@ vi.mock('./ppt/SlideThumb', () => ({ SlideThumb: () => null }));
 vi.mock('./SlotComponents', () => ({
   isWriterIrSource: () => false,
   SlotDownloadContext: React.createContext(true),
-  SlotMarkdownStream: () => null,
+  SlotMarkdownStream: ({ stream }: { stream: TaskArtifactStream }) => <div data-testid='live-preview'>{stream.content}</div>,
   SlotRenderer: ({ slotId, slot, readOnly, widget }: { widget?: { widgetType?: string }; slotId: string; slot: SlotRevision; readOnly?: boolean }) => {
     const context = useContext(SlotEditingContext);
     fixture.registerFooterAction = context.registerFooterAction;
@@ -70,6 +71,7 @@ vi.mock('./SlotComponents', () => ({
 }));
 
 beforeEach(async () => {
+  useTaskCenterStore.setState({ tasksByConversation: {} });
   await i18n.changeLanguage('zh-CN');
   vi.clearAllMocks();
   fixture.flush.mockResolvedValue(true);
@@ -96,6 +98,25 @@ beforeEach(async () => {
 afterEach(cleanup);
 
 describe('shared workflow compact layout', () => {
+  it('switches to the published document as soon as the owning step completes, despite lagging task chunks', async () => {
+    const step = fixture.session.steps!.find(item => item.step_id === 'write_document')!;
+    step.task_id = 'draft-task';
+    step.status = 'running';
+    const stream: TaskArtifactStream = { task_id: 'draft-task', slot: 'document', stream_id: 'preview',
+      chunk_index: 10, content_type: 'text/markdown', content: '待完成预览', deltas: ['待', '完成', '预览'], state: 'streaming' };
+    useTaskCenterStore.getState().upsertTask('layout-test', { task_id: 'draft-task', status: 'running', artifact_streams: [stream] });
+    const view = render(<WorkflowPanel conversationId='layout-test' />);
+    await waitFor(() => expect(screen.getByTestId('live-preview')).toHaveTextContent('待完成预览'));
+    step.status = 'succeeded';
+    view.rerender(<WorkflowPanel conversationId='layout-test' />);
+    await waitFor(() => expect(screen.queryByTestId('live-preview')).not.toBeInTheDocument());
+    expect(view.container.querySelector('article[data-value="正文"]')).toBeInTheDocument();
+    act(() => useTaskCenterStore.getState().upsertTask('layout-test', { task_id: 'draft-task',
+      artifact_streams: [{ ...stream, chunk_index: 11, content: '迟到内容' }] }));
+    expect(screen.queryByTestId('live-preview')).not.toBeInTheDocument();
+    expect(view.container.querySelector('article[data-value="正文"]')).toBeInTheDocument();
+  });
+
   it('hides skipped stages, follows the current step, and restores them on rewind', async () => {
     fixture.ui.hide_skipped_steps = true;
     fixture.focusedTab = 'prepare';
@@ -655,3 +676,31 @@ it('keeps saved output visible after execution fails and retries through externa
   expect(getSession).not.toHaveBeenCalled();
   expect(getProjection).not.toHaveBeenCalled();
 });
+
+it.each(['research_topic', 'refine_topic', 'literature_review', 'experiment', 'data_analysis',
+  'write_outline', 'write_document', 'peer_review', 'revise_document', 'reading_reflection', 'finish'])(
+  'automatically hands %s over to its published complete document', async (stepId) => {
+    const slot = `${stepId}_document`;
+    fixture.ui = { tabs: [{ id: stepId, step_id: stepId, label: '当前文档', layout: 'list',
+      slots: [{ id: slot, label: '当前文档', type: 'file' }] }] };
+    fixture.session = { ...fixture.session, workflow_id: 'paper-writing', status: 'active',
+      current_step_id: stepId, projection: { current: [stepId] },
+      steps: [{ id: 'current-attempt', session_id: 'layout-test', step_id: stepId, task_id: 'owner',
+        attempt: 2, status: 'running', created_at: '', updated_at: '' }],
+      slots: [{ slot_id: slot, slot, step_id: stepId, revision: 1, attempt: 1, selected: true,
+        producer_attempt_id: 'old', artifact_value: { text: '旧文档' }, created_at: '' }],
+    };
+    const preview: TaskArtifactStream = { task_id: 'owner', slot, stream_id: 'live', chunk_index: 3,
+      content_type: 'text/markdown', content: '已经返回的完整预览', state: 'ended' };
+    useTaskCenterStore.getState().upsertTask('layout-test', { task_id: 'owner', status: 'running', artifact_streams: [preview] });
+    const view = render(<WorkflowPanel conversationId='layout-test' />);
+    await waitFor(() => expect(screen.getByTestId('live-preview')).toHaveTextContent('已经返回的完整预览'));
+    fixture.session.steps![0].status = 'succeeded';
+    fixture.session.slots = [{ ...fixture.session.slots![0], revision: 2, attempt: 2,
+      producer_attempt_id: 'current-attempt', artifact_value: { text: '完整正式文档' } }];
+    view.rerender(<WorkflowPanel conversationId='layout-test' />);
+    await waitFor(() => expect(screen.queryByTestId('live-preview')).not.toBeInTheDocument());
+    expect(view.container.querySelector('article[data-value="完整正式文档"]')).toBeInTheDocument();
+    expect(fixture.refresh).not.toHaveBeenCalled();
+  },
+);
