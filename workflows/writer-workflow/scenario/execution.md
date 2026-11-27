@@ -31,6 +31,11 @@ Publish writer_command with action, source_role, target_stage, next_step,
 structure_mode, user_instruction, source_ref/target_ref when present and a request
 fingerprint. next_step is outline, write_flat_document, write_document or __end__.
 Do not write the body during prepare. Keep that command stable in later steps.
+Keep writing_task as JSON for later steps, and publish a separate writing_brief Markdown
+file for the reader. Include the original request, readable clarification answers,
+prepared length targets and bounds, and visualization/image-generation requirements.
+Preserve unspecified bounds as unspecified; never invent a word range. The Markdown
+companion does not replace or modify the workflow JSON inputs.
 
 Read real supplied sources with host tools, retain citations and provide a factual
 writing_context and media_assets inventory (an empty assets object is valid).

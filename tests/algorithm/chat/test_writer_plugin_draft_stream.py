@@ -222,7 +222,13 @@ def _stub_prepare_workspace(monkeypatch, tmp_path, *, user_input, history_files_
         }
 
     monkeypatch.setattr(tools, 'writer_load_document', load_document)
-    monkeypatch.setattr(tools, 'writer_build_writing_task', lambda **_kwargs: 'task.json')
+    task_path = tmp_path / 'task.json'
+    from lazymind.document_tools.writing import parse_writer_request_constraints
+
+    task_path.write_text(json.dumps({
+        'query': user_input, 'constraints': parse_writer_request_constraints(user_input),
+    }))
+    monkeypatch.setattr(tools, 'writer_build_writing_task', lambda **_kwargs: str(task_path))
     monkeypatch.setattr(
         tools,
         'writer_collect_available_media',
@@ -1185,3 +1191,94 @@ def test_quality_adapter_keeps_requirements_without_persisting_context_query(tmp
     saved = json.loads((tmp_path / 'writing_context.json').read_text())['data']
     assert 'query' not in saved
     assert saved['document_summary'] is None
+
+
+@pytest.mark.parametrize(
+    ('user_request', 'expected', 'absent'),
+    [
+        (
+            '写一篇 3000 字左右的克苏鲁小说，配一张图',
+            ['目标篇幅：3000 字', '篇幅上限：3300 字', '必须配图', '允许生成新图片'],
+            ['篇幅下限', '2700'],
+        ),
+        (
+            '写一篇不超过500字的摘要，不要配图，不要生图',
+            ['篇幅上限：500 字', '图片及其他可视化：不使用', 'AI 生图：禁止生成新图片'],
+            ['篇幅下限', '必须配图'],
+        ),
+        (
+            '写一篇文章，必须复用我上传的图片',
+            ['必须复用用户提供的图片', '禁止生成新图片'],
+            ['目标篇幅：', '篇幅上限：', '篇幅下限：'],
+        ),
+        (
+            '写一篇短文',
+            ['未设置明确的字数约束', 'AI 生图：未单独指定'],
+            ['目标篇幅：', '篇幅上限：', '篇幅下限：', '禁止生成新图片'],
+        ),
+    ],
+)
+def test_prepare_publishes_readable_brief_alongside_unchanged_task_json(
+    monkeypatch, tmp_path, user_request, expected, absent,
+):
+    from lazymind.chat.engine.subagent import tools as artifact_tools
+
+    tools, _ = _stub_prepare_workspace(
+        monkeypatch, tmp_path, user_input=user_request, history_files_per_turn={},
+    )
+    context = tools.require_context()
+    context.output_slots = ['writing_task', 'writing_brief']
+    published = []
+
+    def save_artifacts(entries):
+        published.extend(entries)
+        return {'status': 'ok'}
+
+    monkeypatch.setattr(artifact_tools, 'save_artifacts', save_artifacts)
+    monkeypatch.setattr(tools, '_save_draft_workspace_artifacts',
+                        lambda result: tools._state_save_workspace_artifacts(context, result))
+    original_json = (tmp_path / 'task.json').read_bytes()
+    result = tools.writer_prepare_workspace(operation='revise_document')
+
+    assert result['saved_artifact_keys'] == ['writing_task', 'writing_brief']
+    assert {item['key'] for item in published} == {'writing_task', 'writing_brief'}
+    assert all(item['content_type'] == 'file' and Path(item['value']).is_file() for item in published)
+    assert Path(result['writing_task']).read_bytes() == original_json
+    assert Path(result['writing_brief']).suffix == '.md'
+    brief = Path(result['writing_brief']).read_text(encoding='utf-8')
+    assert user_request in brief
+    assert all(value in brief for value in expected)
+    assert all(value not in brief for value in absent)
+
+
+def test_writing_brief_preserves_readable_clarifications_and_explicit_bounds(monkeypatch, tmp_path):
+    request = 'Write a short story.'
+    answers = {'writing_goal': '克苏鲁小说', 'word_target': '3000',
+               'visual_policy': '配一张契合小说内容与氛围的插图'}
+    query = request + '\n\nWorkflow clarification answers:\n' + json.dumps(answers, ensure_ascii=False)
+    tools, _ = _stub_prepare_workspace(
+        monkeypatch, tmp_path, user_input=query, history_files_per_turn={},
+    )
+    task_path = tmp_path / 'task.json'
+    task_path.write_text(json.dumps({'constraints': {'target_chars': 3000, 'min_chars': 2800, 'max_chars': 3200}}))
+
+    result = tools.writer_prepare_workspace(operation='revise_document')
+    brief = Path(result['writing_brief']).read_text(encoding='utf-8')
+
+    assert request in brief
+    assert '写作目标：克苏鲁小说' in brief
+    assert '可视化与配图要求：配一张契合小说内容与氛围的插图' in brief
+    assert '篇幅下限：2800 字' in brief and '篇幅上限：3200 字' in brief
+    assert 'Workflow clarification answers' not in brief
+    assert json.dumps(answers, ensure_ascii=False) not in brief
+
+
+def test_writing_brief_keeps_unparseable_clarification_text(monkeypatch, tmp_path):
+    query = '写一篇短文\n\nWorkflow clarification answers:\n补充：使用中文，配一张图'
+    tools, _ = _stub_prepare_workspace(
+        monkeypatch, tmp_path, user_input=query, history_files_per_turn={},
+    )
+
+    result = tools.writer_prepare_workspace(operation='revise_document')
+
+    assert '补充：使用中文，配一张图' in Path(result['writing_brief']).read_text(encoding='utf-8')

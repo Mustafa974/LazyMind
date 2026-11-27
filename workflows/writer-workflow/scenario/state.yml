@@ -90,6 +90,7 @@ steps:
     outputs:
       - material: writer_command
       - material: writing_task
+      - material: writing_brief
       - material: media_assets
       - material: writing_context
       - material: source_document
@@ -97,7 +98,11 @@ steps:
       - material: target_document
         required: false
     acceptance_criteria: |
-      writer_command, writing_task, media_assets, and writing_context are present.
+      writer_command, writing_task, writing_brief, media_assets, and writing_context are present.
+      writing_brief is a readable Markdown file describing the original request, clarification
+      answers, prepared length targets/bounds, and visualization/image-generation requirements.
+      Do not invent missing length bounds. Keep writing_task JSON as the workflow input;
+      writing_brief is a user-facing companion, not a replacement for that JSON.
       media_assets is valid even when its assets mapping is empty.
       When a URL source was required, source_document and target_document are also present.
 
